@@ -198,6 +198,8 @@ static Key keys[] = {
     { MODKEY|ShiftMask,    XK_Up,     spawn, SHCMD("$DWM/bin/set_vol.sh up") },                                 /* super shift up   | 音量加                 */
     { MODKEY|ShiftMask,    XK_Down,   spawn, SHCMD("$DWM/bin/set_vol.sh down") },                               /* super shift down | 音量减                 */
     { MODKEY|ShiftMask,    XK_a,      spawn, SHCMD("flameshot gui") },                   /* super shift a    | 截图                   */
+    { MODKEY,              XK_y,      spawn, SHCMD("$DWM/bin/translate.sh") },                                  /* super y          | 翻译选中的文字         */
+    { MODKEY|ShiftMask,    XK_y,      spawn, SHCMD("$DWM/bin/translate.sh input") },                            /* super shift y    | 输入文字翻译并复制     */
     { MODKEY|ShiftMask,    XK_q,      spawn, SHCMD("kill -9 $(xprop | grep _NET_WM_PID | awk '{print $3}')") }, /* super shift q    | 选中某个窗口并强制kill */
 
     /* super key : 跳转到对应tag (可附加一条命令 若目标目录无窗口，则执行该命令) */

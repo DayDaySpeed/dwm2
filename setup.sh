@@ -21,7 +21,7 @@ deps() {
         rofi feh dunst flameshot xss-lock fcitx5 pamixer x11vnc \
         intel-media-driver libva-utils \
         mpd mpc ncmpcpp cava pcmanfm \
-        ranger ueberzugpp ffmpegthumbnailer
+        ranger ueberzugpp ffmpegthumbnailer translate-shell
     yay -S --needed sunshine-bin    # 远程桌面串流 (Windows 端用 Moonlight)
 }
 
