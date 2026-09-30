@@ -37,7 +37,7 @@
 | `Super + D` | rofi：运行命令 |
 | `Super + P` | rofi 自定义菜单：换壁纸、刷新状态栏、开关 daed、开关 picom |
 | `Super + F1` | 打开 / 关闭 pcmanfm 文件管理器（需先安装 `pcmanfm`） |
-| `Super + Shift + A` | 截图（flameshot），截完的图复制到剪贴板，并保存到 `~/Pictures/screenshots` |
+| `Super + Shift + A` | 截图（flameshot），框选后松开鼠标即复制到剪贴板，并保存到 `~/Pictures/screenshots` |
 | `Super + N` | 锁屏（模糊锁屏，输入密码解锁） |
 
 ### 2.2 窗口焦点与切换
@@ -215,3 +215,16 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 | `Super + M` 音乐播放器 | `mpd` `ncmpcpp` `cava` |
 | `Super + F1` 文件管理器 | `pcmanfm` |
 | 使用键盘时暂时禁用触控板 | `xf86-input-synaptics`（autostart 已写好 `syndaemon`，装好后自动生效） |
+
+安装命令（音乐播放器和文件管理器）：
+
+```sh
+sudo pacman -S mpd mpc ncmpcpp cava pcmanfm
+```
+
+**音乐播放器的用法：**
+
+- 音乐文件放进 `~/Music`，mpd 会自动扫描。mpd 的配置文件在 `config/mpd.conf`（`~/.config/mpd/mpd.conf` 软链接到这里）。
+- 按 `Super + M` 会同时打开 ncmpcpp（播放器，右上角）和 cava（音频可视化）。再按一次会全部关闭，mpd 也会一起退出。
+- ncmpcpp 常用按键：`1` 播放列表、`2` 浏览文件、`4` 媒体库；`Enter` 播放、`p` 暂停、`>` / `<` 下一首 / 上一首、`+` / `-` 音量、`a` 加入播放列表、`u` 重新扫描音乐库、`q` 退出。
+- 状态栏的音乐模块也能控制：左键 / 右键暂停，滚轮切歌。
