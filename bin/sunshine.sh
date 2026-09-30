@@ -17,14 +17,20 @@ lanip() {
     ip -4 -o addr show scope global | awk '$2 !~ /^(docker|br-|veth|Meta|tun)/ {sub(/\/.*/, "", $4); print $4}' \
         | grep -E '^(192\.168|10)\.' | head -1
 }
+# Tailscale IP: 固定不变, 换网络也能连 (未安装/未登录时为空)
+tsip() { tailscale ip -4 2>/dev/null | head -1; }
+# 连接地址: 优先 Tailscale IP
+addr() { local t; t=$(tsip); echo "${t:-$(lanip)}"; }
 
 start() {
-    running && { notify "已在运行 ($(lanip))"; return; }
+    running && { notify "已在运行 ($(addr))"; return; }
     command -v sunshine >/dev/null || { notify "未安装 sunshine: yay -S sunshine-bin"; exit 1; }
-    # 网页控制台默认只信任 https://localhost 来源, 从 Windows 用 IP 访问会被 CSRF 保护拦截, 启动时加上当前 IP
-    setsid -f sunshine "csrf_allowed_origins=https://$(lanip):$WEBPORT" >/dev/null 2>&1
+    # 网页控制台默认只信任 https://localhost 来源, 从 Windows 用 IP 访问会被 CSRF 保护拦截, 启动时加上局域网 IP 与 Tailscale IP
+    local origins="https://$(lanip):$WEBPORT" t
+    t=$(tsip); [ -n "$t" ] && origins="$origins,https://$t:$WEBPORT"
+    setsid -f sunshine "csrf_allowed_origins=$origins" >/dev/null 2>&1
     for _ in $(seq 20); do                                   # 等待网页控制台端口开始监听 (最多 10 秒)
-        ss -ltn | grep -q ":$WEBPORT " && { notify "已开启, Moonlight 添加主机: $(lanip)"; return; }
+        ss -ltn | grep -q ":$WEBPORT " && { notify "已开启, Moonlight 添加主机: $(addr)"; return; }
         sleep 0.5
     done
     pkill -x sunshine
@@ -43,6 +49,6 @@ case $1 in
     start)  start ;;
     stop)   stop ;;
     toggle) running && stop || start ;;
-    status) running && echo "运行中 (Moonlight 添加主机: $(lanip), 控制台 https://localhost:$WEBPORT)" || { echo "未运行"; exit 1; } ;;
+    status) running && echo "运行中 (Moonlight 添加主机: $(addr), 控制台 https://$(addr):$WEBPORT)" || { echo "未运行"; exit 1; } ;;
     *)      sed -n '2,4p' "$0"; exit 1 ;;
 esac

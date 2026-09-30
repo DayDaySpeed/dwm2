@@ -8,7 +8,7 @@ export DISPLAY=${DISPLAY:-:0}
 PASSFILE=~/.vnc/passwd
 LOGFILE=~/.cache/x11vnc.log
 PORT=5900
-ALLOW=127.,192.168.,10.    # 只允许本机与局域网地址连接
+ALLOW=127.,192.168.,10.,100.    # 只允许本机、局域网与 Tailscale (100.x) 地址连接
 SCALE=${VNC_SCALE:-3/4}    # 画面缩放: 2560x1440 * 3/4 = 1920x1080, 与客户端屏幕一致才能全屏铺满; 1 为不缩放
 
 # 局域网 IP: 取物理网卡上 192.168.* / 10.* 的地址 (跳过 docker 网桥与代理虚拟网卡)

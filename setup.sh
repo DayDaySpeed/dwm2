@@ -23,6 +23,8 @@ deps() {
         mpd mpc ncmpcpp cava pcmanfm \
         ranger ueberzugpp ffmpegthumbnailer translate-shell
     yay -S --needed sunshine-bin    # 远程桌面串流 (Windows 端用 Moonlight)
+    sudo pacman -S --needed tailscale  # 固定的虚拟 IP, 换网络 (手机热点等) 也能远程连接
+    sudo systemctl enable --now tailscaled
 }
 
 link() {
