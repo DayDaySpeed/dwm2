@@ -45,13 +45,17 @@ link() {
     ln -sfn ../bin/statusbar    dwm/statusbar
 }
 
-# st / tabbed 的 config.h 被上游仓库跟踪: 编译前放入我们的配置, 编译后还原, 保持子模块干净
+# st / tabbed 的源码属于上游子模块: 编译前放入我们的 config.h 并打上 patches/<name>-*.diff,
+# 编译后全部还原, 保持子模块干净 (可随时 git pull 上游)
 build_suckless() {
-    local name=$1
+    local name=$1 p
     step "$name"
     cp "config/$name.h" "$name/config.h"
-    (cd "$name" && make clean && make && sudo make install) || { git -C "$name" checkout -- config.h; exit 1; }
-    git -C "$name" checkout -- config.h
+    for p in patches/"$name"-*.diff; do
+        [ -f "$p" ] && { echo "打补丁: $p"; git -C "$name" apply "$DWM/$p" || { git -C "$name" checkout -- .; exit 1; }; }
+    done
+    (cd "$name" && make clean && make && sudo make install) || { git -C "$name" checkout -- .; exit 1; }
+    git -C "$name" checkout -- .
 }
 
 build_dwm() {
