@@ -46,4 +46,4 @@ systemctl --user restart xdg-desktop-portal.service xdg-desktop-portal-gtk.servi
 # 启动窗口管理器(必须放最后)
 # ================================================
 
-exec dwm
+exec "$HOME/.local/bin/dwm"   # 由 ./setup.sh dwm 或 Super+Shift+R 编译安装

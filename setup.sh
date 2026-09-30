@@ -50,6 +50,7 @@ link() {
     ln -sfn "$DWM/config/ranger" ~/.config/ranger
     mkdir -p ~/.config/mpd ~/.local/share/mpd/playlists ~/Music
     ln -sfn "$DWM/config/mpd.conf" ~/.config/mpd/mpd.conf
+    systemctl --user enable --now mpd.service
     mkdir -p ~/.config/sunshine
     ln -sfn "$DWM/config/sunshine.conf" ~/.config/sunshine/sunshine.conf
     # dwm 的 Makefile 要求这三项在源码目录中 (均已被 dwm 的 .gitignore 忽略)
@@ -78,7 +79,9 @@ build_dwm() {
     for p in patches/dwm-*.diff; do
         [ -f "$p" ] && { echo "打补丁: $p"; git -C dwm apply "$DWM/$p" || { git -C dwm checkout -- .; exit 1; }; }
     done
-    (cd dwm && make clean && make && sudo make install) || { git -C dwm checkout -- .; exit 1; }
+    # 安装到 ~/.local/bin (无需 sudo, 可由 Super+Shift+R 自动完成); 先写临时文件再改名, 可覆盖正在运行的 dwm
+    (cd dwm && make clean && make && mkdir -p ~/.local/bin && install -m755 dwm ~/.local/bin/.dwm.new && mv -f ~/.local/bin/.dwm.new ~/.local/bin/dwm) \
+        || { git -C dwm checkout -- .; exit 1; }
     git -C dwm checkout -- .
 }
 
@@ -95,7 +98,7 @@ build_picom() {
 
 case "${1:-all}" in
     all)    git submodule update --init; deps; link; build_dwm; build_suckless st; build_suckless tabbed; build_picom
-            step "完成。按 Super + Shift + R 原地重启 dwm 生效 (首次安装需重新 startx)" ;;
+            step "完成。首次安装请重新 startx; 之后修改 dwm 配置按 Super + Shift + R 即可生效" ;;
     deps)   deps ;;
     link)   link ;;
     dwm)    build_dwm ;;

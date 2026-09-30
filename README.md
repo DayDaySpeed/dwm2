@@ -31,7 +31,7 @@ setup.sh                     安装/编译入口
 git clone --recursive <本仓库> ~/projs/dwm2
 cd ~/projs/dwm2 && ./setup.sh          # 依赖 + 链接 + 编译全部
 
-./setup.sh dwm                         # 改了 config/dwm.h 后
+# 改了 config/dwm.h 后: 按 Super + Shift + R (自动编译安装并原地重启)
 ./setup.sh st | tabbed | picom         # 改了对应配置后
 ```
 

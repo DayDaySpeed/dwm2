@@ -1,0 +1,43 @@
+diff --git a/x.c b/x.c
+index fe398f0..cd3700b 100644
+--- a/x.c
++++ b/x.c
+@@ -1251,6 +1251,15 @@ xinit(int cols, int rows)
+ 	boxdraw_xinit(xw.dpy, xw.cmap, xw.draw, xw.vis);
+ }
+ 
++static int
++fonthaschar(FcPattern *p, Rune rune)
++{
++	FcCharSet *cs;
++
++	return FcPatternGetCharSet(p, FC_CHARSET, 0, &cs) == FcResultMatch
++		&& FcCharSetHasChar(cs, rune);
++}
++
+ int
+ xmakeglyphfontspecs(XftGlyphFontSpec *specs, const Glyph *glyphs, int len, int x, int y)
+ {
+@@ -1354,6 +1363,22 @@ xmakeglyphfontspecs(XftGlyphFontSpec *specs, const Glyph *glyphs, int len, int x
+ 			fontpattern = FcFontSetMatch(0, fcsets, 1,
+ 					fcpattern, &fcres);
+ 
++			/*
++			 * family 的匹配优先级高于 charset, 可能选中不含该字符的字体
++			 * (如 Noto Color Emoji 之于中文), 此时按排序顺序改取第一个包含它的字体.
++			 */
++			if (!fontpattern || !fonthaschar(fontpattern, rune)) {
++				for (int k = 0; k < font->set->nfont; k++) {
++					if (fonthaschar(font->set->fonts[k], rune)) {
++						if (fontpattern)
++							FcPatternDestroy(fontpattern);
++						fontpattern = FcFontRenderPrepare(0, fcpattern,
++								font->set->fonts[k]);
++						break;
++					}
++				}
++			}
++
+ 			/* Allocate memory for the new cache entry. */
+ 			if (frclen >= frccap) {
+ 				frccap += 16;

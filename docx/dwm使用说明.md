@@ -119,7 +119,7 @@
 | `Super + B` | 焦点移到另一个显示器 |
 | `Super + Shift + B` | 把当前窗口移到另一个显示器 |
 | `Super + Shift + ↑` / `↓` | 音量加 / 减（以 5% 为步长） |
-| `Super + Shift + R` | **原地重启 dwm**：加载新编译的配置，所有窗口、所在 tag、浮动 / 隐藏状态和当前查看的 tag 都保留 |
+| `Super + Shift + R` | **让配置生效**：自动编译安装 dwm 并原地重启。所有窗口、所在 tag、先后顺序、浮动 / 隐藏状态和当前查看的 tag 都保留；编译失败会弹通知，当前的 dwm 继续运行 |
 | `Super + Shift + Esc` | 退出 dwm（会关闭所有窗口） |
 
 ---
@@ -199,7 +199,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 
 | 想改什么 | 改哪个文件 | 改完后 |
 |---|---|---|
-| 快捷键、tag、窗口规则、颜色、间距 | `config/dwm.h` | `./setup.sh dwm`，然后重启 dwm |
+| 快捷键、tag、窗口规则、颜色、间距 | `config/dwm.h` | 按 `Super + Shift + R` |
 | 终端字体、透明度 | `config/st.h` | `./setup.sh st` |
 | 终端标签栏 | `config/tabbed.h` | `./setup.sh tabbed` |
 | 开机启动的程序 | `bin/autostart.sh` | 下次登录生效 |
@@ -210,7 +210,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 | 状态栏模块 | `bin/statusbar/packages/*.sh` | 立即生效（下次刷新时） |
 | 壁纸 | 把图片放进 `wallpaper/` | 每 5 分钟随机更换一次；也可以左键点状态栏的菜单图标立即换 |
 
-**让 dwm 的改动生效：** 执行 `./setup.sh dwm` 后按 `Super + Shift + R` 原地重启，窗口都会保留，不需要退出。
+**让 dwm 的改动生效：** 改完 `config/dwm.h` 直接按 `Super + Shift + R`，会自动编译、安装到 `~/.local/bin/dwm` 并原地重启，窗口都会保留，不需要 sudo，也不需要退出。编译日志在 `~/.cache/dwm-build.log`。
 只有改了 `config/xinitrc` 或 `bin/autostart.sh`（它们只在登录时执行）才需要 `Super + Shift + Esc` 退出后重新 `startx`。
 
 > 原地重启由补丁 `patches/dwm-restart.diff` 提供，`./setup.sh dwm` 编译时会自动打上。不要在 `dwm/` 目录里直接 `make`，否则缺少补丁会编译失败。
