@@ -108,6 +108,7 @@
 | `M` | 󰎄 | 音乐 | `bin/music_player.sh`（需先安装 `mpd`、`ncmpcpp`、`cava`） |
 | `0` |  | Steam | `steam`（使用 `~/.local/bin/steam`，已修复 Steam 中的输入法） |
 | `W` | 󰇩 | Edge 浏览器 | `microsoft-edge-stable` |
+| `V` | 󰨞 | VS Code | `code` |
 
 ### 2.7 其他
 
@@ -185,7 +186,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 
 - **截图、文件管理器**：flameshot、pcmanfm 自动浮动。
 - **图片查看和保存对话框**：QQ、微信、Telegram 的图片查看器，以及浏览器的「保存文件」对话框，都会浮动。
-- **自动放到指定 tag**：Chrome 放到浏览器 tag，OBS 放到 OBS tag，Steam 放到 Steam tag，Edge 放到 Edge tag。
+- **自动放到指定 tag**：Chrome 放到浏览器 tag，OBS 放到 OBS tag，Steam 放到 Steam tag，Edge 放到 Edge tag，VS Code 放到 VS Code tag。
 
 如果想给其他程序加规则，在 `config/dwm.h` 的 `rules[]` 里添加，添加后要重新编译。
 
