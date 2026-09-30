@@ -24,9 +24,14 @@ start() {
     command -v x11vnc >/dev/null || { notify "未安装 x11vnc: sudo pacman -S x11vnc"; exit 1; }
     [ -f $PASSFILE ] || { notify "未设置密码, 请先在终端执行: $DWM/bin/vnc.sh passwd"; exit 1; }
     mkdir -p "$(dirname $LOGFILE)"
-    x11vnc -display :0 -auth guess -rfbport $PORT -allow $ALLOW -rfbauth $PASSFILE \
+    x11vnc -display :0 -auth "${XAUTHORITY:-$HOME/.Xauthority}" -rfbport $PORT -allow $ALLOW -rfbauth $PASSFILE \
            -forever -shared -noxdamage -bg -o $LOGFILE >/dev/null 2>&1
-    running && notify "已开启 ($(lanip):$PORT)" || { notify "启动失败, 日志: $LOGFILE"; exit 1; }
+    for _ in $(seq 10); do                                   # 等待端口开始监听 (最多 5 秒)
+        ss -ltn | grep -q ":$PORT " && { notify "已开启 ($(lanip):$PORT)"; return; }
+        sleep 0.5
+    done
+    pkill -x x11vnc
+    notify "启动失败, 日志: $LOGFILE"; exit 1
 }
 
 stop() {
