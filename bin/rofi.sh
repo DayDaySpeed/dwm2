@@ -4,6 +4,7 @@ call_menu() {
     echo '󰕞 update statusbar'
     [ "$(ps aux | grep -v grep | grep daed)" ] && echo ' close daed' || echo ' open daed'
     [ "$(ps aux | grep picom | grep -v 'grep\|rofi\|nvim')" ] && echo ' close picom' || echo ' open picom'
+    [ "$(pgrep -x x11vnc)" ] && echo '󰢹 close vnc' || echo '󰢹 open vnc'
 }
 
 # 执行菜单
@@ -26,6 +27,12 @@ execute_menu() {
             ;;
         ' close picom')
             killall picom
+            ;;
+        '󰢹 open vnc')
+            $DWM/bin/vnc.sh start > /dev/null
+            ;;
+        '󰢹 close vnc')
+            $DWM/bin/vnc.sh stop > /dev/null
             ;;
     esac
 }

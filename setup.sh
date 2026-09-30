@@ -18,7 +18,7 @@ deps() {
     fi
     sudo pacman -S --needed meson ninja uthash libconfig libev libxdg-basedir pcre \
         pixman dbus mesa xcb-util-image xcb-util-renderutil libx11 libxext \
-        rofi feh dunst flameshot xss-lock fcitx5 pamixer
+        rofi feh dunst flameshot xss-lock fcitx5 pamixer x11vnc
 }
 
 link() {
