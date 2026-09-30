@@ -1,6 +1,8 @@
+# ~/.xinitrc -> $DWM/config/xinitrc
+# 这里只放 环境变量 与 必须先于 dwm 的会话服务; 其余启动项都在 $DWM/bin/autostart.sh
+
 # 项目根目录: 所有配置在 $DWM/config, 所有脚本在 $DWM/bin
 export DWM=~/projs/dwm2
-
 
 # ================================================
 # UI 缩放(2560×1440 全局 1.35×;须最先设置)
@@ -13,28 +15,6 @@ export QT_SCALE_FACTOR=1.35
 export QT_SCREEN_SCALE_FACTORS=1.35
 
 # ================================================
-# 硬件设置
-# ================================================
-
-# 禁用触摸板
-xinput disable "YNA32E2:00 06CB:CEE7 Touchpad" &
-# 开机自动开启 NumLock（按键仍可正常切换开关）
-numlockx on 2>/dev/null || xset led named "Num Lock"
-
-# 熄屏:10 分钟无操作后关闭显示器(DPMS 与屏保都须设为 600)
-IDLE_SEC=600
-
-apply_dpms() {
-	xset dpms "$IDLE_SEC" "$IDLE_SEC" "$IDLE_SEC"
-	xset +dpms
-	xset s "$IDLE_SEC"
-	xset s on
-}
-
-# 允许 Docker 使用显示器
-xhost +local:docker
-
-# ================================================
 # 输入法配置
 # ================================================
 
@@ -43,19 +23,12 @@ export QT_IM_MODULE=fcitx5
 export XMODIFIERS="@im=fcitx5"
 export GLFW_IM_MODULE=ibus # ← 加这行,kitty 用这个对接输入法
 
-
 # ================================================
-# 视觉效果
-# ================================================
-
-
-
-# ================================================
-# 系统工具
+# 会话服务
 # ================================================
 
 # Xft.dpi 等;须在 GTK 程序与 portal 之前加载
-xrdb -merge ~/.Xresources
+xrdb -merge "$DWM/config/Xresources"
 
 export XDG_CURRENT_DESKTOP=dwm
 systemctl --user import-environment \
@@ -66,17 +39,11 @@ systemctl --user reset-failed xdg-desktop-portal-gtk.service 2>/dev/null
 systemctl --user restart xdg-desktop-portal.service xdg-desktop-portal-gtk.service 2>/dev/null || \
   systemctl --user start xdg-desktop-portal-gtk.service
 
-# 剪贴板管理器
-parcellite &
 # polkit 认证代理(必须在 exec dwm 之前启动,否则特权操作每次都要重新认证)
 /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 &
-
-# 再次设置 DPMS(picom/Cursor 等启动后可能改回默认 30s)
-nohup "$DWM/bin/dpms.sh" >/dev/null 2>&1 &
 
 # ================================================
 # 启动窗口管理器(必须放最后)
 # ================================================
 
-# fcitx5/flameshot/dunst/picom/壁纸/状态栏 由 $DWM/bin/autostart.sh 启动
 exec dwm

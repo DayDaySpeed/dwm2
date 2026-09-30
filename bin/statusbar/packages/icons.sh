@@ -46,7 +46,7 @@ call_menu() {
 
 click() {
     case "$1" in
-        L) notify; feh --randomize --bg-fill ~/Pictures/wallpaper/*.png ;;
+        L) notify; feh --randomize --bg-fill $DWM/wallpaper ;;
         R) call_menu ;;
     esac
 }

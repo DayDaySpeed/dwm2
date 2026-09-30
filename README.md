@@ -7,11 +7,13 @@ config/   所有配置 (只改这里)
   dwm.h  st.h  tabbed.h      编译时使用的 config.h
   picom.conf  dunst.conf     由 bin/autostart.sh 加载
   rofi.rasi                  rofi 主题, ~/.config/rofi/config.rasi 软链接到这里
-  xinitrc                    ~/.xinitrc 软链接到这里
+  xinitrc                    环境变量与会话服务, ~/.xinitrc 软链接到这里
+  Xresources                 Xft.dpi 等, ~/.Xresources 软链接到这里
 bin/      所有脚本
-  autostart.sh               dwm 启动时执行
+  autostart.sh               dwm 启动时执行, 所有开机启动项都在这里
   statusbar/                 状态栏
   blurlock.sh rofi.sh set_vol.sh music_player.sh dpms.sh ...
+wallpaper/                   壁纸, 随机轮换; ~/Pictures/wallpaper 软链接到这里
 dwm/ st/ tabbed/ picom/      上游源码 (git submodule, 不直接修改)
 setup.sh                     安装/编译入口
 ```

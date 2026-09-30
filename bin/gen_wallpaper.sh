@@ -8,7 +8,8 @@ TITLE_COLOR="#88C0D0"  # Nord 淡蓝标题
 # FONT="JetBrains-Mono-Bold" # 建议使用的字体，如果没安装，可以暂时注释掉用系统默认
 TITLE_FONT_SIZE=48
 FONT_SIZE_MAIN=22                                # 主体文字大小
-OUTPUT_FILE="$HOME/Pictures/dwm_cheat_sheet.png" # 最终输出路径
+DWM=${DWM:-~/projs/dwm2}
+OUTPUT_FILE="$DWM/wallpaper/nvim_cheatsheet.png" # 最终输出路径 (壁纸目录)
 
 # ==========================================
 # 左栏内容：系统配置路径
@@ -16,12 +17,18 @@ OUTPUT_FILE="$HOME/Pictures/dwm_cheat_sheet.png" # 最终输出路径
 read -d '' CONTENT_PATHS <<EOF
 [ SYSTEM CONFIG PATHS ]
 
-> DWM CORE (需编译)
-Config:    ~/dwm/config.h
-Blocks:    ~/dwmblocks/blocks.h
+> DWM2 (~/projs/dwm2, 需编译: ./setup.sh dwm|st|tabbed)
+DWM:       config/dwm.h
+St:        config/st.h
+Tabbed:    config/tabbed.h
+Autostart: bin/autostart.sh
+Statusbar: bin/statusbar/
 
 > COMPOSITOR & UI
-Picom:     ~/.config/picom/picom.conf
+Picom:     config/picom.conf
+Rofi:      config/rofi.rasi
+Dunst:     config/dunst.conf
+Xinitrc:   config/xinitrc
 GTK2:      ~/.gtkrc-2.0
 GTK3:      ~/.config/gtk-3.0/settings.ini
 
