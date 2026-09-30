@@ -214,7 +214,7 @@ static Key keys[] = {
     TAGKEYS(XK_3, 2, 0)
     TAGKEYS(XK_9, 3, "obs")
     TAGKEYS(XK_c, 4, "google-chrome-stable")
-    TAGKEYS(XK_m, 5, "r3playx")
+    TAGKEYS(XK_m, 5, "~/.local/share/r3playx/R3PLAYX.AppImage --no-sandbox")
     TAGKEYS(XK_0, 6, "~/.local/bin/steam")
     TAGKEYS(XK_w, 7, "microsoft-edge-stable")
     TAGKEYS(XK_v, 8, "code")

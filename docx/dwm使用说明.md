@@ -105,7 +105,7 @@
 | `3` | 󰎪 | 终端 3 | — |
 | `9` | 󰕧 | OBS | `obs` |
 | `C` |  | 浏览器 | `google-chrome-stable` |
-| `M` | 󰎄 | 音乐 | `r3playx`（网易云音乐客户端 R3PLAYX） |
+| `M` | 󰎄 | 音乐 | 网易云音乐客户端 R3PLAYX（`~/.local/share/r3playx/R3PLAYX.AppImage`） |
 | `0` |  | Steam | `steam`（使用 `~/.local/bin/steam`，已修复 Steam 中的输入法） |
 | `W` | 󰇩 | Edge 浏览器 | `microsoft-edge-stable` |
 | `V` | 󰨞 | VS Code | `code` |
@@ -221,7 +221,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 
 | 功能 | 需要安装 |
 |---|---|
-| `Super + M` 音乐播放器 | `r3playx-bin`（AUR：`yay -S r3playx-bin`） |
+| `Super + M` 音乐播放器 | R3PLAYX 的 AppImage（`./setup.sh deps` 会下载；不要用 AUR 的 `r3playx-bin`，它依赖需要从源码编译 Chromium 的 electron28） |
 | `Super + R` 文件管理器 | `pcmanfm` |
 | 使用键盘时暂时禁用触控板 | `xf86-input-synaptics`（autostart 已写好 `syndaemon`，装好后自动生效） |
 | `Super + Y` 翻译 | `translate-shell`（需要联网，使用谷歌翻译等在线服务） |

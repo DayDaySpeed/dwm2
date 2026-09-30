@@ -23,7 +23,14 @@ deps() {
         mpd mpc ncmpcpp cava pcmanfm \
         ranger ueberzugpp ffmpegthumbnailer translate-shell
     yay -S --needed sunshine-bin    # 远程桌面串流 (Windows 端用 Moonlight)
-    yay -S --needed r3playx-bin     # 网易云音乐客户端 (Super + M)
+    # 网易云音乐客户端 R3PLAYX (Super + M): 用官方 AppImage (自带 Electron)
+    # 不用 AUR 的 r3playx-bin: 它依赖 electron28, 而 AUR 的 electron28 需要从源码编译整个 Chromium
+    if [ ! -x ~/.local/share/r3playx/R3PLAYX.AppImage ]; then
+        mkdir -p ~/.local/share/r3playx
+        curl -fL -o ~/.local/share/r3playx/R3PLAYX.AppImage \
+            https://github.com/Sherlockouo/music/releases/download/v2.8.0/R3PLAYX-2.8.0-linux-x86_64.AppImage
+        chmod +x ~/.local/share/r3playx/R3PLAYX.AppImage
+    fi
     sudo pacman -S --needed tailscale  # 固定的虚拟 IP, 换网络 (手机热点等) 也能远程连接
     sudo systemctl enable --now tailscaled
 }
