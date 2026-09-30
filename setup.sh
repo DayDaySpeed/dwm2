@@ -77,7 +77,7 @@ build_picom() {
 
 case "${1:-all}" in
     all)    git submodule update --init; deps; link; build_dwm; build_suckless st; build_suckless tabbed; build_picom
-            step "完成。退出 dwm (super+ctrl+F12) 后重新 startx 生效" ;;
+            step "完成。退出 dwm (Super + Shift + Esc) 后重新 startx 生效" ;;
     deps)   deps ;;
     link)   link ;;
     dwm)    build_dwm ;;

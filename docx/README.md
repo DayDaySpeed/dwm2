@@ -20,4 +20,4 @@
 | `Super + 1 / 2 / 3` | 切换 tag |
 | `Super + Shift + A` | 截图 |
 | `Super + N` | 锁屏 |
-| `Super + Ctrl + F12` | 退出 dwm |
+| `Super + Shift + Esc` | 退出 dwm |

@@ -114,7 +114,7 @@
 | `Super + B` | 焦点移到另一个显示器 |
 | `Super + Shift + B` | 把当前窗口移到另一个显示器 |
 | `Super + Shift + ↑` / `↓` | 音量加 / 减（以 5% 为步长） |
-| `Super + Ctrl + F12` | 退出 dwm |
+| `Super + Shift + Esc` | 退出 dwm |
 
 ---
 
@@ -204,7 +204,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 | 状态栏模块 | `bin/statusbar/packages/*.sh` | 立即生效（下次刷新时） |
 | 壁纸 | 把图片放进 `wallpaper/` | 每 5 分钟随机更换一次；也可以左键点状态栏的菜单图标立即换 |
 
-**重启 dwm：** 按 `Super + Ctrl + F12` 退出，然后在 tty 里执行 `startx`。
+**重启 dwm：** 按 `Super + Shift + Esc` 退出，然后在 tty 里执行 `startx`。
 
 ---
 
