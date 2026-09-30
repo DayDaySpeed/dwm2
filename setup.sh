@@ -20,17 +20,9 @@ deps() {
         pixman dbus mesa xcb-util-image xcb-util-renderutil libx11 libxext \
         rofi feh dunst flameshot xss-lock fcitx5 pamixer x11vnc \
         intel-media-driver libva-utils \
-        mpd mpc ncmpcpp cava pcmanfm \
+        mpd mpc ncmpcpp cava pcmanfm strawberry \
         ranger ueberzugpp ffmpegthumbnailer translate-shell
     yay -S --needed sunshine-bin    # 远程桌面串流 (Windows 端用 Moonlight)
-    # 网易云音乐客户端 R3PLAYX (Super + M): 用官方 AppImage (自带 Electron)
-    # 不用 AUR 的 r3playx-bin: 它依赖 electron28, 而 AUR 的 electron28 需要从源码编译整个 Chromium
-    if [ ! -x ~/.local/share/r3playx/R3PLAYX.AppImage ]; then
-        mkdir -p ~/.local/share/r3playx
-        curl -fL -o ~/.local/share/r3playx/R3PLAYX.AppImage \
-            https://github.com/Sherlockouo/music/releases/download/v2.8.0/R3PLAYX-2.8.0-linux-x86_64.AppImage
-        chmod +x ~/.local/share/r3playx/R3PLAYX.AppImage
-    fi
     sudo pacman -S --needed tailscale  # 固定的虚拟 IP, 换网络 (手机热点等) 也能远程连接
     sudo systemctl enable --now tailscaled
 }
@@ -50,7 +42,6 @@ link() {
     ln -sfn "$DWM/config/ranger" ~/.config/ranger
     mkdir -p ~/.config/mpd ~/.local/share/mpd/playlists ~/Music
     ln -sfn "$DWM/config/mpd.conf" ~/.config/mpd/mpd.conf
-    systemctl --user enable --now mpd.service
     mkdir -p ~/.config/sunshine
     ln -sfn "$DWM/config/sunshine.conf" ~/.config/sunshine/sunshine.conf
     # dwm 的 Makefile 要求这三项在源码目录中 (均已被 dwm 的 .gitignore 忽略)

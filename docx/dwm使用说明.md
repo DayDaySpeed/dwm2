@@ -105,7 +105,7 @@
 | `3` | 󰎪 | 终端 3 | — |
 | `9` | 󰕧 | OBS | `obs` |
 | `C` |  | 浏览器 | `google-chrome-stable` |
-| `M` | 󰎄 | 音乐 | 网易云音乐客户端 R3PLAYX（`~/.local/share/r3playx/R3PLAYX.AppImage`） |
+| `M` | 󰎄 | 音乐 | `strawberry`（本地音乐播放器，播放 `~/Music`） |
 | `0` |  | Steam | `steam`（使用 `~/.local/bin/steam`，已修复 Steam 中的输入法） |
 | `W` | 󰇩 | Edge 浏览器 | `microsoft-edge-stable` |
 | `V` | 󰨞 | VS Code | `code` |
@@ -221,7 +221,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 
 | 功能 | 需要安装 |
 |---|---|
-| `Super + M` 音乐播放器 | R3PLAYX 的 AppImage（`./setup.sh deps` 会下载；不要用 AUR 的 `r3playx-bin`，它依赖需要从源码编译 Chromium 的 electron28） |
+| `Super + M` 音乐播放器 | `strawberry` |
 | `Super + R` 文件管理器 | `pcmanfm` |
 | 使用键盘时暂时禁用触控板 | `xf86-input-synaptics`（autostart 已写好 `syndaemon`，装好后自动生效） |
 | `Super + Y` 翻译 | `translate-shell`（需要联网，使用谷歌翻译等在线服务） |
@@ -232,8 +232,10 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 sudo pacman -S mpd mpc ncmpcpp cava pcmanfm
 ```
 
-**音乐播放器（R3PLAYX）：**
+**音乐播放器（Strawberry）：**
 
-- 按 `Super + M` 打开网易云音乐客户端 R3PLAYX，窗口自动放在音乐 tag。首次使用在应用内登录网易云账号即可同步歌单。
-- 原来的本地音乐方案（mpd + ncmpcpp + cava，`bin/music_player.sh`）仍保留，可在终端执行 `$DWM/bin/music_player.sh` 打开；音乐文件放在 `~/Music`。
-- 状态栏的音乐模块通过 `playerctl` 显示并控制正在播放的音乐：R3PLAYX、浏览器里的音视频、Spotify 等都支持（正在播放的优先，音乐软件优先于浏览器）；都没有时回退到 mpd。
+- 按 `Super + M` 打开 Strawberry，窗口自动放在音乐 tag。歌曲放在 `~/Music`。
+- **首次使用需添加音乐文件夹**：菜单 **工具 → 首选项 → 音乐库（Collection）→ 添加新文件夹**，选择 `~/Music`，确定后会自动扫描；以后往 `~/Music` 放新歌会自动更新。
+- 左侧「音乐库」按歌手 / 专辑浏览，双击或拖到右侧播放列表播放；上方可以搜索；「上下文」标签页显示封面和歌词。
+- 原来的终端方案（mpd + ncmpcpp + cava，`bin/music_player.sh`）仍保留，可在终端执行 `$DWM/bin/music_player.sh` 打开。
+- 状态栏的音乐模块通过 `playerctl` 显示并控制正在播放的音乐：Strawberry、浏览器里的音视频、Spotify 等都支持（正在播放的优先，音乐软件优先于浏览器）；都没有时回退到 mpd。

@@ -1,5 +1,5 @@
 #! /bin/bash
-# music 脚本: 通过 playerctl (MPRIS) 显示/控制正在播放的音乐 (R3PLAYX、浏览器、Spotify 等), 没有时回退到 mpd (mpc)
+# music 脚本: 通过 playerctl (MPRIS) 显示/控制正在播放的音乐 (Strawberry、浏览器、Spotify 等), 没有时回退到 mpd (mpc)
 
 tempfile=$(cd $(dirname $0);cd ..;pwd)/temp
 
