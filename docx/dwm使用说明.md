@@ -36,8 +36,8 @@
 | `Super + S` | 显示 / 隐藏 scratchpad 终端（显示在屏幕顶部） |
 | `Super + D` | rofi：运行命令 |
 | `Super + P` | rofi 自定义菜单：换壁纸、刷新状态栏、开关 daed、开关 picom |
-| `Super + F1` | 打开 / 关闭 pcmanfm 文件管理器（需先安装 `pcmanfm`） |
-| `Super + Shift + A` | 截图（flameshot），框选后松开鼠标即复制到剪贴板，并保存到 `~/Pictures/screenshots` |
+| `Super + R` | 打开 / 关闭 pcmanfm 文件管理器（需先安装 `pcmanfm`） |
+| `Super + Shift + A` | 截图（flameshot），框选后松开鼠标即复制到剪贴板（不保存文件） |
 | `Super + N` | 锁屏（模糊锁屏，输入密码解锁） |
 
 ### 2.2 窗口焦点与切换
@@ -213,7 +213,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 | 功能 | 需要安装 |
 |---|---|
 | `Super + M` 音乐播放器 | `mpd` `ncmpcpp` `cava` |
-| `Super + F1` 文件管理器 | `pcmanfm` |
+| `Super + R` 文件管理器 | `pcmanfm` |
 | 使用键盘时暂时禁用触控板 | `xf86-input-synaptics`（autostart 已写好 `syndaemon`，装好后自动生效） |
 
 安装命令（音乐播放器和文件管理器）：
