@@ -60,3 +60,50 @@ class my_edit(Command):
         # This is a generic tab-completion function that iterates through the
         # content of the current directory.
         return self._tab_directory_content()
+
+
+# 修复 ranger 1.9.4 自带 :trash (dT) 的崩溃:
+# 原实现把文件名字符串传给 fm.execute_file(), 而它需要 File 对象 (要读取 f.path),
+# 结果报 AttributeError: 'str' object has no attribute 'path'。
+# 这里同名覆盖, 逻辑不变, 只是改为传入 File 对象。
+from ranger.config.commands import trash as _builtin_trash  # noqa: E402
+
+
+class trash(_builtin_trash):
+    """:trash
+
+    将选中的文件 (或参数中的文件) 移到回收站 (rifle 中 label 为 trash 的规则, 即 trash-put)。
+    删除多个文件或非空目录时需要确认。
+    """
+
+    def execute(self):
+        import shlex
+        from functools import partial
+        from ranger.container.file import File
+
+        def is_directory_with_files(path):
+            return os.path.isdir(path) and not os.path.islink(path) and len(os.listdir(path)) > 0
+
+        if self.rest(1):
+            names = shlex.split(self.rest(1))
+            files = [File(os.path.abspath(name)) for name in names]
+            many_files = len(names) > 1 or is_directory_with_files(names[0])
+        else:
+            cwd = self.fm.thisdir
+            tfile = self.fm.thisfile
+            if not cwd or not tfile:
+                self.fm.notify("Error: no file selected for deletion!", bad=True)
+                return
+            files = self.fm.thistab.get_selection()
+            names = [f.relative_path for f in files]
+            many_files = bool(cwd.marked_items) or is_directory_with_files(tfile.path)
+
+        confirm = self.fm.settings.confirm_on_delete
+        if confirm != 'never' and (confirm != 'multiple' or many_files):
+            self.fm.ui.console.ask(
+                "Confirm deletion of: %s (y/N)" % ', '.join(names),
+                partial(self._question_callback, files),
+                ('n', 'N', 'y', 'Y'),
+            )
+        else:
+            self.fm.execute_file(files, label='trash')
