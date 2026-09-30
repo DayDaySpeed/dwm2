@@ -4,6 +4,7 @@
 #   translate.sh input      弹出 rofi 输入框, 翻译输入的文字, 并把译文复制到剪贴板 (Super + Shift + Y)
 
 export LC_ALL=C.UTF-8
+DWM=${DWM:-$(cd "$(dirname "$0")/.."; pwd)}
 NID=9530    # 通知 id: 新通知替换旧通知, 不会堆叠
 
 notify() { notify-send -r $NID -t "${3:-15000}" "$1" "$2"; }
@@ -13,7 +14,7 @@ escape() { sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'; }
 command -v trans >/dev/null || { notify "󰗊 翻译" "未安装 translate-shell: sudo pacman -S translate-shell"; exit 1; }
 
 case $1 in
-    input) text=$(rofi -dmenu -l 0 -p "󰗊 翻译" < /dev/null) ;;
+    input) text=$(rofi -dmenu -l 0 -theme "$DWM/config/rofi-input.rasi" -p "󰗊 翻译" < /dev/null) ;;
     *)     text=$(xclip -o -selection primary 2>/dev/null) ;;
 esac
 text=$(printf '%s' "$text" | tr '\n' ' ' | sed 's/^ *//; s/ *$//')

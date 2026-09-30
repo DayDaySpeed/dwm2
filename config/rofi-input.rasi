@@ -1,0 +1,44 @@
+/* 单行输入框主题 (翻译等): rofi -dmenu -l 0 -theme $DWM/config/rofi-input.rasi */
+
+* {
+    font:             "JetBrainsMono Nerd Font Mono 17";
+    bg:               #1b2429f5;
+    fg:               #f1f1f1;
+    dim:              #7f8f99;
+    accent:           #42a5f5;
+    background-color: transparent;
+    text-color:       @fg;
+}
+
+window {
+    location:         center;
+    anchor:           center;
+    width:            900px;
+    background-color: @bg;
+    border:           2px;
+    border-color:     @accent;
+    border-radius:    12px;
+    children:         [ mainbox ];
+}
+
+mainbox {
+    children: [ inputbar ];
+}
+
+inputbar {
+    padding:  18px 22px;
+    spacing:  16px;
+    children: [ prompt, entry ];
+}
+
+prompt {
+    text-color:     @accent;
+    vertical-align: 0.5;
+}
+
+entry {
+    placeholder:       "输入要翻译的文字, 回车翻译 (Esc 取消)";
+    placeholder-color: @dim;
+    cursor-color:      @accent;
+    vertical-align:    0.5;
+}
