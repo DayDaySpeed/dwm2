@@ -13,6 +13,7 @@ bin/      所有脚本
   autostart.sh               dwm 启动时执行, 所有开机启动项都在这里
   statusbar/                 状态栏
   blurlock.sh rofi.sh set_vol.sh music_player.sh dpms.sh ...
+docx/                        使用说明 (快捷键、鼠标、状态栏、改配置)
 wallpaper/                   壁纸, 随机轮换; ~/Pictures/wallpaper 软链接到这里
 dwm/ st/ tabbed/ picom/      上游源码 (git submodule, 不直接修改)
 setup.sh                     安装/编译入口
