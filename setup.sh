@@ -23,6 +23,7 @@ deps() {
         mpd mpc ncmpcpp cava pcmanfm \
         ranger ueberzugpp ffmpegthumbnailer translate-shell
     yay -S --needed sunshine-bin    # 远程桌面串流 (Windows 端用 Moonlight)
+    yay -S --needed r3playx-bin     # 网易云音乐客户端 (Super + M)
     sudo pacman -S --needed tailscale  # 固定的虚拟 IP, 换网络 (手机热点等) 也能远程连接
     sudo systemctl enable --now tailscaled
 }

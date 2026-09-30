@@ -105,7 +105,7 @@
 | `3` | 󰎪 | 终端 3 | — |
 | `9` | 󰕧 | OBS | `obs` |
 | `C` |  | 浏览器 | `google-chrome-stable` |
-| `M` | 󰎄 | 音乐 | `bin/music_player.sh`（需先安装 `mpd`、`ncmpcpp`、`cava`） |
+| `M` | 󰎄 | 音乐 | `r3playx`（网易云音乐客户端 R3PLAYX） |
 | `0` |  | Steam | `steam`（使用 `~/.local/bin/steam`，已修复 Steam 中的输入法） |
 | `W` | 󰇩 | Edge 浏览器 | `microsoft-edge-stable` |
 | `V` | 󰨞 | VS Code | `code` |
@@ -217,20 +217,19 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 
 | 功能 | 需要安装 |
 |---|---|
-| `Super + M` 音乐播放器 | `mpd` `ncmpcpp` `cava` |
+| `Super + M` 音乐播放器 | `r3playx-bin`（AUR：`yay -S r3playx-bin`） |
 | `Super + R` 文件管理器 | `pcmanfm` |
 | 使用键盘时暂时禁用触控板 | `xf86-input-synaptics`（autostart 已写好 `syndaemon`，装好后自动生效） |
 | `Super + Y` 翻译 | `translate-shell`（需要联网，使用谷歌翻译等在线服务） |
 
-安装命令（音乐播放器和文件管理器）：
+安装命令（本地音乐方案和文件管理器）：
 
 ```sh
 sudo pacman -S mpd mpc ncmpcpp cava pcmanfm
 ```
 
-**音乐播放器的用法：**
+**音乐播放器（R3PLAYX）：**
 
-- 音乐文件放进 `~/Music`，mpd 会自动扫描。mpd 的配置文件在 `config/mpd.conf`（`~/.config/mpd/mpd.conf` 软链接到这里）。
-- 按 `Super + M` 会同时打开 ncmpcpp（播放器，右上角）和 cava（音频可视化）。再按一次会全部关闭，mpd 也会一起退出。
-- ncmpcpp 常用按键：`1` 播放列表、`2` 浏览文件、`4` 媒体库；`Enter` 播放、`p` 暂停、`>` / `<` 下一首 / 上一首、`+` / `-` 音量、`a` 加入播放列表、`u` 重新扫描音乐库、`q` 退出。
-- 状态栏的音乐模块也能控制：左键 / 右键暂停，滚轮切歌。
+- 按 `Super + M` 打开网易云音乐客户端 R3PLAYX，窗口自动放在音乐 tag。首次使用在应用内登录网易云账号即可同步歌单。
+- 原来的本地音乐方案（mpd + ncmpcpp + cava，`bin/music_player.sh`）仍保留，可在终端执行 `$DWM/bin/music_player.sh` 打开；音乐文件放在 `~/Music`。
+- 状态栏的音乐模块控制的是 mpd（本地音乐），对 R3PLAYX 无效。
