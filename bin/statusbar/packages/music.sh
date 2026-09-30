@@ -1,5 +1,5 @@
 #! /bin/bash
-# music 脚本: 通过 playerctl (MPRIS) 显示/控制正在播放的音乐 (Lollypop、浏览器、Spotify 等)
+# music 脚本: 通过 playerctl (MPRIS) 显示/控制正在播放的音乐 (SPlayer、浏览器、Spotify 等)
 
 tempfile=$(cd $(dirname $0);cd ..;pwd)/temp
 

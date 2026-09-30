@@ -20,9 +20,16 @@ deps() {
         pixman dbus mesa xcb-util-image xcb-util-renderutil libx11 libxext \
         rofi feh dunst flameshot xss-lock fcitx5 pamixer x11vnc \
         intel-media-driver libva-utils \
-        pcmanfm lollypop \
+        pcmanfm \
         ranger ueberzugpp ffmpegthumbnailer translate-shell
     yay -S --needed sunshine-bin    # 远程桌面串流 (Windows 端用 Moonlight)
+    # 音乐播放器 SPlayer (Super + M): 网易云风格, 支持本地音乐; 官方 AppImage 自带 Electron, 无需编译
+    if [ ! -x ~/.local/share/splayer/SPlayer.AppImage ]; then
+        mkdir -p ~/.local/share/splayer
+        curl -fL -o ~/.local/share/splayer/SPlayer.AppImage \
+            https://github.com/imsyy/SPlayer/releases/download/v3.1.1/splayer-3.1.1-x86_64.AppImage
+        chmod +x ~/.local/share/splayer/SPlayer.AppImage
+    fi
     sudo pacman -S --needed tailscale  # 固定的虚拟 IP, 换网络 (手机热点等) 也能远程连接
     sudo systemctl enable --now tailscaled
 }

@@ -105,7 +105,7 @@
 | `3` | 󰎪 | 终端 3 | — |
 | `9` | 󰕧 | OBS | `obs` |
 | `C` |  | 浏览器 | `google-chrome-stable` |
-| `M` | 󰎄 | 音乐 | `lollypop`（本地音乐播放器，播放 `~/Music`） |
+| `M` | 󰎄 | 音乐 | SPlayer（`~/.local/share/splayer/SPlayer.AppImage`） |
 | `0` |  | Steam | `steam`（使用 `~/.local/bin/steam`，已修复 Steam 中的输入法） |
 | `W` | 󰇩 | Edge 浏览器 | `microsoft-edge-stable` |
 | `V` | 󰨞 | VS Code | `code` |
@@ -221,20 +221,20 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 
 | 功能 | 需要安装 |
 |---|---|
-| `Super + M` 音乐播放器 | `lollypop` |
+| `Super + M` 音乐播放器 | SPlayer 的 AppImage（`./setup.sh deps` 会自动下载，无需安装） |
 | `Super + R` 文件管理器 | `pcmanfm` |
 | 使用键盘时暂时禁用触控板 | `xf86-input-synaptics`（autostart 已写好 `syndaemon`，装好后自动生效） |
 | `Super + Y` 翻译 | `translate-shell`（需要联网，使用谷歌翻译等在线服务） |
 
-安装命令（音乐播放器和文件管理器）：
+安装命令（文件管理器）：
 
 ```sh
-sudo pacman -S lollypop pcmanfm
+sudo pacman -S pcmanfm
 ```
 
-**音乐播放器（Lollypop）：**
+**音乐播放器（SPlayer）：**
 
-- 按 `Super + M` 打开 Lollypop，窗口自动放在音乐 tag。歌曲放在 `~/Music`，Lollypop 默认就会扫描这个目录，不用额外设置；放入新歌后会自动更新。
-- 以封面墙的形式按专辑、歌手浏览，点击专辑封面播放；右上角可以搜索。
-- 想用深色界面：在 Lollypop 的首选项里查找深色主题的开关（不同版本位置可能不同）。
-- 状态栏的音乐模块通过 `playerctl` 显示并控制正在播放的音乐：Lollypop、浏览器里的音视频、Spotify 等都支持（正在播放的优先，音乐软件优先于浏览器）。
+- 按 `Super + M` 打开 SPlayer，窗口自动放在音乐 tag。它是网易云风格的第三方客户端（[imsyy/SPlayer](https://github.com/imsyy/SPlayer)），本地音乐和网易云在线歌单都能播放。
+- **播放本地歌曲**：左侧进入「本地音乐」，添加 `~/Music` 文件夹即可扫描；支持按歌手 / 专辑分类、编辑歌曲标签和封面。
+- **在线**：登录网易云账号后可同步歌单、每日推荐；设置里也可以切换为纯本地模式（不联网）。
+- 状态栏的音乐模块通过 `playerctl` 显示并控制正在播放的音乐：SPlayer、浏览器里的音视频、Spotify 等都支持（正在播放的优先，音乐软件优先于浏览器）。
