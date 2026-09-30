@@ -20,7 +20,8 @@ deps() {
         pixman dbus mesa xcb-util-image xcb-util-renderutil libx11 libxext \
         rofi feh dunst flameshot xss-lock fcitx5 pamixer x11vnc \
         intel-media-driver libva-utils \
-        mpd mpc ncmpcpp cava pcmanfm
+        mpd mpc ncmpcpp cava pcmanfm \
+        ranger ueberzugpp ffmpegthumbnailer
     yay -S --needed sunshine-bin    # 远程桌面串流 (Windows 端用 Moonlight)
 }
 
@@ -35,6 +36,7 @@ link() {
     ln -sfn "$DWM/wallpaper" ~/Pictures/wallpaper
     mkdir -p ~/.config/rofi
     ln -sfn "$DWM/config/rofi.rasi" ~/.config/rofi/config.rasi
+    ln -sfn "$DWM/config/ranger" ~/.config/ranger
     mkdir -p ~/.config/mpd ~/.local/share/mpd/playlists ~/Music
     ln -sfn "$DWM/config/mpd.conf" ~/.config/mpd/mpd.conf
     mkdir -p ~/.config/sunshine
