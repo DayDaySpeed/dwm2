@@ -34,8 +34,9 @@ link() {
         rmdir ~/Pictures/wallpaper
     fi
     ln -sfn "$DWM/wallpaper" ~/Pictures/wallpaper
-    mkdir -p ~/.config/rofi
-    ln -sfn "$DWM/config/rofi.rasi" ~/.config/rofi/config.rasi
+    # rofi 主题通过相对路径引用 colors/, 需链接整个目录 (旧版本只链接了 config.rasi 文件)
+    [ -d ~/.config/rofi ] && [ ! -L ~/.config/rofi ] && { rm -f ~/.config/rofi/config.rasi; rmdir ~/.config/rofi; }
+    ln -sfn "$DWM/config/rofi" ~/.config/rofi
     ln -sfn "$DWM/config/ranger" ~/.config/ranger
     mkdir -p ~/.config/mpd ~/.local/share/mpd/playlists ~/Music
     ln -sfn "$DWM/config/mpd.conf" ~/.config/mpd/mpd.conf

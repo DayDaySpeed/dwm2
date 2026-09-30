@@ -2,7 +2,8 @@
 
 rofi 是启动器和菜单：用来启动程序、切换窗口，也被用作 dwm 里各种弹出菜单的界面。
 
-- 主题：`config/rofi.rasi`（`~/.config/rofi/config.rasi` 软链接到这里，所有打开 rofi 的地方都使用这个主题）
+- 主题：`config/rofi/config.rasi`（`~/.config/rofi` 整个目录软链接到 `config/rofi/`，所有打开 rofi 的地方都使用这个主题）。样式来自开源合集 [adi1090x/rofi](https://github.com/adi1090x/rofi) 的 type-1/style-5
+- 翻译输入框单独使用 `config/rofi/input.rasi`（单行、大字号）
 - 自定义菜单脚本：`bin/rofi.sh`
 
 ---
@@ -51,16 +52,17 @@ rofi 是启动器和菜单：用来启动程序、切换窗口，也被用作 dw
 
 ---
 
-## 4. 修改外观（`config/rofi.rasi`）
+## 4. 修改外观（`config/rofi/config.rasi`）
+
+**换配色**：修改文件开头的 `@import "colors/onedark.rasi"`，把 `onedark` 换成 `config/rofi/colors/` 里的其他配色，保存后下次打开 rofi 就生效。可选的配色有：
+
+`adapta` `arc` `black` `catppuccin` `cyberpunk` `dracula` `everforest` `gruvbox` `lovelace` `navy` `nord` `onedark` `paper` `solarized` `tokyonight` `yousai`
 
 | 想改什么 | 改哪一项 |
 |---|---|
-| 窗口大小 | `*` 里的 `width: 680px;` `height: 300px;` |
-| 背景颜色和透明度 | `transparent: rgba(34,62,79,0.80);`（最后一个数是不透明度） |
-| 选中项的颜色 | `transparent-light: rgba(34,82,99);` |
-| 字体和字号 | `font: "JetBrainsMono Nerd Font Mono 12.5";` |
-| 文字颜色 | `text-color: #f1f1f1;` |
-| 显示应用图标 | `configuration` 里的 `show-icons: false;` 改成 `true` |
-| 各个模式前的提示图标 | `configuration` 里的 `display-drun`、`display-window`、`display-run` |
+| 字体和字号 | `font: "JetBrainsMono Nerd Font 13";` |
+| 窗口宽度 | `window` 里的 `width: 800px;` |
+| 显示几行 | `listview` 里的 `lines` |
+| 各模式按钮的图标 | 开头 `configuration` 里的 `display-drun`、`display-run` 等 |
 
-保存后，下次打开 rofi 就会生效。
+想换成合集里的其他样式，可以到 adi1090x/rofi 仓库的 `files/launchers/` 目录下挑选。

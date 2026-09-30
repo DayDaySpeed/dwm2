@@ -1,4 +1,4 @@
-/* 单行输入框主题 (翻译等): rofi -dmenu -l 0 -theme $DWM/config/rofi-input.rasi */
+/* 单行输入框主题 (翻译等): rofi -dmenu -l 0 -theme $DWM/config/rofi/input.rasi */
 
 * {
     font:             "JetBrainsMono Nerd Font Mono 17";

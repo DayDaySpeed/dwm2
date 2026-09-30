@@ -14,7 +14,7 @@ escape() { sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'; }
 command -v trans >/dev/null || { notify "󰗊 翻译" "未安装 translate-shell: sudo pacman -S translate-shell"; exit 1; }
 
 case $1 in
-    input) text=$(rofi -dmenu -l 0 -theme "$DWM/config/rofi-input.rasi" -p "󰗊 翻译" < /dev/null) ;;
+    input) text=$(rofi -dmenu -l 0 -theme "$DWM/config/rofi/input.rasi" -p "󰗊 翻译" < /dev/null) ;;
     *)     text=$(xclip -o -selection primary 2>/dev/null) ;;
 esac
 text=$(printf '%s' "$text" | tr '\n' ' ' | sed 's/^ *//; s/ *$//')
