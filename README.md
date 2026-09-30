@@ -6,6 +6,7 @@
 config/   所有配置 (只改这里)
   dwm.h  st.h  tabbed.h      编译时使用的 config.h
   picom.conf  dunst.conf     由 bin/autostart.sh 加载
+  rofi.rasi                  rofi 主题, ~/.config/rofi/config.rasi 软链接到这里
   xinitrc                    ~/.xinitrc 软链接到这里
 bin/      所有脚本
   autostart.sh               dwm 启动时执行

@@ -24,6 +24,8 @@ deps() {
 link() {
     step "软链接"
     ln -sfn "$DWM/config/xinitrc" ~/.xinitrc
+    mkdir -p ~/.config/rofi
+    ln -sfn "$DWM/config/rofi.rasi" ~/.config/rofi/config.rasi
     # dwm 的 Makefile 要求这三项在源码目录中 (均已被 dwm 的 .gitignore 忽略)
     ln -sfn ../config/dwm.h     dwm/config.h
     ln -sfn ../bin/autostart.sh dwm/autostart.sh
