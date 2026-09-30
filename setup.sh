@@ -21,6 +21,7 @@ deps() {
         rofi feh dunst flameshot xss-lock fcitx5 pamixer x11vnc \
         intel-media-driver libva-utils
     yay -S --needed sunshine-bin    # 远程桌面串流 (Windows 端用 Moonlight)
+    sudo install -Dm644 config/xorg/50-sunshine-mouse.conf /etc/X11/xorg.conf.d/50-sunshine-mouse.conf
 }
 
 link() {
