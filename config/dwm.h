@@ -59,9 +59,7 @@ static const char *tags[] = {
     "󰕧", // tag:4  key:9  desc:obs
     "", // tag:5  key:c  desc:chrome
     "󰎄", // tag:6  key:m  desc:music
-    "󰘅", // tag:7  key:0  desc:qq
-    "󰘑", // tag:8  key:w  desc:wechat
-    "󰊠", // tag:9  key:l  desc:wxwork
+    "", // tag:7  key:0  desc:steam
 };
 
 /* 自定义窗口显示规则 */
@@ -86,15 +84,12 @@ static const Rule rules[] = {
     {"chrome",               NULL,                 NULL,             1 << 4,       0,          0,          0,        -1,      0}, // chrome     tag -> 
     {"Chromium",             NULL,                 NULL,             1 << 4,       0,          0,          0,        -1,      0}, // Chromium   tag -> 
     {"music",                NULL,                 NULL,             1 << 5,       1,          0,          1,        -1,      0}, // music      tag -> 󰎄 浮动、无边框
-    { NULL,                 "qq",                  NULL,             1 << 6,       0,          0,          1,        -1,      0}, // qq         tag -> 󰘅 无边框
-    { NULL,                 "wechat.exe",          NULL,             1 << 7,       0,          0,          1,        -1,      0}, // wechat     tag -> 󰘑 无边框
-    { NULL,                 "wxwork.exe",          NULL,             1 << 8,       0,          0,          1,        -1,      0}, // workwechat tag -> 󰊠 无边框
+    {"steam",                NULL,                 NULL,             1 << 6,       0,          0,          0,        -1,      0}, // steam      tag -> 
     {"Vncviewer",            NULL,                 NULL,             0,            1,          0,          1,        -1,      2}, // Vncviewer           浮动、无边框 屏幕顶部
     {"flameshot",            NULL,                 NULL,             0,            1,          0,          0,        -1,      0}, // 火焰截图            浮动
     {"scratchpad",          "scratchpad",         "scratchpad",      TAGMASK,      1,          1,          1,        -1,      2}, // scratchpad          浮动、全局、无边框 屏幕顶部
     {"Pcmanfm",              NULL,                 NULL,             0,            1,          0,          1,        -1,      3}, // pcmanfm             浮动、无边框 右上角
     {"wemeetapp",            NULL,                 NULL,             TAGMASK,      1,          1,          0,        -1,      0}, // !!!腾讯会议在切换tag时有诡异bug导致退出 变成global来规避该问题
-    { NULL,                  NULL,                "wechat",          TAGMASK,      0,          0,          1,        -1,      0}, // wechat相关的子窗口，去掉边框
 
     /** 部分特殊class的规则 */
     {"float",                NULL,                 NULL,             0,            1,          0,          0,        -1,      0}, // class = float       浮动
@@ -211,7 +206,7 @@ static Key keys[] = {
     TAGKEYS(XK_9, 3, "obs")
     TAGKEYS(XK_c, 4, "google-chrome-stable")
     TAGKEYS(XK_m, 5, "$DWM/bin/music_player.sh")
-    TAGKEYS(XK_0, 6, "linuxqq")
+    TAGKEYS(XK_0, 6, "~/.local/bin/steam")
 };
 
 static Button buttons[] = {

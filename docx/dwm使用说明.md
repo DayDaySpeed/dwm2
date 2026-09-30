@@ -103,9 +103,7 @@
 | `9` | 󰕧 | OBS | `obs` |
 | `C` |  | 浏览器 | `google-chrome-stable` |
 | `M` | 󰎄 | 音乐 | `bin/music_player.sh`（需先安装 `mpd`、`ncmpcpp`、`cava`） |
-| `0` | 󰘅 | QQ | `linuxqq`（需先安装） |
-| — | 󰘑 | 微信 | 没有绑定快捷键，微信窗口会被自动放到这里 |
-| — | 󰊠 | 企业微信 | 没有绑定快捷键，企业微信窗口会被自动放到这里 |
+| `0` |  | Steam | `steam`（使用 `~/.local/bin/steam`，已修复 Steam 中的输入法） |
 
 ### 2.7 其他
 
@@ -183,7 +181,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 
 - **截图、文件管理器**：flameshot、pcmanfm 自动浮动。
 - **图片查看和保存对话框**：QQ、微信、Telegram 的图片查看器，以及浏览器的「保存文件」对话框，都会浮动。
-- **自动放到指定 tag**：Chrome 放到浏览器 tag，OBS 放到 OBS tag。
+- **自动放到指定 tag**：Chrome 放到浏览器 tag，OBS 放到 OBS tag，Steam 放到 Steam tag。
 
 如果想给其他程序加规则，在 `config/dwm.h` 的 `rules[]` 里添加，添加后要重新编译。
 
@@ -216,5 +214,4 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 |---|---|
 | `Super + M` 音乐播放器 | `mpd` `ncmpcpp` `cava` |
 | `Super + F1` 文件管理器 | `pcmanfm` |
-| `Super + 0` QQ | `linuxqq` |
 | 使用键盘时暂时禁用触控板 | `xf86-input-synaptics`（autostart 已写好 `syndaemon`，装好后自动生效） |
