@@ -9,6 +9,7 @@ PASSFILE=~/.vnc/passwd
 LOGFILE=~/.cache/x11vnc.log
 PORT=5900
 ALLOW=127.,192.168.,10.    # 只允许本机与局域网地址连接
+SCALE=${VNC_SCALE:-3/4}    # 画面缩放: 2560x1440 * 3/4 = 1920x1080, 与客户端屏幕一致才能全屏铺满; 1 为不缩放
 
 # 局域网 IP: 取物理网卡上 192.168.* / 10.* 的地址 (跳过 docker 网桥与代理虚拟网卡)
 lanip() {
@@ -25,6 +26,7 @@ start() {
     [ -f $PASSFILE ] || { notify "未设置密码, 请先在终端执行: $DWM/bin/vnc.sh passwd"; exit 1; }
     mkdir -p "$(dirname $LOGFILE)"
     x11vnc -display :0 -auth "${XAUTHORITY:-$HOME/.Xauthority}" -rfbport $PORT -allow $ALLOW -rfbauth $PASSFILE \
+           -scale $SCALE -wait 10 -defer 10 \
            -forever -shared -noxdamage -bg -o $LOGFILE >/dev/null 2>&1
     for _ in $(seq 10); do                                   # 等待端口开始监听 (最多 5 秒)
         ss -ltn | grep -q ":$PORT " && { notify "已开启 ($(lanip):$PORT)"; return; }
@@ -37,6 +39,8 @@ start() {
 stop() {
     running || { notify "未在运行"; return; }
     pkill -x x11vnc
+    for _ in $(seq 10); do running || break; sleep 0.3; done   # 等进程真正退出
+    running && pkill -9 -x x11vnc
     notify "已关闭"
 }
 
