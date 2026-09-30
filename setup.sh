@@ -20,7 +20,7 @@ deps() {
         pixman dbus mesa xcb-util-image xcb-util-renderutil libx11 libxext \
         rofi feh dunst flameshot xss-lock fcitx5 pamixer x11vnc \
         intel-media-driver libva-utils \
-        mpd mpc ncmpcpp cava pcmanfm strawberry \
+        pcmanfm lollypop \
         ranger ueberzugpp ffmpegthumbnailer translate-shell
     yay -S --needed sunshine-bin    # 远程桌面串流 (Windows 端用 Moonlight)
     sudo pacman -S --needed tailscale  # 固定的虚拟 IP, 换网络 (手机热点等) 也能远程连接
@@ -40,8 +40,7 @@ link() {
     [ -d ~/.config/rofi ] && [ ! -L ~/.config/rofi ] && { rm -f ~/.config/rofi/config.rasi; rmdir ~/.config/rofi; }
     ln -sfn "$DWM/config/rofi" ~/.config/rofi
     ln -sfn "$DWM/config/ranger" ~/.config/ranger
-    mkdir -p ~/.config/mpd ~/.local/share/mpd/playlists ~/Music
-    ln -sfn "$DWM/config/mpd.conf" ~/.config/mpd/mpd.conf
+    mkdir -p ~/Music
     mkdir -p ~/.config/sunshine
     ln -sfn "$DWM/config/sunshine.conf" ~/.config/sunshine/sunshine.conf
     # dwm 的 Makefile 要求这三项在源码目录中 (均已被 dwm 的 .gitignore 忽略)

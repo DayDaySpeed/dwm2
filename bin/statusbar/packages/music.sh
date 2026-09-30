@@ -1,5 +1,5 @@
 #! /bin/bash
-# music 脚本: 通过 playerctl (MPRIS) 显示/控制正在播放的音乐 (Strawberry、浏览器、Spotify 等), 没有时回退到 mpd (mpc)
+# music 脚本: 通过 playerctl (MPRIS) 显示/控制正在播放的音乐 (Lollypop、浏览器、Spotify 等)
 
 tempfile=$(cd $(dirname $0);cd ..;pwd)/temp
 
@@ -22,17 +22,12 @@ pick_player() {
     echo "$best"
 }
 
-mpd_running() { command -v mpc >/dev/null && mpc status >/dev/null 2>&1; }
-
 update() {
     local player text status
     player=$(pick_player)
     if [ -n "$player" ]; then
         text=$(playerctl -p "$player" metadata --format '{{artist}} - {{title}}' 2>/dev/null | sed 's/^ - //')
         status=$(playerctl -p "$player" status 2>/dev/null)
-    elif mpd_running; then
-        text=$(mpc current)
-        mpc status | grep -q paused && status=Paused || status=Playing
     fi
 
     sed -i '/^export '$this'=.*$/d' $tempfile
@@ -50,12 +45,6 @@ click() {
             L|R) playerctl -p "$player" play-pause ;;
             U)   playerctl -p "$player" previous ;;
             D)   playerctl -p "$player" next ;;
-        esac
-    elif mpd_running; then
-        case "$1" in
-            L|R) mpc toggle ;;
-            U)   mpc prev ;;
-            D)   mpc next ;;
         esac
     fi >/dev/null 2>&1
 }

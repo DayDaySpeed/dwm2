@@ -86,7 +86,7 @@ static const Rule rules[] = {
     {"chrome",               NULL,                 NULL,             1 << 4,       0,          0,          0,        -1,      0}, // chrome     tag -> 
     {"Chromium",             NULL,                 NULL,             1 << 4,       0,          0,          0,        -1,      0}, // Chromium   tag -> 
     {"music",                NULL,                 NULL,             1 << 5,       1,          0,          1,        -1,      0}, // music      tag -> 󰎄 浮动、无边框
-    {"Strawberry",           "strawberry",         NULL,             1 << 5,       0,          0,          0,        -1,      0}, // Strawberry tag -> 󰎄 (本地音乐 ~/Music)
+    {"Lollypop",             "lollypop",           NULL,             1 << 5,       0,          0,          0,        -1,      0}, // Lollypop   tag -> 󰎄 (本地音乐 ~/Music)
     {"steam",                NULL,                 NULL,             1 << 6,       0,          0,          0,        -1,      0}, // steam      tag -> 
     {"Microsoft-edge",       NULL,                 NULL,             1 << 7,       0,          0,          0,        -1,      0}, // edge       tag -> 󰇩
     {"Code",                 NULL,                 NULL,             1 << 8,       0,          0,          0,        -1,      0}, // vscode     tag -> 󰨞
@@ -214,7 +214,7 @@ static Key keys[] = {
     TAGKEYS(XK_3, 2, 0)
     TAGKEYS(XK_9, 3, "obs")
     TAGKEYS(XK_c, 4, "google-chrome-stable")
-    TAGKEYS(XK_m, 5, "strawberry")
+    TAGKEYS(XK_m, 5, "lollypop")
     TAGKEYS(XK_0, 6, "~/.local/bin/steam")
     TAGKEYS(XK_w, 7, "microsoft-edge-stable")
     TAGKEYS(XK_v, 8, "code")

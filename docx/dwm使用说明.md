@@ -105,7 +105,7 @@
 | `3` | 󰎪 | 终端 3 | — |
 | `9` | 󰕧 | OBS | `obs` |
 | `C` |  | 浏览器 | `google-chrome-stable` |
-| `M` | 󰎄 | 音乐 | `strawberry`（本地音乐播放器，播放 `~/Music`） |
+| `M` | 󰎄 | 音乐 | `lollypop`（本地音乐播放器，播放 `~/Music`） |
 | `0` |  | Steam | `steam`（使用 `~/.local/bin/steam`，已修复 Steam 中的输入法） |
 | `W` | 󰇩 | Edge 浏览器 | `microsoft-edge-stable` |
 | `V` | 󰨞 | VS Code | `code` |
@@ -221,21 +221,20 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 
 | 功能 | 需要安装 |
 |---|---|
-| `Super + M` 音乐播放器 | `strawberry` |
+| `Super + M` 音乐播放器 | `lollypop` |
 | `Super + R` 文件管理器 | `pcmanfm` |
 | 使用键盘时暂时禁用触控板 | `xf86-input-synaptics`（autostart 已写好 `syndaemon`，装好后自动生效） |
 | `Super + Y` 翻译 | `translate-shell`（需要联网，使用谷歌翻译等在线服务） |
 
-安装命令（本地音乐方案和文件管理器）：
+安装命令（音乐播放器和文件管理器）：
 
 ```sh
-sudo pacman -S mpd mpc ncmpcpp cava pcmanfm
+sudo pacman -S lollypop pcmanfm
 ```
 
-**音乐播放器（Strawberry）：**
+**音乐播放器（Lollypop）：**
 
-- 按 `Super + M` 打开 Strawberry，窗口自动放在音乐 tag。歌曲放在 `~/Music`。
-- **首次使用需添加音乐文件夹**：菜单 **工具 → 首选项 → 音乐库（Collection）→ 添加新文件夹**，选择 `~/Music`，确定后会自动扫描；以后往 `~/Music` 放新歌会自动更新。
-- 左侧「音乐库」按歌手 / 专辑浏览，双击或拖到右侧播放列表播放；上方可以搜索；「上下文」标签页显示封面和歌词。
-- 原来的终端方案（mpd + ncmpcpp + cava，`bin/music_player.sh`）仍保留，可在终端执行 `$DWM/bin/music_player.sh` 打开。
-- 状态栏的音乐模块通过 `playerctl` 显示并控制正在播放的音乐：Strawberry、浏览器里的音视频、Spotify 等都支持（正在播放的优先，音乐软件优先于浏览器）；都没有时回退到 mpd。
+- 按 `Super + M` 打开 Lollypop，窗口自动放在音乐 tag。歌曲放在 `~/Music`，Lollypop 默认就会扫描这个目录，不用额外设置；放入新歌后会自动更新。
+- 以封面墙的形式按专辑、歌手浏览，点击专辑封面播放；右上角可以搜索。
+- 想用深色界面：在 Lollypop 的首选项里查找深色主题的开关（不同版本位置可能不同）。
+- 状态栏的音乐模块通过 `playerctl` 显示并控制正在播放的音乐：Lollypop、浏览器里的音视频、Spotify 等都支持（正在播放的优先，音乐软件优先于浏览器）。
