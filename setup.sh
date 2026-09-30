@@ -18,7 +18,9 @@ deps() {
     fi
     sudo pacman -S --needed meson ninja uthash libconfig libev libxdg-basedir pcre \
         pixman dbus mesa xcb-util-image xcb-util-renderutil libx11 libxext \
-        rofi feh dunst flameshot xss-lock fcitx5 pamixer x11vnc
+        rofi feh dunst flameshot xss-lock fcitx5 pamixer x11vnc \
+        intel-media-driver libva-utils
+    yay -S --needed sunshine-bin    # 远程桌面串流 (Windows 端用 Moonlight)
 }
 
 link() {
@@ -33,6 +35,8 @@ link() {
     ln -sfn "$DWM/wallpaper" ~/Pictures/wallpaper
     mkdir -p ~/.config/rofi
     ln -sfn "$DWM/config/rofi.rasi" ~/.config/rofi/config.rasi
+    mkdir -p ~/.config/sunshine
+    ln -sfn "$DWM/config/sunshine.conf" ~/.config/sunshine/sunshine.conf
     # dwm 的 Makefile 要求这三项在源码目录中 (均已被 dwm 的 .gitignore 忽略)
     ln -sfn ../config/dwm.h     dwm/config.h
     ln -sfn ../bin/autostart.sh dwm/autostart.sh

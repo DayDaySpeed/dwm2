@@ -39,6 +39,7 @@ rofi 是启动器和菜单：用来启动程序、切换窗口，也被用作 dw
 | `󰕞 update statusbar` | 立即刷新状态栏 |
 | ` open daed` / ` close daed` | 启动 / 停止 daed 代理服务。需要先安装 daed，并给 `systemctl` 配置免密 sudo，否则从菜单点击没有反应 |
 | ` open picom` / ` close picom` | 打开 / 关闭 picom |
+| `󱒃 open sunshine` / `󱒃 close sunshine` | 开启 / 关闭 Sunshine 远程桌面（见 [远程桌面使用说明](远程桌面使用说明.md)） |
 | `󰢹 open vnc` / `󰢹 close vnc` | 开启 / 关闭远程桌面（见 [远程桌面使用说明](远程桌面使用说明.md)） |
 
 **添加菜单项：** 编辑 `bin/rofi.sh`。

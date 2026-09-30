@@ -4,6 +4,7 @@ call_menu() {
     echo '󰕞 update statusbar'
     [ "$(ps aux | grep -v grep | grep daed)" ] && echo ' close daed' || echo ' open daed'
     [ "$(ps aux | grep picom | grep -v 'grep\|rofi\|nvim')" ] && echo ' close picom' || echo ' open picom'
+    [ "$(pgrep -x sunshine)" ] && echo '󱒃 close sunshine' || echo '󱒃 open sunshine'
     [ "$(pgrep -x x11vnc)" ] && echo '󰢹 close vnc' || echo '󰢹 open vnc'
 }
 
@@ -27,6 +28,12 @@ execute_menu() {
             ;;
         ' close picom')
             killall picom
+            ;;
+        '󱒃 open sunshine')
+            $DWM/bin/sunshine.sh start > /dev/null
+            ;;
+        '󱒃 close sunshine')
+            $DWM/bin/sunshine.sh stop > /dev/null
             ;;
         '󰢹 open vnc')
             $DWM/bin/vnc.sh start > /dev/null

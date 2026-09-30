@@ -6,6 +6,7 @@
 config/   所有配置 (只改这里)
   dwm.h  st.h  tabbed.h      编译时使用的 config.h
   picom.conf  dunst.conf     由 bin/autostart.sh 加载
+  sunshine.conf              远程桌面串流, ~/.config/sunshine/sunshine.conf 软链接到这里
   rofi.rasi                  rofi 主题, ~/.config/rofi/config.rasi 软链接到这里
   xinitrc                    环境变量与会话服务, ~/.xinitrc 软链接到这里
   Xresources                 Xft.dpi 等, ~/.Xresources 软链接到这里
