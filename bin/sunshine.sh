@@ -21,7 +21,8 @@ lanip() {
 start() {
     running && { notify "已在运行 ($(lanip))"; return; }
     command -v sunshine >/dev/null || { notify "未安装 sunshine: yay -S sunshine-bin"; exit 1; }
-    setsid -f sunshine >/dev/null 2>&1
+    # 网页控制台默认只信任 https://localhost 来源, 从 Windows 用 IP 访问会被 CSRF 保护拦截, 启动时加上当前 IP
+    setsid -f sunshine "csrf_allowed_origins=https://$(lanip):$WEBPORT" >/dev/null 2>&1
     for _ in $(seq 20); do                                   # 等待网页控制台端口开始监听 (最多 10 秒)
         ss -ltn | grep -q ":$WEBPORT " && { notify "已开启, Moonlight 添加主机: $(lanip)"; return; }
         sleep 0.5
