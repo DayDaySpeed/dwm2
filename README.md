@@ -11,10 +11,11 @@ config/   所有配置 (只改这里)
   rofi/                      rofi 主题 (adi1090x style-5) 与配色, ~/.config/rofi 软链接到这里
   xinitrc                    环境变量与会话服务, ~/.xinitrc 软链接到这里
   Xresources                 Xft.dpi 等, ~/.Xresources 软链接到这里
-bin/      所有脚本
+bin/      dwm 调用的脚本 (快捷键、状态栏、自启动)
   autostart.sh               dwm 启动时执行, 所有开机启动项都在这里
   statusbar/                 状态栏
   blurlock.sh rofi.sh set_vol.sh dpms.sh ...
+script/                      手动运行的工具脚本 (music_covers.py 补专辑封面, gen_wallpaper.sh 生成速查表壁纸)
 patches/                     对上游源码的补丁, setup.sh 编译时自动打上
 docx/                        使用说明 (dwm、终端、picom、rofi、通知、锁屏截图), 入口 docx/README.md
 wallpaper/                   壁纸, 随机轮换; ~/Pictures/wallpaper 软链接到这里
