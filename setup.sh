@@ -65,9 +65,14 @@ build_suckless() {
 }
 
 build_dwm() {
+    local p
     step "dwm"
     link
-    (cd dwm && make clean && make && sudo make install)
+    for p in patches/dwm-*.diff; do
+        [ -f "$p" ] && { echo "打补丁: $p"; git -C dwm apply "$DWM/$p" || { git -C dwm checkout -- .; exit 1; }; }
+    done
+    (cd dwm && make clean && make && sudo make install) || { git -C dwm checkout -- .; exit 1; }
+    git -C dwm checkout -- .
 }
 
 build_picom() {
@@ -83,7 +88,7 @@ build_picom() {
 
 case "${1:-all}" in
     all)    git submodule update --init; deps; link; build_dwm; build_suckless st; build_suckless tabbed; build_picom
-            step "完成。退出 dwm (Super + Shift + Esc) 后重新 startx 生效" ;;
+            step "完成。按 Super + Shift + R 原地重启 dwm 生效 (首次安装需重新 startx)" ;;
     deps)   deps ;;
     link)   link ;;
     dwm)    build_dwm ;;

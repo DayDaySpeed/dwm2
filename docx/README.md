@@ -20,4 +20,5 @@
 | `Super + 1 / 2 / 3` | 切换 tag |
 | `Super + Shift + A` | 截图 |
 | `Super + N` | 锁屏 |
+| `Super + Shift + R` | 原地重启 dwm（加载新配置，窗口保留） |
 | `Super + Shift + Esc` | 退出 dwm |

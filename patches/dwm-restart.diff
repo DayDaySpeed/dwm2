@@ -1,0 +1,145 @@
+diff --git a/dwm.c b/dwm.c
+index c889dff..5f99618 100644
+--- a/dwm.c
++++ b/dwm.c
+@@ -275,6 +275,9 @@ static Client *nexttiled(Client *c);
+ static void pop(Client *);
+ static void propertynotify(XEvent *e);
+ static void quit(const Arg *arg);
++static void restart(const Arg *arg);
++static void saveclientstates(void);
++static int restoreclientstate(Client *c);
+ static void setup(void);
+ static void seturgent(Client *c, int urg);
+ static void sigchld(int unused);
+@@ -392,6 +395,7 @@ static void (*handler[LASTEvent]) (XEvent *) = {
+ };
+ static Atom wmatom[WMLast], netatom[NetLast], xatom[XLast];
+ static int running = 1;
++static int restarting = 0; /* 原地重启: 退出主循环后 execvp 自身, 窗口保留 */
+ static Cur *cursor[CurLast];
+ static Clr **scheme;
+ static Display *dpy;
+@@ -582,7 +586,8 @@ void
+ arrangemon(Monitor *m)
+ {
+     strncpy(m->ltsymbol, m->lt[m->sellt]->symbol, sizeof m->ltsymbol);
+-    m->lt[m->sellt]->arrange(m);
++    if (m->lt[m->sellt]->arrange) /* cleanup() 会换成 arrange 为 NULL 的空布局, 缺少判断会在退出时崩溃 */
++        m->lt[m->sellt]->arrange(m);
+ }
+ 
+ void
+@@ -1762,6 +1767,7 @@ manage(Window w, XWindowAttributes *wa)
+     grabbuttons(c, 0);
+     if (!c->isfloating)
+         c->isfloating = c->oldstate = trans != None || c->isfixed;
++    int washidden = restoreclientstate(c);
+     if (c->isfloating)
+         XRaiseWindow(dpy, c->win);
+     attach(c);
+@@ -1778,6 +1784,8 @@ manage(Window w, XWindowAttributes *wa)
+     if (!HIDDEN(c))
+         XMapWindow(dpy, c->win);
+     focus(NULL);
++    if (washidden)
++        hide(c);
+ }
+ 
+ void
+@@ -2109,6 +2117,62 @@ quit(const Arg *arg)
+     running = 0;
+ }
+ 
++void
++restart(const Arg *arg)
++{
++    restarting = 1;
++    running = 0;
++}
++
++/* 重启前: 把每个窗口的 tag/浮动/全局/隐藏 状态记在窗口属性 _DWM_STATE 上, 当前视图记在 root 的 _DWM_VIEW 上;
++ * 隐藏的窗口先重新映射, 否则 cleanup 后它们处于 Withdrawn 且未映射, 新的 dwm scan 时会丢失 */
++void
++saveclientstates(void)
++{
++    Atom state = XInternAtom(dpy, "_DWM_STATE", False);
++    Atom viewatom = XInternAtom(dpy, "_DWM_VIEW", False);
++    Monitor *m;
++    Client *c;
++    long data[4], v = selmon->tagset[selmon->seltags];
++
++    for (m = mons; m; m = m->next)
++        for (c = m->clients; c; c = c->next) {
++            data[0] = c->tags;
++            data[1] = c->isfloating;
++            data[2] = c->isglobal;
++            data[3] = HIDDEN(c);
++            XChangeProperty(dpy, c->win, state, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)data, 4);
++            if (data[3])
++                XMapWindow(dpy, c->win);
++        }
++    XChangeProperty(dpy, root, viewatom, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&v, 1);
++    XSync(dpy, False);
++}
++
++/* 接管窗口时: 读回并删除 _DWM_STATE, 恢复 tag/浮动/全局; 返回该窗口重启前是否处于隐藏状态 */
++int
++restoreclientstate(Client *c)
++{
++    Atom state = XInternAtom(dpy, "_DWM_STATE", False), type;
++    int format, hidden = 0;
++    unsigned long n, after;
++    unsigned char *p = NULL;
++
++    if (XGetWindowProperty(dpy, c->win, state, 0, 4, True, XA_CARDINAL,
++            &type, &format, &n, &after, &p) == Success && p) {
++        if (n == 4) {
++            long *d = (long *)p;
++            if (d[0] & TAGMASK)
++                c->tags = d[0] & TAGMASK;
++            c->isfloating = d[1];
++            c->isglobal = d[2];
++            hidden = d[3];
++        }
++        XFree(p);
++    }
++    return hidden;
++}
++
+ Monitor *
+ recttomon(int x, int y, int w, int h)
+ {
+@@ -3877,10 +3941,31 @@ main(int argc, char *argv[])
+         die("pledge");
+ #endif /* __OpenBSD__ */
+     scan();
+-    runAutostart();
++    if (getenv("DWM_RESTARTED")) {
++        /* 原地重启: 不重复执行 autostart, 恢复重启前所看的 tag */
++        Atom viewatom = XInternAtom(dpy, "_DWM_VIEW", False), type;
++        int format;
++        unsigned long n, after;
++        unsigned char *p = NULL;
++        if (XGetWindowProperty(dpy, root, viewatom, 0, 1, True, XA_CARDINAL,
++                &type, &format, &n, &after, &p) == Success && p) {
++            if (n == 1 && (*(long *)p & TAGMASK))
++                view(&(Arg){ .ui = *(long *)p & TAGMASK });
++            XFree(p);
++        }
++        unsetenv("DWM_RESTARTED");
++    } else
++        runAutostart();
+     run();
++    if (restarting)
++        saveclientstates();
+     cleanup();
+     XCloseDisplay(dpy);
++    if (restarting) {
++        setenv("DWM_RESTARTED", "1", 1);
++        execvp(argv[0], argv);
++        die("dwm: restart failed:");
++    }
+     return EXIT_SUCCESS;
+ }
+ 

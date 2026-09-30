@@ -162,6 +162,7 @@ static Key keys[] = {
     { MODKEY,              XK_q,            killclient,       {0} },                     /* super q            |  关闭窗口 */
     { MODKEY|ControlMask,  XK_q,            forcekillclient,  {0} },                     /* super ctrl q       |  强制关闭窗口(处理某些情况下无法销毁的窗口) */
     { MODKEY|ShiftMask,    XK_Escape,       quit,             {0} },                     /* super shift esc   |  退出dwm */
+    { MODKEY|ShiftMask,    XK_r,            restart,          {0} },                     /* super shift r      |  原地重启dwm(窗口与tag保留, 用于加载新编译的配置) */
 
 	{ MODKEY|ShiftMask,    XK_space,        selectlayout,     {.v = &layouts[1]} },      /* super shift space  |  切换到网格布局 */
 	{ MODKEY,              XK_o,            showonlyorall,    {0} },                     /* super o            |  切换 只显示一个窗口 / 全部显示 */

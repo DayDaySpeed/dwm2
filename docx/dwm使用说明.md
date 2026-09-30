@@ -119,7 +119,8 @@
 | `Super + B` | 焦点移到另一个显示器 |
 | `Super + Shift + B` | 把当前窗口移到另一个显示器 |
 | `Super + Shift + ↑` / `↓` | 音量加 / 减（以 5% 为步长） |
-| `Super + Shift + Esc` | 退出 dwm |
+| `Super + Shift + R` | **原地重启 dwm**：加载新编译的配置，所有窗口、所在 tag、浮动 / 隐藏状态和当前查看的 tag 都保留 |
+| `Super + Shift + Esc` | 退出 dwm（会关闭所有窗口） |
 
 ---
 
@@ -209,7 +210,10 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 | 状态栏模块 | `bin/statusbar/packages/*.sh` | 立即生效（下次刷新时） |
 | 壁纸 | 把图片放进 `wallpaper/` | 每 5 分钟随机更换一次；也可以左键点状态栏的菜单图标立即换 |
 
-**重启 dwm：** 按 `Super + Shift + Esc` 退出，然后在 tty 里执行 `startx`。
+**让 dwm 的改动生效：** 执行 `./setup.sh dwm` 后按 `Super + Shift + R` 原地重启，窗口都会保留，不需要退出。
+只有改了 `config/xinitrc` 或 `bin/autostart.sh`（它们只在登录时执行）才需要 `Super + Shift + Esc` 退出后重新 `startx`。
+
+> 原地重启由补丁 `patches/dwm-restart.diff` 提供，`./setup.sh dwm` 编译时会自动打上。不要在 `dwm/` 目录里直接 `make`，否则缺少补丁会编译失败。
 
 ---
 
