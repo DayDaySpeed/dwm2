@@ -15,7 +15,7 @@ i3lock \
     --redraw-thread \
     --clock \
     --force-clock \
-    --time-pos x+5:y+h-80 xdotool\
+    --time-pos x+5:y+h-80 \
     --time-color ffffffff \
     --date-pos tx:ty+15 \
     --date-color ffffffff \

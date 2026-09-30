@@ -11,16 +11,9 @@ with_daed() {
     [ "$(ps aux | grep -v grep | grep 'daed')" ] && icons=(${icons[@]} "")
 }
 
-with_bluetooth() {
-    # 此处为自用蓝牙设备的 MAC 地址，你可以自定义该部分
-    [ ! "$(command -v bluetoothctl)" ] && echo command not found: bluetoothctl && return
-    [ "$(bluetoothctl info 88:C9:E8:14:2A:72 | grep 'Connected: yes')" ] && icons=(${icons[@]} "󰋋")
-}
-
 update() {
     icons=("󰍜")
     with_daed
-    # with_bluetooth
 
     text=" ${icons[@]} "
 
@@ -30,8 +23,6 @@ update() {
 
 notify() {
     texts=""
-    [ "$(ps aux | grep -v grep | grep 'v2raya')" ] && texts="$texts\n v2raya 已启动"
-    [ "$(bluetoothctl info 88:C9:E8:14:2A:72 | grep 'Connected: yes')" ] && texts="$texts\n󰋋 WH-1000XM4 已链接"
     [ "$texts" != "" ] && notify-send "󰍜 Info" "$texts" -r 9527
 }
 

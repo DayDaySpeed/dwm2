@@ -1,18 +1,18 @@
 diff --git a/dwm.c b/dwm.c
-index c889dff..5f99618 100644
+index 94c2911..922028c 100644
 --- a/dwm.c
 +++ b/dwm.c
-@@ -275,6 +275,9 @@ static Client *nexttiled(Client *c);
+@@ -276,6 +276,9 @@ static Client *nexttiled(Client *c);
  static void pop(Client *);
  static void propertynotify(XEvent *e);
  static void quit(const Arg *arg);
 +static void restart(const Arg *arg);
 +static void saveclientstates(void);
-+static int restoreclientstate(Client *c);
++static unsigned long restoreclientstate(Client *c);
  static void setup(void);
  static void seturgent(Client *c, int urg);
  static void sigchld(int unused);
-@@ -392,6 +395,7 @@ static void (*handler[LASTEvent]) (XEvent *) = {
+@@ -393,6 +396,7 @@ static void (*handler[LASTEvent]) (XEvent *) = {
  };
  static Atom wmatom[WMLast], netatom[NetLast], xatom[XLast];
  static int running = 1;
@@ -34,20 +34,24 @@ index c889dff..5f99618 100644
      grabbuttons(c, 0);
      if (!c->isfloating)
          c->isfloating = c->oldstate = trans != None || c->isfixed;
-+    int washidden = restoreclientstate(c);
++    unsigned long washidden = restoreclientstate(c);
      if (c->isfloating)
          XRaiseWindow(dpy, c->win);
      attach(c);
-@@ -1778,6 +1784,8 @@ manage(Window w, XWindowAttributes *wa)
+@@ -1778,6 +1784,12 @@ manage(Window w, XWindowAttributes *wa)
      if (!HIDDEN(c))
          XMapWindow(dpy, c->win);
      focus(NULL);
-+    if (washidden)
++    if (washidden) {
 +        hide(c);
++        c->hideseq = washidden; /* 恢复重启前的隐藏顺序 */
++        if (washidden > hideseq)
++            hideseq = washidden;
++    }
  }
  
  void
-@@ -2109,6 +2117,62 @@ quit(const Arg *arg)
+@@ -2109,6 +2121,63 @@ quit(const Arg *arg)
      running = 0;
  }
  
@@ -74,7 +78,7 @@ index c889dff..5f99618 100644
 +            data[0] = c->tags;
 +            data[1] = c->isfloating;
 +            data[2] = c->isglobal;
-+            data[3] = HIDDEN(c);
++            data[3] = HIDDEN(c) ? (c->hideseq ? c->hideseq : 1) : 0; /* 隐藏序号, 保留恢复顺序 */
 +            XChangeProperty(dpy, c->win, state, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)data, 4);
 +            if (data[3])
 +                XMapWindow(dpy, c->win);
@@ -83,12 +87,13 @@ index c889dff..5f99618 100644
 +    XSync(dpy, False);
 +}
 +
-+/* 接管窗口时: 读回并删除 _DWM_STATE, 恢复 tag/浮动/全局; 返回该窗口重启前是否处于隐藏状态 */
-+int
++/* 接管窗口时: 读回并删除 _DWM_STATE, 恢复 tag/浮动/全局; 返回该窗口重启前的隐藏序号 (0 表示未隐藏) */
++unsigned long
 +restoreclientstate(Client *c)
 +{
 +    Atom state = XInternAtom(dpy, "_DWM_STATE", False), type;
-+    int format, hidden = 0;
++    int format;
++    unsigned long hidden = 0;
 +    unsigned long n, after;
 +    unsigned char *p = NULL;
 +
@@ -110,7 +115,7 @@ index c889dff..5f99618 100644
  Monitor *
  recttomon(int x, int y, int w, int h)
  {
-@@ -3877,10 +3941,31 @@ main(int argc, char *argv[])
+@@ -3876,10 +3945,31 @@ main(int argc, char *argv[])
          die("pledge");
  #endif /* __OpenBSD__ */
      scan();

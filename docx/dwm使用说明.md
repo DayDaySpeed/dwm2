@@ -236,4 +236,4 @@ sudo pacman -S mpd mpc ncmpcpp cava pcmanfm
 
 - 按 `Super + M` 打开网易云音乐客户端 R3PLAYX，窗口自动放在音乐 tag。首次使用在应用内登录网易云账号即可同步歌单。
 - 原来的本地音乐方案（mpd + ncmpcpp + cava，`bin/music_player.sh`）仍保留，可在终端执行 `$DWM/bin/music_player.sh` 打开；音乐文件放在 `~/Music`。
-- 状态栏的音乐模块控制的是 mpd（本地音乐），对 R3PLAYX 无效。
+- 状态栏的音乐模块通过 `playerctl` 显示并控制正在播放的音乐：R3PLAYX、浏览器里的音视频、Spotify 等都支持（正在播放的优先，音乐软件优先于浏览器）；都没有时回退到 mpd。

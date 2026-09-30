@@ -1,0 +1,74 @@
+diff --git a/dwm.c b/dwm.c
+index c889dff..94c2911 100644
+--- a/dwm.c
++++ b/dwm.c
+@@ -138,6 +138,7 @@ struct Client {
+     int taskw;
+ 	unsigned int tags;
+ 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen, isglobal, isnoborder, isscratchpad;
++	unsigned long hideseq; /* 被隐藏时的序号, 越大越晚隐藏; restorewin 恢复序号最大的可见隐藏窗口 */
+ 	Client *next;
+ 	Client *snext;
+ 	Monitor *mon;
+@@ -403,8 +404,7 @@ static Colormap cmap;
+ static Monitor *mons, *selmon;
+ static Window root, wmcheckwin;
+ 
+-static int hiddenWinStackTop = -1;
+-static Client *hiddenWinStack[100];
++static unsigned long hideseq = 0;
+ 
+ /* configuration, allows nested code to access above variables */
+ #include "config.h"
+@@ -1574,7 +1574,7 @@ hide(Client *c) {
+     XSelectInput(dpy, w, ca.your_event_mask);
+     XUngrabServer(dpy);
+ 
+-    hiddenWinStack[++hiddenWinStackTop] = c;
++    c->hideseq = ++hideseq;
+     focus(c->snext);
+     arrange(c->mon);
+ }
+@@ -2587,7 +2587,6 @@ show(Client *c)
+ 
+     XMapWindow(dpy, c->win);
+     setclientstate(c, NormalState);
+-    hiddenWinStackTop--;
+     arrange(c->mon);
+ }
+ 
+@@ -2807,20 +2806,20 @@ togglescratch(const Arg *arg)
+ 
+ void
+ restorewin(const Arg *arg) {
+-    int i = hiddenWinStackTop;
+-    while (i > -1) {
+-        if (HIDDEN(hiddenWinStack[i]) && ISVISIBLE(hiddenWinStack[i])) {
+-            show(hiddenWinStack[i]);
+-            focus(hiddenWinStack[i]);
+-            restack(selmon);
+-            // need set j<hiddenWinStackTop+1. Because show will reduce hiddenWinStackTop value.
+-            for (int j = i; j < hiddenWinStackTop+1; ++j) {
+-                hiddenWinStack[j] = hiddenWinStack[j + 1];
+-            }
+-            return;
+-        }
+-        --i;
+-    }
++    /* 恢复当前可见 tag 中最近被隐藏的窗口 (原实现用数组做栈, show() 只减计数不移除元素,
++     * 且窗口关闭后留下悬空指针, 会导致恢复失败或崩溃) */
++    Monitor *m;
++    Client *c, *best = NULL;
++
++    for (m = mons; m; m = m->next)
++        for (c = m->clients; c; c = c->next)
++            if (HIDDEN(c) && ISVISIBLE(c) && (!best || c->hideseq > best->hideseq))
++                best = c;
++    if (!best)
++        return;
++    show(best);
++    focus(best);
++    restack(selmon);
+ }
+ 
+ void

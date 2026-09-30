@@ -2,7 +2,7 @@
 call_menu() {
     echo ' set wallpaper'
     echo '󰕞 update statusbar'
-    [ "$(ps aux | grep -v grep | grep daed)" ] && echo ' close daed' || echo ' open daed'
+    command -v daed >/dev/null && { [ "$(ps aux | grep -v grep | grep daed)" ] && echo ' close daed' || echo ' open daed'; }
     [ "$(ps aux | grep picom | grep -v 'grep\|rofi\|nvim')" ] && echo ' close picom' || echo ' open picom'
     [ "$(pgrep -x sunshine)" ] && echo '󱒃 close sunshine' || echo '󱒃 open sunshine'
     [ "$(pgrep -x x11vnc)" ] && echo '󰢹 close vnc' || echo '󰢹 open vnc'
