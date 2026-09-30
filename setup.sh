@@ -23,6 +23,10 @@ deps() {
         mpd mpc ncmpcpp cava pcmanfm \
         ranger ueberzugpp ffmpegthumbnailer translate-shell
     yay -S --needed sunshine-bin    # 远程桌面串流 (Windows 端用 Moonlight)
+    # avahi 只在物理网卡上广播, 否则会在 docker 虚拟网卡上与自己"重名", 主机名被改成 myarch-2/-3...
+    # 这样 Moonlight 可以固定用 <主机名>.local 连接, 不受热点 IP 变化影响 (网卡名按本机实际情况)
+    sudo sed -i 's/^#\?allow-interfaces=.*/allow-interfaces=wlan0,eno1/' /etc/avahi/avahi-daemon.conf
+    sudo systemctl restart avahi-daemon
 }
 
 link() {
