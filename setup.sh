@@ -25,7 +25,7 @@ link() {
     step "软链接"
     ln -sfn "$DWM/config/xinitrc" ~/.xinitrc
     ln -sfn "$DWM/config/Xresources" ~/.Xresources
-    mkdir -p ~/Pictures
+    mkdir -p ~/Pictures/screenshots
     if [ -d ~/Pictures/wallpaper ] && [ ! -L ~/Pictures/wallpaper ]; then
         mv -n ~/Pictures/wallpaper/* "$DWM/wallpaper/" 2>/dev/null || true
         rmdir ~/Pictures/wallpaper
