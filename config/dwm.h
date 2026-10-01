@@ -27,7 +27,6 @@ static const char *colors[][3]           = {          /* 颜色设置 ColFg, Col
     [SchemeSelGlobal] = { "#ffffff", "#37474F", "#FFC0CB" },
     [SchemeHid] = { "#dddddd", NULL, NULL },
     [SchemeSystray] = { NULL, "#7799AA", NULL },
-    [SchemeUnderline] = { "#7799AA", NULL, NULL }, 
     [SchemeNormTag] = { "#bbbbbb", "#333333", NULL },
     [SchemeSelTag] = { "#eeeeee", "#333333", NULL },
     [SchemeBarEmpty] = { NULL, "#111111", NULL },

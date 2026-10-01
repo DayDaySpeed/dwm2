@@ -1,0 +1,104 @@
+diff --git a/drw.c b/drw.c
+index a119fac..cd82ec3 100644
+--- a/drw.c
++++ b/drw.c
+@@ -227,6 +227,53 @@ drw_setscheme(Drw *drw, Clr *scm)
+ 		drw->scheme = scm;
+ }
+ 
++/* 由色相 (0-360)、饱和度、明度 (0-1) 生成颜色, 用于彩虹色下划线 */
++void
++drw_clr_hsv(Clr *dest, float h, float s, float v, unsigned short alpha)
++{
++	float hp = h / 60.0f;
++
++	while (hp >= 6.0f)
++		hp -= 6.0f;
++	while (hp < 0.0f)
++		hp += 6.0f;
++
++	int i = (int)hp;
++	float f = hp - i;
++	float q = v * (1.0f - s);
++	float t = v * (1.0f - s * f);
++	float p = v * (1.0f - s * (1.0f - f));
++	float r, g, b;
++
++	switch (i) {
++	case 0: r = v; g = t; b = q; break;
++	case 1: r = p; g = v; b = q; break;
++	case 2: r = q; g = v; b = t; break;
++	case 3: r = q; g = p; b = v; break;
++	case 4: r = t; g = q; b = v; break;
++	default: r = v; g = q; b = p; break;
++	}
++
++	dest->color.red   = (unsigned short)(r * 65535.0f);
++	dest->color.green = (unsigned short)(g * 65535.0f);
++	dest->color.blue  = (unsigned short)(b * 65535.0f);
++	dest->color.alpha = alpha;
++}
++
++/* 用任意颜色填充矩形 (不依赖当前 scheme) */
++void
++drw_fill(Drw *drw, int x, int y, unsigned int w, unsigned int h, const Clr *clr)
++{
++	XftDraw *d;
++
++	if (!drw || !clr || !w || !h)
++		return;
++
++	d = XftDrawCreate(drw->dpy, drw->drawable, drw->visual, drw->cmap);
++	XftDrawRect(d, clr, x, y, w, h);
++	XftDrawDestroy(d);
++}
++
+ void
+ drw_rect(Drw *drw, int x, int y, unsigned int w, unsigned int h, int filled, int invert)
+ {
+diff --git a/drw.h b/drw.h
+index a56f523..9cb1bd8 100644
+--- a/drw.h
++++ b/drw.h
+@@ -42,6 +42,7 @@ void drw_font_getexts(Fnt *font, const char *text, unsigned int len, unsigned in
+ 
+ /* Colorscheme abstraction */
+ void drw_clr_create(Drw *drw, Clr *dest, const char *clrname, unsigned int alpha);
++void drw_clr_hsv(Clr *dest, float h, float s, float v, unsigned short alpha);
+ Clr *drw_scm_create(Drw *drw, const char *clrnames[], const unsigned int alphas[], size_t clrcount);
+ 
+ /* Cursor abstraction */
+@@ -54,6 +55,7 @@ void drw_setscheme(Drw *drw, Clr *scm);
+ 
+ /* Drawing functions */
+ void drw_rect(Drw *drw, int x, int y, unsigned int w, unsigned int h, int filled, int invert);
++void drw_fill(Drw *drw, int x, int y, unsigned int w, unsigned int h, const Clr *clr);
+ int drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lpad, const char *text, int invert);
+ 
+ /* Map functions */
+diff --git a/dwm.c b/dwm.c
+index c889dff..a5d581a 100644
+--- a/dwm.c
++++ b/dwm.c
+@@ -88,7 +88,6 @@ enum {
+     SchemeSystray,    // 托盘
+     SchemeNormTag,    // 普通标签
+     SchemeSelTag,     // 选中的标签
+-    SchemeUnderline,  // 下划线
+     SchemeBarEmpty,   // 状态栏空白部分
+     SchemeStatusText  // 状态栏文本
+ }; /* color schemes */
+@@ -1035,8 +1034,11 @@ drawbar(Monitor *m)
+         drw_setscheme(drw, scheme[m->tagset[m->seltags] & 1 << i ? SchemeSelTag : SchemeNormTag]);
+         drw_text(drw, x, 0, w, bh, lrpad / 2, tags[i], urg & 1 << i);
+         if (m->tagset[m->seltags] & 1 << i) {
+-            drw_setscheme(drw, scheme[SchemeUnderline]);
+-            drw_rect(drw, x + 2, bh - boxw, w + lrpad - 4, boxw, 1, 0);
++            /* 彩虹色下划线: 按 tag 序号从红 (0°) 到紫 (300°) 取色相 */
++            Clr ul;
++            float hue = LENGTH(tags) > 1 ? (float)(i * 300) / (LENGTH(tags) - 1) : 0.0f;
++            drw_clr_hsv(&ul, hue, 0.85f, 1.0f, 0xffff);
++            drw_fill(drw, x + 2, bh - boxw, w + lrpad - 4, boxw, &ul);
+         }
+         x += w;
+     }
