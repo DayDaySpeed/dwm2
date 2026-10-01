@@ -77,7 +77,7 @@ index a56f523..9cb1bd8 100644
  
  /* Map functions */
 diff --git a/dwm.c b/dwm.c
-index c889dff..a5d581a 100644
+index c889dff..a3380f8 100644
 --- a/dwm.c
 +++ b/dwm.c
 @@ -88,7 +88,6 @@ enum {
@@ -88,17 +88,112 @@ index c889dff..a5d581a 100644
      SchemeBarEmpty,   // 状态栏空白部分
      SchemeStatusText  // 状态栏文本
  }; /* color schemes */
-@@ -1035,8 +1034,11 @@ drawbar(Monitor *m)
+@@ -228,6 +227,7 @@ static void detachstack(Client *c);
+ static Monitor *dirtomon(int dir);
+ 
+ static void drawbar(Monitor *m);
++static float taghue(int i);
+ static void drawbars(void);
+ static int drawstatusbar(Monitor *m, int bh, char* text);
+ 
+@@ -318,6 +318,8 @@ static void togglescratch(const Arg *arg);
+ static void toggleview(const Arg *arg);
+ static void togglewin(const Arg *arg);
+ static void toggleglobal(const Arg *arg);
++static void updateglobalprop(Client *c);
++static Atom globalatom; /* _DWM_GLOBAL: 标记全局窗口, picom 据此去掉圆角 */
+ static void toggleborder(const Arg *arg);
+ 
+ static void unfocus(Client *c, int setfocus);
+@@ -994,6 +996,13 @@ dirtomon(int dir)
+     return m;
+ }
+ 
++/* tag 的彩虹色相: 按 tag 序号从红 (0°) 到紫 (300°) */
++float
++taghue(int i)
++{
++    return LENGTH(tags) > 1 ? (float)(i * 300) / (LENGTH(tags) - 1) : 0.0f;
++}
++
+ void
+ drawbar(Monitor *m)
+ {
+@@ -1035,8 +1044,10 @@ drawbar(Monitor *m)
          drw_setscheme(drw, scheme[m->tagset[m->seltags] & 1 << i ? SchemeSelTag : SchemeNormTag]);
          drw_text(drw, x, 0, w, bh, lrpad / 2, tags[i], urg & 1 << i);
          if (m->tagset[m->seltags] & 1 << i) {
 -            drw_setscheme(drw, scheme[SchemeUnderline]);
 -            drw_rect(drw, x + 2, bh - boxw, w + lrpad - 4, boxw, 1, 0);
-+            /* 彩虹色下划线: 按 tag 序号从红 (0°) 到紫 (300°) 取色相 */
++            /* 彩虹色下划线 */
 +            Clr ul;
-+            float hue = LENGTH(tags) > 1 ? (float)(i * 300) / (LENGTH(tags) - 1) : 0.0f;
-+            drw_clr_hsv(&ul, hue, 0.85f, 1.0f, 0xffff);
++            drw_clr_hsv(&ul, taghue(i), 0.85f, 1.0f, 0xffff);
 +            drw_fill(drw, x + 2, bh - boxw, w + lrpad - 4, boxw, &ul);
          }
          x += w;
      }
+@@ -1059,8 +1070,10 @@ drawbar(Monitor *m)
+             scm = SchemeNorm;
+         drw_setscheme(drw, scheme[scm]);
+ 
+-        // 绘制TASK
+-        w = MIN(TEXTW(c->name), TEXTW("          "));
++        // 绘制TASK: 全局窗口 (super g) 标题前加图钉图标
++        char title[sizeof c->name + 8];
++        snprintf(title, sizeof title, "%s%s", c->isglobal ? "󰐃 " : "", c->name);
++        w = MIN(TEXTW(title), TEXTW("          "));
+         empty_w = m->ww - x - status_w - system_w;
+         if (w > empty_w) { // 如果当前TASK绘制后长度超过最大宽度
+             w = empty_w;
+@@ -1069,7 +1082,7 @@ drawbar(Monitor *m)
+             tasks_w += w;
+             break;
+         } else {
+-            x = drw_text(drw, x, 0, w, bh, lrpad / 2, c->name, 0);
++            x = drw_text(drw, x, 0, w, bh, lrpad / 2, title, 0);
+             c->taskw = w;
+             tasks_w += w;
+         }
+@@ -1774,6 +1787,7 @@ manage(Window w, XWindowAttributes *wa)
+     if (c->mon == selmon)
+         unfocus(selmon->sel, 0);
+     c->mon->sel = c;
++    updateglobalprop(c);
+     arrange(c->mon);
+     if (!HIDDEN(c))
+         XMapWindow(dpy, c->win);
+@@ -2525,6 +2539,7 @@ setup(void)
+     netatom[NetWMWindowType] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+     netatom[NetWMWindowTypeDialog] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
+     netatom[NetClientList] = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
++    globalatom = XInternAtom(dpy, "_DWM_GLOBAL", False);
+     xatom[Manager] = XInternAtom(dpy, "MANAGER", False);
+     xatom[Xembed] = XInternAtom(dpy, "_XEMBED", False);
+     xatom[XembedInfo] = XInternAtom(dpy, "_XEMBED_INFO", False);
+@@ -2871,6 +2886,18 @@ toggleview(const Arg *arg)
+ 	}
+ }
+ 
++/* 全局窗口挂上 _DWM_GLOBAL=1 属性, picom 的 rounded-corners-exclude 据此把它显示为直角 */
++void
++updateglobalprop(Client *c)
++{
++    long one = 1;
++
++    if (c->isglobal)
++        XChangeProperty(dpy, c->win, globalatom, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&one, 1);
++    else
++        XDeleteProperty(dpy, c->win, globalatom);
++}
++
+ void
+ toggleglobal(const Arg *arg)
+ {
+@@ -2880,6 +2907,7 @@ toggleglobal(const Arg *arg)
+         return;
+     selmon->sel->isglobal ^= 1;
+     selmon->sel->tags = selmon->sel->isglobal ? TAGMASK : selmon->tagset[selmon->seltags];
++    updateglobalprop(selmon->sel);
+     focus(NULL);
+ }
+ 

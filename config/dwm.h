@@ -3,7 +3,7 @@
 static int showsystray                   = 1;         /* 是否显示托盘栏 */
 static const int newclientathead         = 0;         /* 定义新窗口在栈顶还是栈底 */
 static const int managetransientwin      = 1;         /* 是否管理临时窗口 */
-static const unsigned int borderpx       = 2;         /* 窗口边框大小 */
+static const unsigned int borderpx       = 3;         /* 窗口边框大小 */
 static const unsigned int systraypinning = 1;         /* 托盘跟随的显示器 0代表不指定显示器 */
 static const unsigned int systrayspacing = 1;         /* 托盘间距 */
 static const unsigned int systrayspadding = 5;        /* 托盘和状态栏的间隙 */
@@ -23,8 +23,8 @@ static const unsigned int borderalpha    = 0xdd;      /* 边框透明度 */
 static const char *fonts[]               = { "JetBrainsMono Nerd Font Mono:style=medium:size=13", "monospace:size=13" };
 static const char *colors[][3]           = {          /* 颜色设置 ColFg, ColBg, ColBorder */ 
     [SchemeNorm] = { "#bbbbbb", "#333333", "#444444" },
-    [SchemeSel] = { "#ffffff", "#37474F", "#42A5F5" },
-    [SchemeSelGlobal] = { "#ffffff", "#37474F", "#FFC0CB" },
+    [SchemeSel] = { "#ffffff", "#37474F", "#ffffff" },
+    [SchemeSelGlobal] = { "#ffffff", "#37474F", "#ffffff" }, /* 全局窗口 (super g) 不靠颜色区分: picom 显示为直角, 状态栏标题前有图钉图标 */
     [SchemeHid] = { "#dddddd", NULL, NULL },
     [SchemeSystray] = { NULL, "#7799AA", NULL },
     [SchemeNormTag] = { "#bbbbbb", "#333333", NULL },
