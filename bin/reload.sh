@@ -10,7 +10,9 @@ notify-send -r $NID -t 3000 " dwm" "编译中..."
 if "$DWM/setup.sh" dwm > "$LOG" 2>&1; then
     pid=$(pgrep -x -u "$USER" dwm | head -1)
     # 只有 ~/.local/bin/dwm (带重启补丁) 才处理 SIGHUP; 旧版本收到 SIGHUP 会直接退出, 整个会话随之结束
-    if [ "$(readlink -f /proc/$pid/exe 2>/dev/null)" != "$(readlink -f ~/.local/bin/dwm)" ]; then
+    # 新版本安装时 mv 覆盖了旧文件, 正在运行的程序路径会带 " (deleted)" 后缀, 比较前去掉
+    exe=$(readlink /proc/$pid/exe 2>/dev/null)
+    if [ "${exe% (deleted)}" != "$(readlink -f ~/.local/bin/dwm)" ]; then
         notify-send -r $NID -u critical " dwm" "已编译安装到 ~/.local/bin/dwm, 但当前运行的不是它。\n请退出 (Super+Shift+Esc) 后重新 startx 一次, 之后按 Super+Shift+R 即可自动生效"
         exit 0
     fi
