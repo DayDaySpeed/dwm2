@@ -40,7 +40,9 @@ start() {
     # 网页控制台默认只信任 https://localhost 来源, 从 Windows 用 IP 访问会被 CSRF 保护拦截, 启动时加上局域网 IP 与 Tailscale IP
     local origins="https://$(lanip):$WEBPORT" t
     t=$(tsip); [ -n "$t" ] && origins="$origins,https://$t:$WEBPORT"
-    setsid -f sunshine "csrf_allowed_origins=$origins" >/dev/null 2>&1
+    # 每次客户端连上 (开始串流) 时重新设置 Alt <-> Super: X 重启后虚拟键盘会被重新接入, 之前的设置会丢失
+    local prep="[{\"do\":\"$DWM/bin/sunshine.sh altkey\",\"undo\":\"\"}]"
+    setsid -f sunshine "csrf_allowed_origins=$origins" "global_prep_cmd=$prep" >/dev/null 2>&1
     for _ in $(seq 20); do                                   # 等待网页控制台端口开始监听 (最多 10 秒)
         ss -ltn | grep -q ":$WEBPORT " && { altkey; notify "已开启, Moonlight 添加主机: $(addr)"; return; }
         sleep 0.5
