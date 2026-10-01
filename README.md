@@ -15,7 +15,7 @@ bin/      dwm 调用的脚本 (快捷键、状态栏、自启动)
   autostart.sh               dwm 启动时执行, 所有开机启动项都在这里
   statusbar/                 状态栏
   blurlock.sh rofi.sh set_vol.sh dpms.sh ...
-script/                      手动运行的工具脚本 (music_covers.py 补专辑封面, gen_wallpaper.sh 生成速查表壁纸)
+scripts/                     手动运行的工具脚本 (music_covers.py 补专辑封面)
 patches/                     对上游源码的补丁, setup.sh 编译时自动打上
 docx/                        使用说明 (dwm、终端、picom、rofi、通知、锁屏截图), 入口 docx/README.md
 wallpaper/                   壁纸, 随机轮换; ~/Pictures/wallpaper 软链接到这里
