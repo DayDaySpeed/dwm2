@@ -1,5 +1,5 @@
 #! /bin/bash
-# 一键生效 (Super + Shift + R): 打补丁并编译 dwm -> 安装到 ~/.local/bin -> 让正在运行的 dwm 原地重启
+# 一键生效 (Super + Shift + R): 编译 dwm -> 安装到 ~/.local/bin -> 让正在运行的 dwm 原地重启
 # 编译失败时弹出通知, 正在运行的 dwm 保持不变
 
 DWM=${DWM:-$(cd "$(dirname "$0")/.."; pwd)}
@@ -9,7 +9,7 @@ NID=9531
 notify-send -r $NID -t 3000 " dwm" "编译中..."
 if "$DWM/setup.sh" dwm > "$LOG" 2>&1; then
     pid=$(pgrep -x -u "$USER" dwm | head -1)
-    # 只有 ~/.local/bin/dwm (带重启补丁) 才处理 SIGHUP; 旧版本收到 SIGHUP 会直接退出, 整个会话随之结束
+    # 只有 ~/.local/bin/dwm (带原地重启功能) 才处理 SIGHUP; 旧版本收到 SIGHUP 会直接退出, 整个会话随之结束
     # 新版本安装时 mv 覆盖了旧文件, 正在运行的程序路径会带 " (deleted)" 后缀, 比较前去掉
     exe=$(readlink /proc/$pid/exe 2>/dev/null)
     if [ "${exe% (deleted)}" != "$(readlink -f ~/.local/bin/dwm)" ]; then

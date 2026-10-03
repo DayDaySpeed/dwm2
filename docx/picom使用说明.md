@@ -94,7 +94,7 @@ fading = false;
 
 ## 5. 重新编译
 
-picom 源码在 `picom/`（git 子模块）。一般不需要重新编译，只有更新了源码时才需要：
+picom 源码在 `picom/`。一般不需要重新编译，只有更新了源码时才需要：
 
 ```sh
 cd ~/projs/dwm2 && ./setup.sh picom

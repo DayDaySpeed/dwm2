@@ -4,7 +4,7 @@
 #   ./setup.sh deps        安装依赖 (i3lock-color + betterlockscreen, picom 编译依赖)
 #   ./setup.sh link        建立 ~/.xinitrc 等软链接
 #   ./setup.sh dwm|st|tabbed|picom   只编译安装某一个
-#   ./setup.sh i3lock      编译带 patches/i3lock-color-*.diff 的 i3lock-color (锁屏输入时显示圆点)
+#   ./setup.sh i3lock      编译 i3lock-color (锁屏输入时显示圆点)
 set -e
 DWM=$(cd "$(dirname "$0")"; pwd)
 cd "$DWM"
@@ -60,36 +60,26 @@ link() {
     ln -sfn ../bin/statusbar    dwm/statusbar
 }
 
-# st / tabbed 的源码属于上游子模块: 编译前放入我们的 config.h 并打上 patches/<name>-*.diff,
-# 编译后全部还原, 保持子模块干净 (可随时 git pull 上游)
+# st / tabbed 源码直接放在本仓库 (基于 yaocccc/st、yaocccc/tabbed, 已含本仓库的改动), 直接修改源码即可;
+# 配置 config.h 软链接到 config/<name>.h
 build_suckless() {
-    local name=$1 p
+    local name=$1
     step "$name"
-    cp "config/$name.h" "$name/config.h"
-    for p in patches/"$name"-*.diff; do
-        [ -f "$p" ] && { echo "打补丁: $p"; git -C "$name" apply "$DWM/$p" || { git -C "$name" checkout -- .; exit 1; }; }
-    done
-    (cd "$name" && make clean && make && sudo make install) || { git -C "$name" checkout -- .; exit 1; }
-    git -C "$name" checkout -- .
+    ln -sfn "../config/$name.h" "$name/config.h"
+    (cd "$name" && make clean && make && sudo make install)
 }
 
+# dwm 源码直接放在本仓库 (基于 yaocccc/dwm), 直接修改 dwm/ 下的源码即可
 build_dwm() {
-    local p
     step "dwm"
     link
-    for p in patches/dwm-*.diff; do
-        [ -f "$p" ] && { echo "打补丁: $p"; git -C dwm apply "$DWM/$p" || { git -C dwm checkout -- .; exit 1; }; }
-    done
     # 安装到 ~/.local/bin (无需 sudo, 可由 Super+Shift+R 自动完成); 先写临时文件再改名, 可覆盖正在运行的 dwm
-    (cd dwm && make clean && make && mkdir -p ~/.local/bin && install -m755 dwm ~/.local/bin/.dwm.new && mv -f ~/.local/bin/.dwm.new ~/.local/bin/dwm) \
-        || { git -C dwm checkout -- .; exit 1; }
-    git -C dwm checkout -- .
+    (cd dwm && make clean && make && mkdir -p ~/.local/bin && install -m755 dwm ~/.local/bin/.dwm.new && mv -f ~/.local/bin/.dwm.new ~/.local/bin/dwm)
 }
 
 build_picom() {
     step "picom (yaocccc 动画分支 -> /usr/local)"
     cd picom
-    git submodule update --init --recursive
     rm -rf build
     meson setup --buildtype=release -Dprefix=/usr/local build
     ninja -C build
@@ -97,23 +87,16 @@ build_picom() {
     cd "$DWM"
 }
 
-# i3lock-color 不在子模块中: 下载与系统包相同版本的源码, 打上 patches/i3lock-color-*.diff,
-# 安装为 /usr/local/bin/i3lock-color (betterlockscreen 优先用这个名字); 系统的 /usr/bin/i3lock 保持不变
-I3LOCK_VERSION=2.13.c.5
+# i3lock-color 源码直接放在本仓库 (2.13.c.5, 已加入输入时显示圆点的改动), 安装为 /usr/local/bin/i3lock-color
+# (betterlockscreen 优先用这个名字); 系统包的 /usr/bin/i3lock 保持不变, 锁屏的 PAM 配置也用系统包的
 build_i3lock() {
-    local src=~/.cache/dwm2/i3lock-color p
-    step "i3lock-color $I3LOCK_VERSION (打补丁 -> /usr/local/bin/i3lock-color)"
-    rm -rf "$src"
-    git clone -q --depth 1 --branch "$I3LOCK_VERSION" https://github.com/Raymo111/i3lock-color "$src"
-    for p in patches/i3lock-color-*.diff; do
-        [ -f "$p" ] && { echo "打补丁: $p"; git -C "$src" apply "$DWM/$p"; }
-    done
-    (cd "$src" && ./build.sh)
-    sudo install -m755 "$src/build/i3lock" /usr/local/bin/i3lock-color
+    step "i3lock-color (-> /usr/local/bin/i3lock-color)"
+    (cd i3lock-color && ./build.sh)
+    sudo install -m755 i3lock-color/build/i3lock /usr/local/bin/i3lock-color
 }
 
 case "${1:-all}" in
-    all)    git submodule update --init; deps; link; build_dwm; build_suckless st; build_suckless tabbed; build_picom; build_i3lock
+    all)    deps; link; build_dwm; build_suckless st; build_suckless tabbed; build_picom; build_i3lock
             step "完成。首次安装请重新 startx; 之后修改 dwm 配置按 Super + Shift + R 即可生效" ;;
     deps)   deps ;;
     link)   link ;;

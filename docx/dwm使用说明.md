@@ -213,7 +213,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 **让 dwm 的改动生效：** 改完 `config/dwm.h` 直接按 `Super + Shift + R`，会自动编译、安装到 `~/.local/bin/dwm` 并原地重启，窗口都会保留，不需要 sudo，也不需要退出。编译日志在 `~/.cache/dwm-build.log`。
 只有改了 `config/xinitrc` 或 `bin/autostart.sh`（它们只在登录时执行）才需要 `Super + Shift + Esc` 退出后重新 `startx`。
 
-> 原地重启由补丁 `patches/dwm-restart.diff` 提供，`./setup.sh dwm` 编译时会自动打上。不要在 `dwm/` 目录里直接 `make`，否则缺少补丁会编译失败。
+> 改 dwm 本身的功能直接修改 `dwm/` 下的源码（如 `dwm/dwm.c`），同样按 `Super + Shift + R` 生效。
 
 ---
 

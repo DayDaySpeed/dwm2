@@ -17,10 +17,10 @@ bin/      dwm 调用的脚本 (快捷键、状态栏、自启动)
   statusbar/                 状态栏
   blurlock.sh rofi.sh set_vol.sh dpms.sh ...
 scripts/                     手动运行的工具脚本 (music_covers.py 补专辑封面)
-patches/                     对上游源码的补丁, setup.sh 编译时自动打上
 docx/                        使用说明 (dwm、终端、picom、rofi、通知、锁屏截图), 入口 docx/README.md
 wallpaper/                   壁纸, 随机轮换; ~/Pictures/wallpaper 软链接到这里
-dwm/ st/ tabbed/ picom/      上游源码 (git submodule, 不直接修改)
+dwm/ st/ tabbed/ picom/      源码 (基于 yaocccc 的版本, 已含本仓库的改动), 直接修改, ./setup.sh <名字> 编译安装
+i3lock-color/                锁屏用的 i3lock-color 源码 (输入密码时显示圆点), ./setup.sh i3lock 编译安装
 setup.sh                     安装/编译入口
 ```
 
