@@ -1,7 +1,7 @@
 # This is a sample commands.py.  You can add your own commands here.
 #
-# Please refer to commands_full.py for all the default commands and a complete
-# documentation.  Do NOT add them all here, or you may end up with defunct
+# All the default commands with complete documentation: run
+# `ranger --copy-config=commands_full` to generate commands_full.py.  Do NOT add them all here, or you may end up with defunct
 # commands when upgrading ranger.
 
 # A simple command for demonstration purposes follows.
