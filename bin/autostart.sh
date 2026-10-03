@@ -9,6 +9,7 @@ settings() {
     [ $1 ] && sleep $1
     xset -b                                   # 关闭蜂鸣器
     feh --randomize --bg-fill $DWM/wallpaper  # 设置壁纸
+    $DWM/bin/blurlock.sh update &             # 用当前壁纸在后台生成锁屏背景
     numlockx on 2>/dev/null || xset led named "Num Lock" # 开启 NumLock
     xinput list --name-only | grep "^SYNA32E2" | while read -r d; do xinput disable "$d"; done # 禁用触摸板 (X 中名为 "SYNA32E2:00 06CB:CEE7 Mouse")
     has syndaemon && syndaemon -i 1 -t -K -R -d # 设置使用键盘时触控板短暂失效(需 xf86-input-synaptics)
@@ -32,7 +33,7 @@ cron() {
     [ $1 ] && sleep $1
     let i=10
     while true; do
-        [ $((i % 300)) -eq 0 ] && feh --randomize --bg-fill $DWM/wallpaper # 每300秒更新壁纸
+        [ $((i % 300)) -eq 0 ] && { feh --randomize --bg-fill $DWM/wallpaper; $DWM/bin/blurlock.sh update & } # 每300秒更新壁纸 (及锁屏背景)
         sleep 10; let i+=10
     done
 }

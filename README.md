@@ -8,6 +8,7 @@ config/   所有配置 (只改这里)
   picom.conf  dunst.conf     由 bin/autostart.sh 加载
   ranger/                    终端文件管理器, ~/.config/ranger 软链接到这里
   sunshine.conf              远程桌面串流, ~/.config/sunshine/sunshine.conf 软链接到这里
+  betterlockscreenrc         锁屏主题, ~/.config/betterlockscreen/betterlockscreenrc 软链接到这里
   rofi/                      rofi 主题 (adi1090x style-5) 与配色, ~/.config/rofi 软链接到这里
   xinitrc                    环境变量与会话服务, ~/.xinitrc 软链接到这里
   Xresources                 Xft.dpi 等, ~/.Xresources 软链接到这里

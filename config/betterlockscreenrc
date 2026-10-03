@@ -1,0 +1,36 @@
+# betterlockscreen 配置 (~/.config/betterlockscreen/betterlockscreenrc 软链接到这里)
+# 锁屏由 bin/blurlock.sh 调用 (版面位置和字号在那里); 修改本文件后执行 bin/blurlock.sh update -f 生效
+# 完整选项: https://github.com/betterlockscreen/betterlockscreen
+
+# 背景效果: 只生成 dimblur (调暗 + 模糊), 加快每次换壁纸后的预处理
+fx_list=(dimblur)
+dim_level=35          # 调暗程度 (0-100)
+blur_level=1          # 模糊程度 (0.0-1.0)
+
+# 锁屏后的熄屏时间: 与 bin/dpms.sh 的 IDLE_SEC 保持一致, 否则会被它每分钟改回
+lock_timeout=600
+
+# 主题: 白色为主, 与选中窗口的白色边框统一; 输入错误用柔和的红色
+font="Sarasa UI SC"
+locktext="输入密码解锁"
+veriftext="验证中…"
+wrongtext="密码错误"
+time_format="%H:%M"
+loginbox=00000000           # 不画登录框底色, 文字直接浮在模糊背景上
+loginshadow=00000000
+ringcolor=ffffffcc
+insidecolor=00000000
+separatorcolor=00000000
+ringvercolor=ffffffff
+insidevercolor=ffffff22
+ringwrongcolor=e06c75ff
+insidewrongcolor=e06c7533
+keyhlcolor=88c0d0ff          # 按键时圆环上闪过的高亮
+bshlcolor=e06c75ff           # 退格时的高亮
+timecolor=ffffffff
+greetercolor=ffffffbb
+layoutcolor=ffffffbb
+verifcolor=ffffffff
+wrongcolor=e06c75ff
+modifcolor=e06c75ff          # Caps Lock 等修饰键提示
+bgcolor=2e3440ff             # 背景图缺失时的底色

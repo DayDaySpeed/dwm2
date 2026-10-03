@@ -1,9 +1,10 @@
 #!/bin/bash
 # dwm2 一键安装/编译
-#   ./setup.sh             全部: 依赖 + 链接 + dwm st tabbed picom
-#   ./setup.sh deps        安装依赖 (i3lock-color, picom 编译依赖)
+#   ./setup.sh             全部: 依赖 + 链接 + dwm st tabbed picom i3lock
+#   ./setup.sh deps        安装依赖 (i3lock-color + betterlockscreen, picom 编译依赖)
 #   ./setup.sh link        建立 ~/.xinitrc 等软链接
 #   ./setup.sh dwm|st|tabbed|picom   只编译安装某一个
+#   ./setup.sh i3lock      编译带 patches/i3lock-color-*.diff 的 i3lock-color (锁屏输入时显示圆点)
 set -e
 DWM=$(cd "$(dirname "$0")"; pwd)
 cd "$DWM"
@@ -16,6 +17,7 @@ deps() {
         pacman -Q i3lock >/dev/null 2>&1 && sudo pacman -Rdd --noconfirm i3lock
         yay -S --needed i3lock-color
     fi
+    yay -S --needed betterlockscreen   # 锁屏 (bin/blurlock.sh), 基于 i3lock-color
     sudo pacman -S --needed meson ninja uthash libconfig libev libxdg-basedir pcre \
         pixman dbus mesa xcb-util-image xcb-util-renderutil libx11 libxext \
         rofi feh dunst flameshot xss-lock fcitx5 pamixer x11vnc \
@@ -48,6 +50,8 @@ link() {
     ln -sfn "$DWM/config/rofi" ~/.config/rofi
     ln -sfn "$DWM/config/ranger" ~/.config/ranger
     mkdir -p ~/Music
+    mkdir -p ~/.config/betterlockscreen
+    ln -sfn "$DWM/config/betterlockscreenrc" ~/.config/betterlockscreen/betterlockscreenrc
     mkdir -p ~/.config/sunshine
     ln -sfn "$DWM/config/sunshine.conf" ~/.config/sunshine/sunshine.conf
     # dwm 的 Makefile 要求这三项在源码目录中 (均已被 dwm 的 .gitignore 忽略)
@@ -93,13 +97,29 @@ build_picom() {
     cd "$DWM"
 }
 
+# i3lock-color 不在子模块中: 下载与系统包相同版本的源码, 打上 patches/i3lock-color-*.diff,
+# 安装为 /usr/local/bin/i3lock-color (betterlockscreen 优先用这个名字); 系统的 /usr/bin/i3lock 保持不变
+I3LOCK_VERSION=2.13.c.5
+build_i3lock() {
+    local src=~/.cache/dwm2/i3lock-color p
+    step "i3lock-color $I3LOCK_VERSION (打补丁 -> /usr/local/bin/i3lock-color)"
+    rm -rf "$src"
+    git clone -q --depth 1 --branch "$I3LOCK_VERSION" https://github.com/Raymo111/i3lock-color "$src"
+    for p in patches/i3lock-color-*.diff; do
+        [ -f "$p" ] && { echo "打补丁: $p"; git -C "$src" apply "$DWM/$p"; }
+    done
+    (cd "$src" && ./build.sh)
+    sudo install -m755 "$src/build/i3lock" /usr/local/bin/i3lock-color
+}
+
 case "${1:-all}" in
-    all)    git submodule update --init; deps; link; build_dwm; build_suckless st; build_suckless tabbed; build_picom
+    all)    git submodule update --init; deps; link; build_dwm; build_suckless st; build_suckless tabbed; build_picom; build_i3lock
             step "完成。首次安装请重新 startx; 之后修改 dwm 配置按 Super + Shift + R 即可生效" ;;
     deps)   deps ;;
     link)   link ;;
     dwm)    build_dwm ;;
     st|tabbed) build_suckless "$1" ;;
     picom)  build_picom ;;
-    *)      sed -n '2,7p' "$0"; exit 1 ;;
+    i3lock) build_i3lock ;;
+    *)      sed -n '2,8p' "$0"; exit 1 ;;
 esac
