@@ -35,7 +35,7 @@
 | `Super + -` | 打开全局浮动终端（在所有 tag 显示） |
 | `Super + S` | 显示 / 隐藏 scratchpad 终端（显示在屏幕顶部） |
 | `Super + D` | rofi：运行命令 |
-| `Super + P` | rofi 自定义菜单：换壁纸、刷新状态栏、开关 daed、开关 picom |
+| `Super + P` | rofi 自定义菜单：切换动态 / 静态壁纸、刷新状态栏、开关 daed、开关 picom |
 | `Super + R` | 打开 / 关闭 pcmanfm 文件管理器（浮动在屏幕中央） |
 | `Super + Shift + A` | 截图（flameshot），框选后松开鼠标即复制到剪贴板（不保存文件） |
 | `Super + N` 或 `Super + Ctrl + L` | 锁屏（模糊锁屏，输入密码解锁） |
@@ -148,7 +148,7 @@
 
 | 模块 | 左键 | 中键 | 右键 | 滚轮 |
 |---|---|---|---|---|
-| 菜单图标 | 显示状态通知，并随机换一张壁纸 | — | 电源菜单：关机 / 重启 / 休眠 / 锁定 | — |
+| 菜单图标 | 显示状态通知，并随机换一张壁纸（动态模式下换一个视频） | — | 电源菜单：关机 / 重启 / 休眠 / 锁定 | — |
 | 音乐 | 播放 / 暂停 | — | 播放 / 暂停 | 上一首 / 下一首 |
 | Wi-Fi | 通知当前网络 | — | 弹出 `nmtui-connect` 连接网络 | — |
 | CPU | 通知 CPU 占用 | — | 弹出 `btop` | — |
@@ -208,7 +208,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 | 通知样式 | `config/dunst.conf` | `killall dunst; dunst -conf $DWM/config/dunst.conf &` |
 | rofi 外观 | `config/rofi.rasi` | 下次打开 rofi 时生效 |
 | 状态栏模块 | `bin/statusbar/packages/*.sh` | 立即生效（下次刷新时） |
-| 壁纸 | 把图片放进 `wallpaper/` | 每 5 分钟随机更换一次；也可以左键点状态栏的菜单图标立即换 |
+| 壁纸 | 图片放进 `wallpaper/static/`，视频放进 `wallpaper/live/` | 静态壁纸每 5 分钟随机更换；`Super + P` → switch wallpaper 在动态 / 静态之间切换（各自随机挑一个，选择会记住）；左键点状态栏的菜单图标立即换一张（动态模式下换一个视频） |
 
 **让 dwm 的改动生效：** 改完 `config/dwm.h` 直接按 `Super + Shift + R`，会自动编译、安装到 `~/.local/bin/dwm` 并原地重启，窗口都会保留，不需要 sudo，也不需要退出。编译日志在 `~/.cache/dwm-build.log`。
 只有改了 `config/xinitrc` 或 `bin/autostart.sh`（它们只在登录时执行）才需要 `Super + Shift + Esc` 退出后重新 `startx`。

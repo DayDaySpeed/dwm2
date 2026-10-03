@@ -37,7 +37,7 @@ call_menu() {
 
 click() {
     case "$1" in
-        L) notify; feh --randomize --bg-fill $DWM/wallpaper ;;
+        L) notify; $DWM/bin/livewall.sh next ;;
         R) call_menu ;;
     esac
 }

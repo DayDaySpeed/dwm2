@@ -1,6 +1,6 @@
 # 打印菜单
 call_menu() {
-    echo ' set wallpaper'
+    echo ' switch wallpaper'
     echo '󰕞 update statusbar'
     command -v daed >/dev/null && { [ "$(ps aux | grep -v grep | grep daed)" ] && echo ' close daed' || echo ' open daed'; }
     [ "$(ps aux | grep picom | grep -v 'grep\|rofi\|nvim')" ] && echo ' close picom' || echo ' open picom'
@@ -11,8 +11,8 @@ call_menu() {
 # 执行菜单
 execute_menu() {
     case $1 in
-        ' set wallpaper')
-            feh --randomize --bg-fill $DWM/wallpaper
+        ' switch wallpaper')
+            $DWM/bin/livewall.sh toggle
             ;;
         '󰕞 update statusbar')
             coproc ($DWM/bin/statusbar/statusbar.sh updateall > /dev/null 2>&1)

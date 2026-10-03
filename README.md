@@ -15,10 +15,13 @@ config/   所有配置 (只改这里)
 bin/      dwm 调用的脚本 (快捷键、状态栏、自启动)
   autostart.sh               dwm 启动时执行, 所有开机启动项都在这里
   statusbar/                 状态栏
+  livewall.sh                动态 / 静态壁纸 (xwinwrap + mpv 播放视频)
   blurlock.sh rofi.sh set_vol.sh dpms.sh ...
 scripts/                     手动运行的工具脚本 (music_covers.py 补专辑封面)
 docx/                        使用说明 (dwm、终端、picom、rofi、通知、锁屏截图), 入口 docx/README.md
-wallpaper/                   壁纸, 随机轮换; ~/Pictures/wallpaper 软链接到这里
+wallpaper/                   壁纸; ~/Pictures/wallpaper 软链接到这里
+  static/                    静态图片, 每 5 分钟随机轮换
+  live/                      动态壁纸视频 (mp4 等, 不提交到 git)
 dwm/ st/ tabbed/ picom/      源码 (基于 yaocccc 的版本, 已含本仓库的改动), 直接修改, ./setup.sh <名字> 编译安装
 i3lock-color/                锁屏用的 i3lock-color 源码 (输入密码时显示圆点), ./setup.sh i3lock 编译安装
 setup.sh                     安装/编译入口
