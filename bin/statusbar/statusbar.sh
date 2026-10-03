@@ -21,7 +21,7 @@ click() {
 
 # 更新状态栏
 refresh() {
-    _icons='';_music='';_wifi='';_cpu='';_mem='';_date='';_vol='';_bat=''# 重置所有模块的状态为空
+    _icons='';_music='';_wifi='';_cpu='';_mem='';_date='';_vol='';_bat='' # 重置所有模块的状态为空
     source $tempfile                                                     # 从 temp 文件中读取模块的状态
     xsetroot -name "$_icons$_music$_wifi$_cpu$_mem$_date$_vol$_bat"      # 更新状态栏
 }

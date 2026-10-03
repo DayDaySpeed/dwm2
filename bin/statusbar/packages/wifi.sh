@@ -22,7 +22,8 @@ fi
 
 update() {
     wifi_icon="󰕡"
-    wifi_text=$(nmcli | grep "$wifi_grep_keyword" | awk -F "$wifi_grep_keyword" '{print $2}')
+    # 同时连着多个网络时 nmcli 会输出多行, 只取第一个; 否则多行的值写进 temp 后会残留半行, 导致整个状态栏读取失败
+    wifi_text=$(nmcli | grep "$wifi_grep_keyword" | awk -F "$wifi_grep_keyword" '{print $2}' | head -n 1)
     [ "$wifi_text" = "" ] && wifi_text=$wifi_disconnected
 
     icon=" $wifi_icon "
