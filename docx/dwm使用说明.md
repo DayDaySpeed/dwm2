@@ -35,7 +35,7 @@
 | `Super + -` | 打开全局浮动终端（在所有 tag 显示） |
 | `Super + S` | 显示 / 隐藏 scratchpad 终端（显示在屏幕顶部） |
 | `Super + D` | rofi：运行命令 |
-| `Super + P` | rofi 自定义菜单：切换动态 / 静态壁纸、刷新状态栏、开关 daed、开关 picom |
+| `Super + P` | rofi 自定义菜单：切换动态 / 静态壁纸、开关省电模式、刷新状态栏、开关 daed、开关 picom |
 | `Super + R` | 打开 / 关闭 pcmanfm 文件管理器（浮动在屏幕中央） |
 | `Super + Shift + A` | 截图（flameshot），框选后松开鼠标即复制到剪贴板（不保存文件） |
 | `Super + Ctrl + L` | 锁屏（模糊锁屏，输入密码解锁） |
@@ -225,6 +225,19 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 | `Super + R` 文件管理器 | `pcmanfm` |
 | 使用键盘时暂时禁用触控板 | `xf86-input-synaptics`（autostart 已写好 `syndaemon`，装好后自动生效） |
 | `Super + Y` 翻译 | `translate-shell`（需要联网，使用谷歌翻译等在线服务） |
+
+**省电模式（`Super + P` → open / close power save）：**
+
+- 开启时：壁纸带转场切到静态（停掉视频和场景渲染）、屏幕刷新率降到 60Hz、CPU 节能策略（EPP）设为 `power`；关闭时全部恢复成开启前的样子。开着省电模式重启后依然有效。
+- 拔掉电源时自动开启，插上电源时自动关闭（每 10 秒检测一次）。只会自动关闭拔电时自动开的那次；在 `Super + P` 里手动开的不会被插电关掉。
+- 独显直连模式下（BIOS 里的「独显直连 / MUX」），独显一直开着，大约 25W，开启省电时会弹通知提醒。想要真正省电，要在 BIOS 里切回混合模式。
+- CPU 节能策略要写 `/sys`，需要 root。配置一次 sudo 免密后才会生效，否则只跳过这一项（会弹通知提示）：
+
+```sh
+# 先写到临时文件, visudo 检查语法无误后再装进 /etc/sudoers.d (sudoers 写错会导致 sudo 用不了)
+echo "$USER ALL=(root) NOPASSWD: /usr/bin/tee /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference" > /tmp/powersave
+sudo visudo -cf /tmp/powersave && sudo install -m 440 -o root -g root /tmp/powersave /etc/sudoers.d/powersave
+```
 
 **显卡模式（混合 / 独显直连）：**
 
