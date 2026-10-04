@@ -32,6 +32,9 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/time.h>
+#include <time.h>
+#include <math.h>
+#include <sys/select.h>
 #include <X11/cursorfont.h>
 #include <X11/keysym.h>
 #include <X11/Xatom.h>
@@ -373,6 +376,13 @@ static void focuspreviewwin(Client *focus_c, Monitor *m);
 static XImage *getwindowximage(Client *c);
 static XImage *capturehidden(Client *c);
 static XImage *scaledownimage(Client *c, unsigned int cw, unsigned int ch);
+static void relax(const Arg *arg);
+static int relaxevent(XEvent *e);
+static void relaxpost(XEvent *e);
+static void relaxtick(void);
+static long relaxtimeout(void);
+static void relaxcleanup(void);
+static int relaxactive(void);
 
 /* variables */
 static Systray *systray =  NULL;
@@ -430,6 +440,8 @@ struct Pertag {
 	const Layout *ltidxs[LENGTH(tags) + 1][2]; /* matrix of tags and layouts indexes  */
 	int showbars[LENGTH(tags) + 1]; /* display bar for the current tag */
 };
+
+#include "galaxy.c"
 
 /* function implementations */
 void
@@ -711,6 +723,7 @@ cleanup(void)
     Monitor *m;
     size_t i;
 
+    relaxcleanup();
     view(&a);
     selmon->lt[selmon->sellt] = &foo;
     for (m = mons; m; m = m->next)
@@ -2408,11 +2421,36 @@ void
 run(void)
 {
     XEvent ev;
-    /* main event loop */
+    fd_set fds;
+    struct timeval timeout;
+    long wait;
+    int fd = ConnectionNumber(dpy);
     XSync(dpy, False);
-    while (running && !XNextEvent(dpy, &ev))
-        if (handler[ev.type])
-            handler[ev.type](&ev); /* call handler */
+    /* main event loop; Super+Z 动画期间不阻塞, 按帧时间驱动 relaxtick */
+    while (running) {
+        if (relaxactive()) {
+            while (running && relaxactive() && XPending(dpy)) {
+                XNextEvent(dpy, &ev);
+                if (!relaxevent(&ev)) {
+                    if (handler[ev.type])
+                        handler[ev.type](&ev);
+                    relaxpost(&ev);
+                }
+            }
+            if (!running || !relaxactive())
+                continue;
+            relaxtick();
+            if (QLength(dpy) || !relaxactive())
+                continue;
+            FD_ZERO(&fds);
+            FD_SET(fd, &fds);
+            wait = relaxtimeout();
+            timeout.tv_sec = wait / 1000000;
+            timeout.tv_usec = wait % 1000000;
+            select(fd + 1, &fds, NULL, NULL, wait < 0 ? NULL : &timeout);
+        } else if (!XNextEvent(dpy, &ev) && handler[ev.type])
+            handler[ev.type](&ev);
+    }
 }
 
 void
