@@ -17,6 +17,9 @@ bin/      dwm 调用的脚本 (快捷键、状态栏、自启动)
   statusbar/                 状态栏
   livewall.sh                动态 / 静态壁纸 (xwinwrap + mpv 播放视频)
   powersave.sh               省电模式: 静态壁纸 + 60Hz + CPU 节能 (Super+P 开关)
+  power.sh keys.sh           电源菜单 (Super+Shift+Esc), 快捷键速查 (Super+/)
+  batalert.sh dimscreen.sh   低电量提醒, 锁屏前调暗提醒
+  nightlight.sh              护眼暖色 (Super+P 开关)
   blurlock.sh rofi.sh set_vol.sh dpms.sh ...
 scripts/                     手动运行的工具脚本 (music_covers.py 补专辑封面)
 docx/                        使用说明 (dwm、终端、picom、rofi、通知、锁屏截图), 入口 docx/README.md

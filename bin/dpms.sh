@@ -1,34 +1,52 @@
 #!/bin/sh
-# dpms.sh — 后台循环守护，持续确保 DPMS 保持为 600s（10分钟）
-# 启动方式：nohup $DWM/bin/dpms.sh >/dev/null 2>&1 &
+# dpms.sh — 自动锁屏 / 熄屏的时间, 后台循环守护 (某些应用会在会话中途把 DPMS 改回默认值)
+#   无操作 9 分 30 秒: 屏幕调暗提醒 (xss-lock -n bin/dimscreen.sh)
+#   无操作 10 分钟:   锁屏 (xss-lock)
+#   无操作 12 分钟:   熄屏 (DPMS)
+#   dpms.sh                启动守护 (autostart)
+#   dpms.sh toggle         暂停 / 恢复自动锁屏和熄屏 (Super+P 菜单 pause / resume auto lock, 看视频、演示时用)
+#   dpms.sh status         输出 on (自动锁屏生效) / paused
+#   dpms.sh --one-shot     只设置一次
 
-IDLE_SEC=600
+ALERT_SEC=570                              # 调暗提醒
+CYCLE_SEC=30                               # 提醒后再过多久锁屏 (锁屏在 ALERT_SEC + CYCLE_SEC = 600 秒)
+OFF_SEC=720                                # 熄屏, 与 config/betterlockscreenrc 的 lock_timeout 保持一致
+PAUSED=${XDG_CACHE_HOME:-$HOME/.cache}/nolock
+
+apply() {
+    if [ -f "$PAUSED" ]; then
+        xset s off
+        xset -dpms
+    else
+        xset dpms "$OFF_SEC" "$OFF_SEC" "$OFF_SEC"
+        xset +dpms
+        xset s on                          # 先开再设时间: xset s on 会把时间重置为默认的 600
+        xset s "$ALERT_SEC" "$CYCLE_SEC"
+    fi
+}
 
 case "$1" in
-  --one-shot)
-    xset dpms "$IDLE_SEC" "$IDLE_SEC" "$IDLE_SEC"
-    xset +dpms
-    xset s "$IDLE_SEC"
-    xset s on
-    exit 0
-    ;;
+  --one-shot) apply; exit 0 ;;
+  status) [ -f "$PAUSED" ] && echo paused || echo on; exit 0 ;;
+  toggle)
+    if [ -f "$PAUSED" ]; then
+        rm -f "$PAUSED"; apply
+        notify-send -r 9532 "󰌾 自动锁屏" "已恢复: 10 分钟无操作锁屏"
+    else
+        mkdir -p "$(dirname "$PAUSED")"; touch "$PAUSED"; apply
+        notify-send -r 9532 "󰌿 自动锁屏" "已暂停: 不会自动锁屏和熄屏"
+    fi
+    exit 0 ;;
 esac
 
-# 首次立即设置
-xset dpms "$IDLE_SEC" "$IDLE_SEC" "$IDLE_SEC"
-xset +dpms
-xset s "$IDLE_SEC"
-xset s on
-
-# 每 60s 检查并修正，持久运行（某些应用会在会话中途把 DPMS 改回默认值）
+apply
+# 每 60s 检查并修正, 持久运行
 while :; do
   sleep 60
-  # 检查实际 DPMS 值是否被改
-  current=$(xset -q 2>/dev/null | awk '/Standby:/ {print $2}')
-  if [ "$current" != "$IDLE_SEC" ]; then
-    xset dpms "$IDLE_SEC" "$IDLE_SEC" "$IDLE_SEC"
-    xset +dpms
-    xset s "$IDLE_SEC"
-    xset s on
+  if [ -f "$PAUSED" ]; then
+    [ "$(xset -q 2>/dev/null | awk '/timeout:/ {print $2}')" = 0 ] || apply
+  else
+    [ "$(xset -q 2>/dev/null | awk '/Standby:/ {print $2}')" = "$OFF_SEC" ] && \
+    [ "$(xset -q 2>/dev/null | awk '/timeout:/ {print $2}')" = "$ALERT_SEC" ] || apply
   fi
 done

@@ -10,6 +10,7 @@ settings() {
     xset -b                                   # 关闭蜂鸣器
     $DWM/bin/powersave.sh apply               # 刷新率和 CPU 节能策略: 省电模式开着时 60Hz + 节能, 否则用最高刷新率 (重启后会被重置)
     $DWM/bin/livewall.sh auto                 # 设置壁纸 (动态视频 / 静态图片), 并在后台生成锁屏背景; 要在改刷新率之后, 场景壁纸遇到屏幕变化会崩溃
+    $DWM/bin/nightlight.sh apply              # 护眼开着时重新应用暖色
     numlockx on 2>/dev/null || xset led named "Num Lock" # 开启 NumLock
     xinput list --name-only | grep "^SYNA32E2" | while read -r d; do xinput disable "$d"; done # 禁用触摸板 (X 中名为 "SYNA32E2:00 06CB:CEE7 Mouse")
     has syndaemon && syndaemon -i 1 -t -K -R -d # 设置使用键盘时触控板短暂失效(需 xf86-input-synaptics)
@@ -19,11 +20,11 @@ settings() {
 daemons() {
     [ $1 ] && sleep $1
     $DWM/bin/statusbar/statusbar.sh cron &    # 开启状态栏定时更新
-    xss-lock -- $DWM/bin/blurlock.sh &        # 开启自动锁屏程序
-    $DWM/bin/dpms.sh &                        # 10 分钟无操作熄屏 (持续守护, 防止被改回默认)
+    xss-lock -l -n $DWM/bin/dimscreen.sh -- $DWM/bin/blurlock.sh &  # 自动锁屏: 先调暗提醒, 睡眠前先锁好屏 (时间见 bin/dpms.sh)
+    $DWM/bin/dpms.sh &                        # 无操作 9.5 分钟调暗 / 10 分钟锁屏 / 12 分钟熄屏 (持续守护, 防止被改回默认)
     fcitx5 &                                  # 开启输入法
     flameshot &                               # 截图要跑一个程序在后台 不然无法将截图保存到剪贴板
-    parcellite &                              # 剪贴板管理器
+    { has clipmenud && clipmenud || parcellite; } & # 剪贴板历史 (Super+X 调出; 未装 clipmenu 时退回 parcellite)
     has lemonade && lemonade server &         # 开启lemonade 远程剪切板支持
     dunst -conf $DWM/config/dunst.conf &      # 开启通知server
     picom --experimental-backends --config $DWM/config/picom.conf >> /dev/null 2>&1 & # 开启picom
@@ -35,6 +36,7 @@ cron() {
     while true; do
         [ $((i % 300)) -eq 0 ] && $DWM/bin/livewall.sh cron # 每300秒更新静态壁纸 (及锁屏背景); 动态壁纸不打断
         $DWM/bin/powersave.sh ac >/dev/null       # 拔电自动开省电模式, 插电自动关 (只关自动开的)
+        [ $((i % 60)) -eq 0 ] && $DWM/bin/batalert.sh # 每60秒检查电量: 20% / 10% 提醒, 5% 自动睡眠
         sleep 10; let i+=10
     done
 }

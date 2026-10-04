@@ -21,7 +21,8 @@ deps() {
     yay -S --needed xwinwrap-git       # 动态壁纸 (bin/livewall.sh): 把 mpv 嵌到桌面最底层
     sudo pacman -S --needed meson ninja uthash libconfig libev libxdg-basedir pcre \
         pixman dbus mesa xcb-util-image xcb-util-renderutil libx11 libxext \
-        rofi feh mpv ffmpeg xorg-xwininfo xorg-xprop xdotool python dunst flameshot xss-lock fcitx5 pamixer x11vnc \
+        rofi feh mpv ffmpeg xorg-xwininfo xorg-xprop xdotool python dunst \
+        gammastep clipmenu autorandr playerctl brightnessctl flameshot xss-lock fcitx5 pamixer x11vnc \
         intel-media-driver libva-utils \
         pcmanfm \
         ranger ueberzugpp ffmpegthumbnailer translate-shell

@@ -161,15 +161,15 @@ static Key keys[] = {
 
     { MODKEY,              XK_q,            killclient,       {0} },                     /* super q            |  关闭窗口 */
     { MODKEY|ControlMask,  XK_q,            forcekillclient,  {0} },                     /* super ctrl q       |  强制关闭窗口(处理某些情况下无法销毁的窗口) */
-    { MODKEY|ShiftMask,    XK_Escape,       quit,             {0} },                     /* super shift esc   |  退出dwm */
+    { MODKEY|ShiftMask,    XK_Escape,       spawn,            SHCMD("$DWM/bin/power.sh") }, /* super shift esc    |  电源菜单: 锁屏 / 睡眠 / 休眠 / 注销 / 重启 / 关机 (注销等需确认) */
     { MODKEY|ShiftMask,    XK_r,            spawn,            SHCMD("$DWM/bin/reload.sh") }, /* super shift r   |  编译安装 dwm 并原地重启(窗口与tag保留) */
 
 	{ MODKEY|ShiftMask,    XK_space,        selectlayout,     {.v = &layouts[1]} },      /* super shift space  |  切换到网格布局 */
 	{ MODKEY,              XK_o,            showonlyorall,    {0} },                     /* super o            |  切换 只显示一个窗口 / 全部显示 */
 
-    { MODKEY|ControlMask,  XK_equal,        setgap,           {.i = -6} },               /* super ctrl +       |  窗口增大 */
-    { MODKEY|ControlMask,  XK_minus,        setgap,           {.i = +6} },               /* super ctrl -       |  窗口减小 */
-    { MODKEY|ControlMask,  XK_space,        setgap,           {.i = 0} },                /* super ctrl space   |  窗口重置 */
+    { MODKEY|ControlMask,  XK_equal,        setgap,           {.i = -6} },               /* super ctrl +       |  减小窗口间距 (窗口变大) */
+    { MODKEY|ControlMask,  XK_minus,        setgap,           {.i = +6} },               /* super ctrl -       |  增大窗口间距 (窗口变小) */
+    { MODKEY|ControlMask,  XK_space,        setgap,           {.i = 0} },                /* super ctrl space   |  重置窗口间距 */
 
     { MODKEY|ControlMask,  XK_Up,           movewin,          {.ui = UP} },              /* super ctrl up      |  移动窗口 */
     { MODKEY|ControlMask,  XK_Down,         movewin,          {.ui = DOWN} },            /* super ctrl down    |  移动窗口 */
@@ -193,10 +193,11 @@ static Key keys[] = {
     /* spawn + SHCMD 执行对应命令(已下部分建议完全自己重新定义) */
     { MODKEY,              XK_s,      togglescratch, SHCMD("tabbed -n scratchpad -c -r 2 st -w ''") },          /* super s          | 打开st scratchpad      */
     { MODKEY,              XK_Return, spawn, SHCMD("tabbed -n st -C tabbed -c -r 2 st -w ''") },                /* super enter      | 打开st                 */
-    { MODKEY,              XK_minus,  spawn, SHCMD("tabbed -n st -C FG -c -r 2 st -w ''") },                    /* super +          | 打开全局st终端         */
+    { MODKEY,              XK_minus,  spawn, SHCMD("tabbed -n st -C FG -c -r 2 st -w ''") },                    /* super -          | 打开全局st终端         */
     { MODKEY,              XK_space,  spawn, SHCMD("tabbed -n st -C float -c -r 2 st -w ''") },                 /* super space      | 打开浮动st终端         */
     { MODKEY,              XK_r,      spawn, SHCMD("killall pcmanfm || pcmanfm") },                             /* super r          | 打开/关闭pcmanfm       */
-    { MODKEY,              XK_d,      spawn, SHCMD("rofi -show run") },                                         /* super d          | rofi: 执行run          */
+    { MODKEY,              XK_d,      spawn, SHCMD("rofi -show drun") },                                        /* super d          | rofi: 启动应用 (带图标) */
+    { MODKEY|ShiftMask,    XK_d,      spawn, SHCMD("rofi -show run") },                                         /* super shift d    | rofi: 执行命令         */
     { MODKEY,              XK_p,      spawn, SHCMD("$DWM/bin/rofi.sh") },                                       /* super p          | rofi: 执行自定义脚本   */
     { MODKEY|ControlMask,  XK_l,      spawn, SHCMD("$DWM/bin/blurlock.sh") },                                   /* super ctrl l     | 锁定屏幕               */
     { MODKEY|ShiftMask,    XK_Up,     spawn, SHCMD("$DWM/bin/set_vol.sh up") },                                 /* super shift up   | 音量加                 */
@@ -204,7 +205,14 @@ static Key keys[] = {
     { MODKEY|ShiftMask,    XK_a,      spawn, SHCMD("flameshot gui") },                   /* super shift a    | 截图                   */
     { MODKEY,              XK_y,      spawn, SHCMD("$DWM/bin/translate.sh") },                                  /* super y          | 翻译选中的文字         */
     { MODKEY|ShiftMask,    XK_y,      spawn, SHCMD("$DWM/bin/translate.sh input") },                            /* super shift y    | 输入文字翻译并复制     */
-    { MODKEY|ShiftMask,    XK_q,      spawn, SHCMD("kill -9 $(xprop | grep _NET_WM_PID | awk '{print $3}')") }, /* super shift q    | 选中某个窗口并强制kill */
+    { MODKEY,              XK_x,      spawn, SHCMD("CM_LAUNCHER=rofi clipmenu -p 剪贴板") },                    /* super x          | 剪贴板历史 (选中的放进剪贴板) */
+    { MODKEY,              XK_n,      spawn, SHCMD("dunstctl history-pop") },                                   /* super n          | 重新显示上一条通知     */
+    { MODKEY|ShiftMask,    XK_n,      spawn, SHCMD("dunstctl close-all") },                                     /* super shift n    | 关闭所有通知           */
+    { MODKEY,              XK_slash,  spawn, SHCMD("$DWM/bin/keys.sh") },                                       /* super /          | 快捷键速查             */
+    { 0,                   XF86XK_AudioPlay,  spawn, SHCMD("playerctl play-pause; $DWM/bin/statusbar/statusbar.sh update music") }, /* 播放键          | 播放 / 暂停            */
+    { 0,                   XF86XK_AudioPause, spawn, SHCMD("playerctl play-pause; $DWM/bin/statusbar/statusbar.sh update music") }, /* 暂停键          | 播放 / 暂停            */
+    { 0,                   XF86XK_AudioNext,  spawn, SHCMD("playerctl next; $DWM/bin/statusbar/statusbar.sh update music") },       /* 下一首键        | 下一首                 */
+    { 0,                   XF86XK_AudioPrev,  spawn, SHCMD("playerctl previous; $DWM/bin/statusbar/statusbar.sh update music") },   /* 上一首键        | 上一首                 */
 
     /* super key : 跳转到对应tag (可附加一条命令 若目标目录无窗口，则执行该命令) */
     /* super shift key : 将聚焦窗口移动到对应tag */

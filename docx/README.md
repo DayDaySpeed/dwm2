@@ -15,10 +15,11 @@
 | 按键 | 功能 |
 |---|---|
 | `Super + Enter` | 打开终端 |
-| `Super + D` | 运行命令 |
+| `Super + D` | 启动应用 |
 | `Super + Q` | 关闭窗口 |
 | `Super + 1 / 2 / 3` | 切换 tag |
 | `Super + Shift + A` | 截图 |
 | `Super + Ctrl + L` | 锁屏 |
 | `Super + Shift + R` | 让 dwm 配置生效（自动编译并原地重启，窗口保留） |
-| `Super + Shift + Esc` | 退出 dwm |
+| `Super + Shift + Esc` | 电源菜单（睡眠、注销、重启、关机） |
+| `Super + /` | 快捷键速查 |

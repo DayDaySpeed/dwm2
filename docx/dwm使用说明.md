@@ -34,13 +34,18 @@
 | `Super + Space` | 打开浮动终端 |
 | `Super + -` | 打开全局浮动终端（在所有 tag 显示） |
 | `Super + S` | 显示 / 隐藏 scratchpad 终端（显示在屏幕顶部） |
-| `Super + D` | rofi：运行命令 |
+| `Super + D` | rofi：启动应用（列出已安装的应用，带图标） |
+| `Super + Shift + D` | rofi：运行命令（输入命令名） |
 | `Super + P` | rofi 自定义菜单：切换动态 / 静态壁纸、开关省电模式、刷新状态栏、开关 daed、开关 picom |
 | `Super + R` | 打开 / 关闭 pcmanfm 文件管理器（浮动在屏幕中央） |
 | `Super + Shift + A` | 截图（flameshot），框选后松开鼠标即复制到剪贴板（不保存文件） |
 | `Super + Ctrl + L` | 锁屏（模糊锁屏，输入密码解锁） |
 | `Super + Y` | 翻译鼠标选中的文字，译文显示在右上角通知里（含汉字 → 英文，否则 → 中文） |
 | `Super + Shift + Y` | 弹出输入框，输入文字后回车翻译，译文自动复制到剪贴板 |
+| `Super + X` | 剪贴板历史：列出最近复制过的内容，选中的放回剪贴板（需安装 clipmenu） |
+| `Super + N` | 重新显示上一条通知（错过的通知可以连按逐条找回） |
+| `Super + Shift + N` | 关闭所有通知 |
+| `Super + /` | 快捷键速查：列出所有快捷键和鼠标操作，可输入文字搜索 |
 
 ### 2.2 窗口焦点与切换
 
@@ -59,14 +64,13 @@
 |---|---|
 | `Super + Q` | 关闭窗口 |
 | `Super + Ctrl + Q` | 强制关闭窗口（用于关不掉的窗口） |
-| `Super + Shift + Q` | 鼠标变成选择状态，点哪个窗口就强制结束哪个窗口的进程 |
 | `Super + T` | 当前窗口在浮动和平铺之间切换 |
 | `Super + Shift + T` | 所有窗口在浮动和平铺之间切换 |
 | `Super + F` | 全屏 / 取消全屏 |
 | `Super + G` | 当前窗口在全局（所有 tag 显示）和普通之间切换 |
 | `Super + U` | 显示 / 隐藏边框 |
 | `Super + I` | 隐藏当前窗口 |
-| `Super + Shift + I` | 恢复被隐藏的窗口 |
+| `Super + Shift + I` | 恢复最后隐藏的窗口；想恢复其他隐藏窗口，按 `Super + A` 在预览里点它 |
 | `Super + O` | 只显示当前窗口 ↔ 显示全部窗口 |
 
 ### 2.4 移动与调整窗口（键盘）
@@ -120,7 +124,8 @@
 | `Super + Shift + B` | 把当前窗口移到另一个显示器 |
 | `Super + Shift + ↑` / `↓` | 音量加 / 减（以 5% 为步长） |
 | `Super + Shift + R` | **让配置生效**：自动编译安装 dwm 并原地重启。所有窗口、所在 tag、先后顺序、浮动 / 隐藏状态和当前查看的 tag 都保留；编译失败会弹通知，当前的 dwm 继续运行 |
-| `Super + Shift + Esc` | 退出 dwm（会关闭所有窗口） |
+| `Super + Shift + Esc` | 电源菜单：锁屏、睡眠、休眠、注销（退出 dwm）、重启、关机。注销 / 重启 / 关机会再确认一次 |
+| 媒体键（播放 / 上一首 / 下一首） | 控制正在播放的音乐或视频（`playerctl`）。音量键和亮度键由笔记本固件处理 |
 
 ---
 
@@ -211,7 +216,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 | 壁纸 | 图片放进 `wallpaper/static/`，视频放进 `wallpaper/live/`；Steam 上订阅的 Wallpaper Engine 壁纸执行 `bin/livewall.sh sync`（或重新登录）复制进 `wallpaper/live/`，之后可以在 Steam 取消订阅；不想要的直接从 `wallpaper/live/` 删掉 | 静态壁纸每 5 分钟随机更换；`Super + P` → switch wallpaper mode to live / static 在动态 / 静态之间切换（各自随机挑一个，选择会记住）；左键点状态栏的菜单图标立即换一张（动态模式下换一个）；所有壁纸切换（动态、静态、每 5 分钟换图）都随机播放一种 GPU 转场特效（`config/transitions/`）；在 `bin/livewall.sh` 顶部改 `TRANSITION=` 可固定某一种或改成 `fade`（GPU 淡入），`TRANSITION_SAVE=` 单独设置省电模式下的转场 |
 
 **让 dwm 的改动生效：** 改完 `config/dwm.h` 直接按 `Super + Shift + R`，会自动编译、安装到 `~/.local/bin/dwm` 并原地重启，窗口都会保留，不需要 sudo，也不需要退出。编译日志在 `~/.cache/dwm-build.log`。
-只有改了 `config/xinitrc` 或 `bin/autostart.sh`（它们只在登录时执行）才需要 `Super + Shift + Esc` 退出后重新 `startx`。
+只有改了 `config/xinitrc` 或 `bin/autostart.sh`（它们只在登录时执行）才需要 `Super + Shift + Esc` → 注销，再重新 `startx`。
 
 > 改 dwm 本身的功能直接修改 `dwm/` 下的源码（如 `dwm/dwm.c`），同样按 `Super + Shift + R` 生效。
 
@@ -225,6 +230,10 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 | `Super + R` 文件管理器 | `pcmanfm` |
 | 使用键盘时暂时禁用触控板 | `xf86-input-synaptics`（autostart 已写好 `syndaemon`，装好后自动生效） |
 | `Super + Y` 翻译 | `translate-shell`（需要联网，使用谷歌翻译等在线服务） |
+| `Super + X` 剪贴板历史 | `clipmenu`（装好后重新登录生效；没装时用原来的 parcellite） |
+| 护眼 | `gammastep` |
+
+**电量低提醒：** 用电池时，电量降到 20% 弹提醒，10% 弹紧急提醒，5% 时 30 秒后自动睡眠（期间插上电源会取消）。每一档只提醒一次。
 
 **省电模式（`Super + P` → open / close power save）：**
 
@@ -254,10 +263,10 @@ sudo visudo -cf /tmp/powersave && sudo install -m 440 -o root -g root /tmp/power
 - **切换方法**：重启时按 `F10` 进 BIOS，在显卡相关选项（Graphics Switching / Display Mode 之类）里选「独显 / Discrete」或「混合 / Hybrid」，保存重启，正常 `startx` 即可。`bin/livewall.sh` 会自动识别当前模式。
 - **黑屏恢复**：按 `Ctrl + Alt + F2` 进 tty 登录，执行 `sudo mv /etc/X11/xorg.conf.d.bak/* /etc/X11/xorg.conf.d/` 恢复旧配置后重启；或者进 BIOS 切回混合模式。
 
-安装命令（文件管理器）：
+安装命令：
 
 ```sh
-sudo pacman -S pcmanfm
+sudo pacman -S pcmanfm clipmenu gammastep autorandr
 ```
 
 **音乐播放器（SPlayer）：**
