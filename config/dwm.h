@@ -197,7 +197,6 @@ static Key keys[] = {
     { MODKEY,              XK_r,      spawn, SHCMD("killall pcmanfm || pcmanfm") },                             /* super r          | 打开/关闭pcmanfm       */
     { MODKEY,              XK_d,      spawn, SHCMD("rofi -show run") },                                         /* super d          | rofi: 执行run          */
     { MODKEY,              XK_p,      spawn, SHCMD("$DWM/bin/rofi.sh") },                                       /* super p          | rofi: 执行自定义脚本   */
-    { MODKEY,              XK_n,      spawn, SHCMD("$DWM/bin/blurlock.sh") },                                   /* super n          | 锁定屏幕               */
     { MODKEY|ControlMask,  XK_l,      spawn, SHCMD("$DWM/bin/blurlock.sh") },                                   /* super ctrl l     | 锁定屏幕               */
     { MODKEY|ShiftMask,    XK_Up,     spawn, SHCMD("$DWM/bin/set_vol.sh up") },                                 /* super shift up   | 音量加                 */
     { MODKEY|ShiftMask,    XK_Down,   spawn, SHCMD("$DWM/bin/set_vol.sh down") },                               /* super shift down | 音量减                 */

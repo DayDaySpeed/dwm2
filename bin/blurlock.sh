@@ -1,6 +1,6 @@
 #! /bin/bash
 # 锁屏 (betterlockscreen, 基于 i3lock-color): 当前壁纸调暗 + 模糊作背景, 屏幕中央显示时间、日期和密码圆环
-#   blurlock.sh          锁屏 (Super+N, xss-lock 自动锁屏)
+#   blurlock.sh          锁屏 (Super+Ctrl+L, xss-lock 自动锁屏)
 #   blurlock.sh update   用当前壁纸重新生成锁屏背景 (autostart 每次换壁纸后在后台调用; 未换壁纸时跳过)
 #   blurlock.sh update -f  强制重新生成 (修改 config/betterlockscreenrc 后执行)
 # 主题配置: config/betterlockscreenrc

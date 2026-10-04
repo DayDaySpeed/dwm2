@@ -19,6 +19,6 @@
 | `Super + Q` | 关闭窗口 |
 | `Super + 1 / 2 / 3` | 切换 tag |
 | `Super + Shift + A` | 截图 |
-| `Super + N` 或 `Super + Ctrl + L` | 锁屏 |
+| `Super + Ctrl + L` | 锁屏 |
 | `Super + Shift + R` | 让 dwm 配置生效（自动编译并原地重启，窗口保留） |
 | `Super + Shift + Esc` | 退出 dwm |
