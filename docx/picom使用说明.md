@@ -29,7 +29,7 @@ picom 是窗口合成器，负责窗口的透明、圆角、模糊、淡入淡�
 |---|---|
 | 圆角 | 半径 10（输入法 fcitx 的候选框不加圆角） |
 | 透明度 | 当前聚焦的窗口 95%，未聚焦的窗口 92%，全屏窗口 93% |
-| 始终不透明的窗口 | mpv、OBS、GIMP、VNC、全屏的 Chrome、画中画 |
+| 始终不透明的窗口 | VS Code、Chrome、Edge、Typora、平铺的 st 终端（以文字为主，避免透出壁纸），以及 mpv、OBS、GIMP、VNC、画中画 |
 | 背景模糊 | dual_kawase，强度 4 |
 | 淡入淡出 | 开启（rofi、输入法、screenkey 除外） |
 | 打开窗口动画 | zoom（从中心放大） |
@@ -62,7 +62,7 @@ corner-radius = 10.0;
 
 **调整模糊强度：**
 ```
-blur-strength = 4;              # 数字越大越模糊
+blur-strength = 3;              # 数字越大越模糊
 ```
 
 **调整或关闭动画：**
