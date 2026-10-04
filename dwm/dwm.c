@@ -124,6 +124,7 @@ typedef struct Preview Preview;
 
 struct Preview {
   XImage *scaled_image;
+  XImage *hidden_image; /* 隐藏 (unmap) 前截的整窗画面: 隐藏后窗口内容不再保留, 预览时用它 */
   Window win;
   unsigned int x, y;
 };
@@ -370,6 +371,7 @@ static void previewallwin();
 static void setpreviewwins(unsigned int n, Monitor *m, unsigned int gappo, unsigned int gappi);
 static void focuspreviewwin(Client *focus_c, Monitor *m);
 static XImage *getwindowximage(Client *c);
+static XImage *capturehidden(Client *c);
 static XImage *scaledownimage(Client *c, unsigned int cw, unsigned int ch);
 
 /* variables */
@@ -1584,6 +1586,10 @@ hide(Client *c) {
     Window w = c->win;
     static XWindowAttributes ra, ca;
 
+    // 隐藏前截一张图, Super+A 预览时显示 (unmap 之后就截不到了)
+    if (c->preview.hidden_image) XDestroyImage(c->preview.hidden_image);
+    c->preview.hidden_image = getwindowximage(c);
+
     // more or less taken directly from blackbox's hide() function
     XGrabServer(dpy);
     XGetWindowAttributes(dpy, root, &ra);
@@ -2714,6 +2720,10 @@ show(Client *c)
     if (!c || !HIDDEN(c))
         return;
 
+    if (c->preview.hidden_image) {
+        XDestroyImage(c->preview.hidden_image);
+        c->preview.hidden_image = NULL;
+    }
     XMapWindow(dpy, c->win);
     setclientstate(c, NormalState);
     arrange(c->mon);
@@ -3157,6 +3167,10 @@ unmanage(Client *c, int destroyed)
     detachstack(c);
     if (c->badge)
         XDestroyWindow(dpy, c->badge);
+    if (c->preview.win)
+        XDestroyWindow(dpy, c->preview.win);
+    if (c->preview.hidden_image)
+        XDestroyImage(c->preview.hidden_image);
     if (!destroyed) {
         wc.border_width = c->oldbw;
         XGrabServer(dpy); /* avoid race conditions */
@@ -3961,7 +3975,7 @@ focuspreviewwin(Client *focus_c, Monitor *m) {
     for (c = m->clients; c; c = c->next) {
         if (c->preview.win) {
             XUnmapWindow(dpy, c->preview.win);
-            XMapWindow(dpy, c->win);
+            if (!HIDDEN(c)) XMapWindow(dpy, c->win); // 隐藏的窗口保持隐藏, 选中的由下面的 show() 恢复
         }
         if (c->preview.scaled_image) XDestroyImage(c->preview.scaled_image);
     }
@@ -4052,6 +4066,9 @@ XImage
     XRenderFillRectangle(dpy, PictOpSrc, pixmapPicture, &color, 0, 0, c->w, c->h);
     XRenderComposite(dpy, hasAlpha ? PictOpOver : PictOpSrc, picture, 0, pixmapPicture, 0, 0, 0, 0, 0, 0, c->w, c->h);
     XImage *img = XGetImage(dpy, pixmap, 0, 0, c->w, c->h, AllPlanes, ZPixmap);
+    XRenderFreePicture(dpy, picture);
+    XRenderFreePicture(dpy, pixmapPicture);
+    XFreePixmap(dpy, pixmap);
     img->red_mask = format2->direct.redMask << format2->direct.red;
     img->green_mask = format2->direct.greenMask << format2->direct.green;
     img->blue_mask = format2->direct.blueMask << format2->direct.blue;
@@ -4059,9 +4076,37 @@ XImage
     return img;
 }
 
+/* 隐藏窗口没有缓存的截图时 (dwm 重启前就隐藏了等): 移到屏幕外临时映射, 等它画出来再截, 然后恢复隐藏
+ * 映射 / 取消映射期间屏蔽 Map/Unmap 事件 (同 hide()), 窗口状态保持 Iconic */
+XImage
+*capturehidden(Client *c) {
+    XWindowAttributes ra, ca;
+    XImage *img;
+
+    XGetWindowAttributes(dpy, root, &ra);
+    XGetWindowAttributes(dpy, c->win, &ca);
+    XSelectInput(dpy, root, ra.your_event_mask & ~SubstructureNotifyMask);
+    XSelectInput(dpy, c->win, ca.your_event_mask & ~StructureNotifyMask);
+    XMoveWindow(dpy, c->win, WIDTH(c) * -2, c->y);
+    XMapWindow(dpy, c->win);
+    XSync(dpy, False);
+    usleep(150000);
+    img = getwindowximage(c);
+    XUnmapWindow(dpy, c->win);
+    XMoveWindow(dpy, c->win, c->x, c->y);
+    XSync(dpy, False);
+    XSelectInput(dpy, root, ra.your_event_mask);
+    XSelectInput(dpy, c->win, ca.your_event_mask);
+    return img;
+}
+
 XImage
 *scaledownimage(Client *c, unsigned int cw, unsigned int ch) {
-    XImage *orig_image = getwindowximage(c);
+    // 隐藏的窗口用隐藏前缓存的截图 (没有就临时映射截一张并缓存), 其余现截
+    if (HIDDEN(c) && !c->preview.hidden_image)
+        c->preview.hidden_image = capturehidden(c);
+    int cached = HIDDEN(c) && c->preview.hidden_image;
+    XImage *orig_image = cached ? c->preview.hidden_image : getwindowximage(c);
     int factor_w = orig_image->width / cw + 1;
     int factor_h = orig_image->height / ch + 1;
     int scale_factor = factor_w > factor_h ? factor_w : factor_h;
@@ -4078,6 +4123,7 @@ XImage
         }
     }
     scaled_image->depth = orig_image->depth;
+    if (!cached) XDestroyImage(orig_image);
     return scaled_image;
 }
 
