@@ -3,6 +3,9 @@ call_menu() {
     # 和 livewall.sh toggle 的判断一致: 正在播动态壁纸 (视频 xwinwrap / 场景 linux-wallpaperengine) 就切到静态
     { pgrep -x xwinwrap || pgrep -x linux-wallpaper; } >/dev/null && echo ' switch wallpaper mode to static' || echo ' switch wallpaper mode to live'
     [ -f ~/.cache/powersave/on ] && echo '󰌪 close power save' || echo '󰌪 open power save'
+    [ "$(dunstctl is-paused 2>/dev/null)" = true ] && echo '󰂛 close do not disturb' || echo '󰂛 open do not disturb'
+    [ "$($DWM/bin/dpms.sh status)" = paused ] && echo '󰌾 resume auto lock' || echo '󰌿 pause auto lock'
+    command -v gammastep >/dev/null && { [ "$($DWM/bin/nightlight.sh status)" = on ] && echo '󰖔 close night light' || echo '󰖔 open night light'; }
     echo '󰕞 update statusbar'
     command -v daed >/dev/null && { [ "$(ps aux | grep -v grep | grep daed)" ] && echo ' close daed' || echo ' open daed'; }
     [ "$(ps aux | grep picom | grep -v 'grep\|rofi\|nvim')" ] && echo ' close picom' || echo ' open picom'
@@ -18,6 +21,16 @@ execute_menu() {
             ;;
         '󰌪 open power save'|'󰌪 close power save')
             $DWM/bin/powersave.sh toggle > /dev/null
+            ;;
+        '󰂛 open do not disturb'|'󰂛 close do not disturb')
+            dunstctl set-paused toggle
+            [ "$(dunstctl is-paused)" = true ] || notify-send -r 9534 "󰂚 勿扰" "已关闭, 通知恢复显示"
+            ;;
+        '󰌿 pause auto lock'|'󰌾 resume auto lock')
+            $DWM/bin/dpms.sh toggle
+            ;;
+        '󰖔 open night light'|'󰖔 close night light')
+            $DWM/bin/nightlight.sh toggle
             ;;
         '󰕞 update statusbar')
             coproc ($DWM/bin/statusbar/statusbar.sh updateall > /dev/null 2>&1)

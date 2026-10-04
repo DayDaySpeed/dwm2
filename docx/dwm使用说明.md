@@ -36,7 +36,7 @@
 | `Super + S` | 显示 / 隐藏 scratchpad 终端（显示在屏幕顶部） |
 | `Super + D` | rofi：启动应用（列出已安装的应用，带图标） |
 | `Super + Shift + D` | rofi：运行命令（输入命令名） |
-| `Super + P` | rofi 自定义菜单：切换动态 / 静态壁纸、开关省电模式、刷新状态栏、开关 daed、开关 picom |
+| `Super + P` | rofi 自定义菜单：切换动态 / 静态壁纸、开关省电模式、勿扰模式、暂停自动锁屏、护眼、刷新状态栏、开关 daed、开关 picom |
 | `Super + R` | 打开 / 关闭 pcmanfm 文件管理器（浮动在屏幕中央） |
 | `Super + Shift + A` | 截图（flameshot），框选后松开鼠标即复制到剪贴板（不保存文件） |
 | `Super + Ctrl + L` | 锁屏（模糊锁屏，输入密码解锁） |
@@ -233,6 +233,12 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 | `Super + X` 剪贴板历史 | `clipmenu`（装好后重新登录生效；没装时用原来的 parcellite） |
 | 护眼 | `gammastep` |
 | 外接显示器自动布局 | `autorandr`：接好显示器、用 `xrandr` 调好后执行 `autorandr --save <名字>` 保存，以后插上会自动应用（登录时也会应用）；想插拔时立即生效，再执行 `sudo systemctl enable autorandr`。注意：切换屏幕布局时场景壁纸可能崩溃，按 `Super + P` 重新切一次壁纸即可 |
+
+**Super + P 菜单里的其他开关：**
+
+- **do not disturb（勿扰）**：暂停弹出通知，远程桌面、开会、录屏时用；关闭后，期间收到的通知会补弹出来。
+- **pause / resume auto lock（暂停自动锁屏）**：看视频、演示时不会自动锁屏和熄屏；恢复后回到正常的时间（见「锁屏与截图使用说明」）。
+- **night light（护眼）**：屏幕调成 4000K 暖色，晚上看着不刺眼；开着时重启后依然有效。需要安装 `gammastep`。
 
 **电量低提醒：** 用电池时，电量降到 20% 弹提醒，10% 弹紧急提醒，5% 时 30 秒后自动睡眠（期间插上电源会取消）。每一档只提醒一次。
 
