@@ -1,6 +1,7 @@
 # 打印菜单
 call_menu() {
-    echo ' switch wallpaper'
+    # 和 livewall.sh toggle 的判断一致: 正在播动态壁纸 (视频 xwinwrap / 场景 linux-wallpaperengine) 就切到静态
+    { pgrep -x xwinwrap || pgrep -x linux-wallpaper; } >/dev/null && echo ' switch wallpaper mode to static' || echo ' switch wallpaper mode to live'
     echo '󰕞 update statusbar'
     command -v daed >/dev/null && { [ "$(ps aux | grep -v grep | grep daed)" ] && echo ' close daed' || echo ' open daed'; }
     [ "$(ps aux | grep picom | grep -v 'grep\|rofi\|nvim')" ] && echo ' close picom' || echo ' open picom'
@@ -11,7 +12,7 @@ call_menu() {
 # 执行菜单
 execute_menu() {
     case $1 in
-        ' switch wallpaper')
+        ' switch wallpaper mode to static'|' switch wallpaper mode to live')
             $DWM/bin/livewall.sh toggle
             ;;
         '󰕞 update statusbar')

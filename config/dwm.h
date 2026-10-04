@@ -97,6 +97,7 @@ static const Rule rules[] = {
 
     /** 部分特殊class的规则 */
     {"float",                NULL,                 NULL,             0,            1,          0,          0,        -1,      0}, // class = float       浮动
+    {"linux-wallpaperengine",NULL,                 NULL,             0,            1,          1,          1,        -1,      1}, // 场景壁纸窗口刚出现时浮动在左上角 (随后 livewall.sh 把它改成不受 dwm 管理的最底层窗口), 不打乱平铺
     {"global",               NULL,                 NULL,             TAGMASK,      0,          1,          0,        -1,      0}, // class = gloabl      全局
     {"noborder",             NULL,                 NULL,             0,            0,          0,          1,        -1,      0}, // class = noborder    无边框
     {"FGN",                  NULL,                 NULL,             TAGMASK,      1,          1,          1,        -1,      0}, // class = FGN         浮动、全局、无边框

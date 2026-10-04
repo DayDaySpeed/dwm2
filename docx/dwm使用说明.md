@@ -208,7 +208,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 | 通知样式 | `config/dunst.conf` | `killall dunst; dunst -conf $DWM/config/dunst.conf &` |
 | rofi 外观 | `config/rofi.rasi` | 下次打开 rofi 时生效 |
 | 状态栏模块 | `bin/statusbar/packages/*.sh` | 立即生效（下次刷新时） |
-| 壁纸 | 图片放进 `wallpaper/static/`，视频放进 `wallpaper/live/` | 静态壁纸每 5 分钟随机更换；`Super + P` → switch wallpaper 在动态 / 静态之间切换（各自随机挑一个，选择会记住）；左键点状态栏的菜单图标立即换一张（动态模式下换一个视频） |
+| 壁纸 | 图片放进 `wallpaper/static/`，视频放进 `wallpaper/live/`；Steam 上订阅的 Wallpaper Engine 壁纸执行 `bin/livewall.sh sync`（或重新登录）复制进 `wallpaper/live/`，之后可以在 Steam 取消订阅；不想要的直接从 `wallpaper/live/` 删掉 | 静态壁纸每 5 分钟随机更换；`Super + P` → switch wallpaper mode to live / static 在动态 / 静态之间切换（各自随机挑一个，选择会记住）；左键点状态栏的菜单图标立即换一张（动态模式下换一个）；所有壁纸切换（动态、静态、每 5 分钟换图）都随机播放一种 GPU 转场特效（`config/transitions/`）；在 `bin/livewall.sh` 顶部改 `TRANSITION=` 可固定某一种或改成 `fade`（GPU 淡入），`TRANSITION_SAVE=` 单独设置省电模式下的转场 |
 
 **让 dwm 的改动生效：** 改完 `config/dwm.h` 直接按 `Super + Shift + R`，会自动编译、安装到 `~/.local/bin/dwm` 并原地重启，窗口都会保留，不需要 sudo，也不需要退出。编译日志在 `~/.cache/dwm-build.log`。
 只有改了 `config/xinitrc` 或 `bin/autostart.sh`（它们只在登录时执行）才需要 `Super + Shift + Esc` 退出后重新 `startx`。
@@ -225,6 +225,21 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 | `Super + R` 文件管理器 | `pcmanfm` |
 | 使用键盘时暂时禁用触控板 | `xf86-input-synaptics`（autostart 已写好 `syndaemon`，装好后自动生效） |
 | `Super + Y` 翻译 | `translate-shell`（需要联网，使用谷歌翻译等在线服务） |
+
+**显卡模式（混合 / 独显直连）：**
+
+这台笔记本（HP OMEN 16）有核显和独显（RTX 4070），可以在 BIOS 里切换屏幕由谁驱动。
+
+| | 混合模式（默认） | 独显直连 |
+|---|---|---|
+| 屏幕、picom 由谁渲染 | 核显 | 独显 |
+| 动态视频壁纸 | 独显渲染后拷到核显显示 | 独显 |
+| 场景壁纸 | 只能用核显，30 帧 | 独显，60 帧 |
+| 省电模式 | 有效：独显可以完全休眠 | 效果打折：独显一直通电，电池续航明显变差 |
+
+- 两种模式共用一套 xorg 配置：`/etc/X11/xorg.conf.d/` 下不放显卡配置，由 Xorg 自动识别，加上 nvidia 驱动自带的 `/usr/share/X11/xorg.conf.d/10-nvidia-drm-outputclass.conf`。原来的 `10-intel.conf`、`10-nvidia.conf` 备份在 `/etc/X11/xorg.conf.d.bak/`。
+- **切换方法**：重启时按 `F10` 进 BIOS，在显卡相关选项（Graphics Switching / Display Mode 之类）里选「独显 / Discrete」或「混合 / Hybrid」，保存重启，正常 `startx` 即可。`bin/livewall.sh` 会自动识别当前模式。
+- **黑屏恢复**：按 `Ctrl + Alt + F2` 进 tty 登录，执行 `sudo mv /etc/X11/xorg.conf.d.bak/* /etc/X11/xorg.conf.d/` 恢复旧配置后重启；或者进 BIOS 切回混合模式。
 
 安装命令（文件管理器）：
 
