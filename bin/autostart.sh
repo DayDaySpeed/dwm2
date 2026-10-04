@@ -8,6 +8,7 @@ has() { command -v "$1" >/dev/null 2>&1; }
 settings() {
     [ $1 ] && sleep $1
     xset -b                                   # 关闭蜂鸣器
+    has autorandr && autorandr --change >/dev/null 2>&1 # 外接显示器按已保存的布局设置 (改屏幕的都要在启动壁纸之前)
     $DWM/bin/powersave.sh apply               # 刷新率和 CPU 节能策略: 省电模式开着时 60Hz + 节能, 否则用最高刷新率 (重启后会被重置)
     $DWM/bin/livewall.sh auto                 # 设置壁纸 (动态视频 / 静态图片), 并在后台生成锁屏背景; 要在改刷新率之后, 场景壁纸遇到屏幕变化会崩溃
     $DWM/bin/nightlight.sh apply              # 护眼开着时重新应用暖色

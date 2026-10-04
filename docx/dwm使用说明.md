@@ -232,6 +232,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 | `Super + Y` 翻译 | `translate-shell`（需要联网，使用谷歌翻译等在线服务） |
 | `Super + X` 剪贴板历史 | `clipmenu`（装好后重新登录生效；没装时用原来的 parcellite） |
 | 护眼 | `gammastep` |
+| 外接显示器自动布局 | `autorandr`：接好显示器、用 `xrandr` 调好后执行 `autorandr --save <名字>` 保存，以后插上会自动应用（登录时也会应用）；想插拔时立即生效，再执行 `sudo systemctl enable autorandr`。注意：切换屏幕布局时场景壁纸可能崩溃，按 `Super + P` 重新切一次壁纸即可 |
 
 **电量低提醒：** 用电池时，电量降到 20% 弹提醒，10% 弹紧急提醒，5% 时 30 秒后自动睡眠（期间插上电源会取消）。每一档只提醒一次。
 
