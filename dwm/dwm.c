@@ -145,7 +145,7 @@ struct Client {
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen, isglobal, isnoborder, isscratchpad;
 	int layoutfloat; /* 因所在 tag 处于浮动布局才浮动, 离开浮动布局时回到平铺 */
 	int fx, fy, fw, fh; /* 上次浮动时的位置大小 (fw 为 0 表示没有记录), Super+T 重新浮动时恢复 */
-	int snapped, px, py, pw, ph; /* Super+Shift+H/L/K 贴边前的位置大小, Super+Shift+J 恢复 */
+	int snapped, px, py, pw, ph; /* Super+Shift+H/L/K 贴边前的位置大小 */
 	unsigned long hideseq; /* 被隐藏时的序号, 越大越晚隐藏; restorewin 恢复序号最大的可见隐藏窗口 */
 	long restoreidx; /* 原地重启前在 clients 列表中的位置, 用于恢复主次顺序; -1 表示无 */
 	Client *next;
@@ -285,7 +285,6 @@ static void resizewin(const Arg *arg);
 static Client *nexttiled(Client *c);
 static void pop(Client *);
 static void propertynotify(XEvent *e);
-static void quit(const Arg *arg);
 static void restart(const Arg *arg);
 static void sighup(int unused);
 static void saveclientstates(void);
@@ -327,6 +326,7 @@ static void tagtoleft(const Arg *arg);
 static void tagtoright(const Arg *arg);
 
 static void togglebar(const Arg *arg);
+static void togglebarglobal(const Arg *arg);
 static void togglesystray();
 static void floating(Monitor *m);
 static void savefloat(Client *c);
@@ -373,6 +373,9 @@ static void exchange_client(const Arg *arg);
 static void snapwin(Client *c, int dir);
 static void focuslast(const Arg *arg);
 static void focusdir(const Arg *arg);
+static void focuslayer(const Arg *arg);
+static void floatcenter(const Arg *arg);
+static void uncovertile(Client *tile);
 
 static Client *wintoclient(Window w);
 static Monitor *wintomon(Window w);
@@ -1376,9 +1379,9 @@ enternotify(XEvent *e)
     if (m != selmon) {
         unfocus(selmon->sel, 1);
         selmon = m;
-    } else if (!c || c == selmon->sel)
-        return;
-    focus(c);
+        focus(NULL);
+    }
+    /* 点击才换窗口焦点。鼠标滑过、或移动窗口后指针落在别的窗口上，都不改焦点 */
 }
 
 void
@@ -1397,6 +1400,8 @@ expose(XEvent *e)
 void
 focus(Client *c)
 {
+    Client *prev = selmon->sel;
+
     if (!c || !ISVISIBLE(c) || HIDDEN(c))
         for (c = selmon->stack; c && (!ISVISIBLE(c) || HIDDEN(c)); c = c->snext);
     if (selmon->sel && selmon->sel != c)
@@ -1417,6 +1422,9 @@ focus(Client *c)
     }
     selmon->sel = c;
     drawbars();
+    /* 焦点落到另一张平铺窗口时，被盖严的浮动窗口挪到旁边 */
+    if (c && c != prev && !c->isfloating && !c->isfullscreen)
+        uncovertile(c);
 }
 
 /* there are some broken focus acquiring clients needing extra handling */
@@ -1457,7 +1465,7 @@ focusstack(const Arg *arg)
         return;
 
     for (c = selmon->clients; c; c = c->next) {
-        if (ISVISIBLE(c) && (issingle || !HIDDEN(c))) {
+        if (ISVISIBLE(c) && (issingle || !HIDDEN(c)) && c->isfloating == tc->isfloating) {
             last ++;
             tempClients[last] = c;
             if (c == tc) cur = last;
@@ -2127,7 +2135,7 @@ resizewin(const Arg *arg)
             break;
     }
     resize(c, c->x, c->y, nw, nh, 1);
-    XWarpPointer(dpy, None, root, 0, 0, 0, 0, c->x + c->w - 2 * c->bw, c->y + c->h - 2 * c->bw);
+    focus(c);
     restack(selmon);
 }
 
@@ -2196,12 +2204,6 @@ propertynotify(XEvent *e)
         if (ev->atom == netatom[NetWMWindowType])
             updatewindowtype(c);
     }
-}
-
-void
-quit(const Arg *arg)
-{
-    running = 0;
 }
 
 void
@@ -3027,6 +3029,30 @@ togglebar(const Arg *arg)
         XConfigureWindow(dpy, systray->win, CWY, &wc);
     }
     arrange(selmon);
+    updatesystray();
+}
+
+/* Super+Shift+F: 所有 tag、所有显示器一起显示或隐藏状态栏 */
+void
+togglebarglobal(const Arg *arg)
+{
+    int show = !selmon->showbar;
+    Monitor *m;
+    int i;
+
+    for (m = mons; m; m = m->next) {
+        m->showbar = show;
+        for (i = 0; i <= LENGTH(tags); i++)
+            m->pertag->showbars[i] = show;
+        updatebarpos(m);
+        resizebarwin(m);
+        arrange(m);
+    }
+    if (showsystray) {
+        XWindowChanges wc;
+        wc.y = show ? (selmon->topbar ? 0 : selmon->mh - bh) : -bh;
+        XConfigureWindow(dpy, systray->win, CWY, &wc);
+    }
     updatesystray();
 }
 
@@ -4156,10 +4182,8 @@ previewallwin() {
                 if (focus_c) XSetWindowBorder(dpy, focus_c->preview.win, scheme[SchemeNorm][ColBorder].pixel);
                 if (!focus_c) focus_c = m->clients;
                 else focus_c = focus_c->next ? focus_c->next : m->clients;
-                if (focus_c) {
+                if (focus_c)
                     XSetWindowBorder(dpy, focus_c->preview.win, scheme[SchemeSel][ColBorder].pixel);
-                    XWarpPointer(dpy, None, root, 0, 0, 0, 0, focus_c->preview.x + focus_c->preview.scaled_image->width / 2, focus_c->preview.y + focus_c->preview.scaled_image->height / 2);
-                }
             }
         }
         if (event.type == ButtonPress && event.xbutton.button == Button1) {
@@ -4183,9 +4207,9 @@ previewallwin() {
         }
     }
 
-    arrange(m);
-    pointerclient(focus_c);
+    // 不移动鼠标: 先聚焦再 arrange, restack 会丢弃窗口重新映射时鼠标下产生的 EnterNotify
     focus(focus_c);
+    arrange(m);
 }
 
 void
@@ -4419,7 +4443,7 @@ Client *direction_select(const Arg *arg) {
         return NULL;
 
     for (c = selmon->clients; c; c = c->next) {
-        if (ISVISIBLE(c) && (issingle || !HIDDEN(c))) {
+        if (ISVISIBLE(c) && (issingle || !HIDDEN(c)) && c->isfloating == tc->isfloating) {
             last ++;
             tempClients[last] = c;
         }
@@ -4570,6 +4594,214 @@ Client *direction_select(const Arg *arg) {
     return c;
 }
 
+/* 矩形是否相交, 宽高为外沿 (含边框) */
+static int
+rectoverlap(int ax, int ay, int aw, int ah, int bx, int by, int bw, int bh)
+{
+    return aw > 0 && ah > 0 && bw > 0 && bh > 0
+        && ax < bx + bw && ax + aw > bx
+        && ay < by + bh && ay + ah > by;
+}
+
+/* 两矩形相交面积 */
+static int
+rectarea(int ax, int ay, int aw, int ah, int bx, int by, int bw, int bh)
+{
+    int x1 = MAX(ax, bx), y1 = MAX(ay, by);
+    int x2 = MIN(ax + aw, bx + bw), y2 = MIN(ay + ah, by + bh);
+
+    if (x2 <= x1 || y2 <= y1)
+        return 0;
+    return (x2 - x1) * (y2 - y1);
+}
+
+/* 从 r 里挖掉 cut, 剩下的块写进 out。返回新的块数; 写满 max 时调用方应视为已经盖住 */
+static int
+rectsubtract(int *ox, int *oy, int *ow, int *oh, int n, int max,
+        int rx, int ry, int rw, int rh, int cx, int cy, int cw, int ch)
+{
+    int x2, y2, cx2, cy2, yt, yb;
+
+    if (!rectoverlap(rx, ry, rw, rh, cx, cy, cw, ch)) {
+        if (n < max) {
+            ox[n] = rx; oy[n] = ry; ow[n] = rw; oh[n] = rh;
+            n++;
+        }
+        return n;
+    }
+    x2 = rx + rw;
+    y2 = ry + rh;
+    cx2 = cx + cw;
+    cy2 = cy + ch;
+    if (cy > ry && n < max) {
+        ox[n] = rx; oy[n] = ry; ow[n] = rw; oh[n] = cy - ry;
+        n++;
+    }
+    if (cy2 < y2 && n < max) {
+        ox[n] = rx; oy[n] = cy2; ow[n] = rw; oh[n] = y2 - cy2;
+        n++;
+    }
+    yt = MAX(ry, cy);
+    yb = MIN(y2, cy2);
+    if (yb > yt) {
+        if (cx > rx && n < max) {
+            ox[n] = rx; oy[n] = yt; ow[n] = cx - rx; oh[n] = yb - yt;
+            n++;
+        }
+        if (cx2 < x2 && n < max) {
+            ox[n] = cx2; oy[n] = yt; ow[n] = x2 - cx2; oh[n] = yb - yt;
+            n++;
+        }
+    }
+    return n;
+}
+
+/* 把挡住平铺窗口的浮动窗口挪到旁边, 尽量整张离开, 挪不开时露出最大的一块。不改变层叠 */
+static void
+uncovertile(Client *tile)
+{
+    Client *f, *moved[32];
+    int rx[48], ry[48], rw[48], rh[48];
+    int nx[48], ny[48], nw[48], nh[48];
+    int n = 1, nmoved = 0, covered = 0;
+
+    if (!tile)
+        return;
+    rx[0] = tile->x;
+    ry[0] = tile->y;
+    rw[0] = WIDTH(tile);
+    rh[0] = HEIGHT(tile);
+    for (f = tile->mon->clients; f && n; f = f->next) {
+        int m = 0, k;
+
+        if (f == tile || !f->isfloating || f->isfullscreen || !ISVISIBLE(f) || HIDDEN(f))
+            continue;
+        if (!rectoverlap(tile->x, tile->y, WIDTH(tile), HEIGHT(tile), f->x, f->y, WIDTH(f), HEIGHT(f)))
+            continue;
+        for (k = 0; k < n; k++)
+            m = rectsubtract(nx, ny, nw, nh, m, 48, rx[k], ry[k], rw[k], rh[k], f->x, f->y, WIDTH(f), HEIGHT(f));
+        if (m >= 48) {
+            covered = 1;
+            break;
+        }
+        n = m;
+        for (k = 0; k < n; k++) {
+            rx[k] = nx[k];
+            ry[k] = ny[k];
+            rw[k] = nw[k];
+            rh[k] = nh[k];
+        }
+    }
+    if (n && !covered)
+        return;
+
+    for (f = tile->mon->stack; f; f = f->snext) {
+        Monitor *m = f->mon;
+        int fw, fh, tx, ty, tw, th, left, top, right, bottom;
+        int cx[4], cy[4], bestx, besty, bestov, bestd, t;
+
+        if (f == tile || !f->isfloating || f->isfullscreen || !ISVISIBLE(f) || HIDDEN(f))
+            continue;
+        fw = WIDTH(f);
+        fh = HEIGHT(f);
+        tx = tile->x;
+        ty = tile->y;
+        tw = WIDTH(tile);
+        th = HEIGHT(tile);
+        if (!rectoverlap(tx, ty, tw, th, f->x, f->y, fw, fh))
+            continue;
+        left = m->wx + gappo;
+        top = m->wy + gappo;
+        right = m->wx + m->ww - gappo - fw;
+        bottom = m->wy + m->wh - gappo - fh;
+        if (right < left)
+            right = left;
+        if (bottom < top)
+            bottom = top;
+        cx[0] = tx + tw + gappi; cy[0] = f->y;
+        cx[1] = tx - gappi - fw; cy[1] = f->y;
+        cx[2] = f->x;            cy[2] = ty + th + gappi;
+        cx[3] = f->x;            cy[3] = ty - gappi - fh;
+        bestx = f->x;
+        besty = f->y;
+        bestov = rectarea(f->x, f->y, fw, fh, tx, ty, tw, th);
+        bestd = 0;
+        for (t = 0; t < 4; t++) {
+            int x = MAX(left, MIN(cx[t], right));
+            int y = MAX(top, MIN(cy[t], bottom));
+            int ov = rectarea(x, y, fw, fh, tx, ty, tw, th);
+            int d = abs(x - f->x) + abs(y - f->y);
+            int k;
+
+            for (k = 0; k < nmoved; k++)
+                if (abs(moved[k]->x - x) < gappi && abs(moved[k]->y - y) < gappi)
+                    d += m->ww + m->wh;
+            if (ov < bestov || (ov == bestov && d < bestd)) {
+                bestov = ov;
+                bestd = d;
+                bestx = x;
+                besty = y;
+            }
+        }
+        if (bestx == f->x && besty == f->y)
+            continue;
+        resize(f, bestx, besty, f->w, f->h, 1);
+        if (nmoved < 32)
+            moved[nmoved++] = f;
+    }
+}
+
+/* 浮动窗口缩回默认大小并放到屏幕正中 (与第一次 Super+T 浮起时相同: 宽高各为屏幕的 2/3) */
+void
+floatcenter(const Arg *arg)
+{
+    Client *c = selmon->sel;
+    Monitor *m;
+
+    if (!c || !c->isfloating || c->isfullscreen)
+        return;
+    m = c->mon;
+    c->snapped = 0;
+    resize(c,
+        m->wx + m->ww / 6,
+        m->wy + m->wh / 6,
+        m->ww / 3 * 2,
+        m->wh / 3 * 2,
+        0);
+    focus(c);
+    restack(selmon);
+}
+
+/* 进入另一层。arg->i = 1 浮动层, 0 平铺层。
+ * 已经在浮动层时再按, 轮换到下一张浮动窗口并抬到最前 (叠在一起的对话框不用鼠标点) */
+void
+focuslayer(const Arg *arg)
+{
+    Client *c, *sel = selmon->sel;
+    int wantfloat = arg->i;
+
+    if (sel && sel->isfullscreen)
+        return;
+    if (wantfloat && sel && sel->isfloating) {
+        /* 已经在浮动层: 下一张浮动窗口, 到末尾则回到最早的那张 */
+        for (c = sel->snext; c && (!ISVISIBLE(c) || HIDDEN(c) || !c->isfloating || c->isfullscreen); c = c->snext);
+        if (!c)
+            for (c = selmon->stack; c && c != sel && (!ISVISIBLE(c) || HIDDEN(c) || !c->isfloating || c->isfullscreen); c = c->snext);
+        if (!c || c == sel)
+            return;
+    } else if (!wantfloat && sel && !sel->isfloating) {
+        return; /* 已经在平铺层 */
+    } else {
+        for (c = selmon->stack; c; c = c->snext)
+            if (ISVISIBLE(c) && !HIDDEN(c) && !c->isfullscreen && !!c->isfloating == wantfloat && c != sel)
+                break;
+        if (!c)
+            return;
+    }
+    pointerclient(c);
+    restack(selmon);
+}
+
 void focusdir(const Arg *arg) {
   Client *c = NULL;
   int issingle = issinglewin(NULL);
@@ -4666,9 +4898,12 @@ void exchange_client(const Arg *arg) {
   Client *c = selmon->sel;
   if (!c || c->isfullscreen)
     return;
-  if (c->isfloating) /* 浮动窗口: 贴边 */
-    snapwin(c, arg->i);
-  else
+  if (c->isfloating) { /* 浮动窗口: H/L/K 贴边, J 缩回默认大小并居中 */
+    if (arg->i == DOWN)
+      floatcenter(NULL);
+    else
+      snapwin(c, arg->i);
+  } else
     exchange_two_client(c, direction_select(arg));
 }
 

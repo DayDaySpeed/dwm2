@@ -86,7 +86,8 @@ static const Rule rules[] = {
     {"chrome",               NULL,                 NULL,             1 << 4,       0,          0,          0,        -1,      0}, // chrome     tag -> 
     {"Chromium",             NULL,                 NULL,             1 << 4,       0,          0,          0,        -1,      0}, // Chromium   tag -> 
     {"music",                NULL,                 NULL,             1 << 5,       1,          0,          1,        -1,      0}, // music      tag -> 󰎄 浮动、无边框
-    {"SPlayer",              NULL,                 NULL,             1 << 5,       0,          0,          0,        -1,      0}, // SPlayer    tag -> 󰎄 (网易云风格, 支持本地音乐 ~/Music)
+    {"splayer",              NULL,                 NULL,             1 << 5,       0,          0,          0,        -1,      0}, // 主窗口 class 是小写 splayer, 固定在 Super+M
+    {"SPlayer",              NULL,                 NULL,             1 << 5,       1,          0,          1,        -1,      0}, // Electron 的 10x10 / 200x200 小窗, 浮动无边框, 不参与平铺
     {"steam",                NULL,                 NULL,             1 << 6,       0,          0,          0,        -1,      0}, // steam      tag -> 
     {"Microsoft-edge",       NULL,                 NULL,             1 << 7,       0,          0,          0,        -1,      0}, // edge       tag -> 󰇩
     {"Code",                 NULL,                 NULL,             1 << 8,       0,          0,          0,        -1,      0}, // vscode     tag -> 󰨞
@@ -154,7 +155,7 @@ static Key keys[] = {
     { MODKEY|ShiftMask,    XK_t,            togglefloatlayout,{0} },                     /* super shift t      |  本tag 进入/退出浮动布局 */
     { MODKEY,              XK_space,        selectlayout,     {.v = &layouts[1]} },      /* super space        |  网格/平铺布局切换 */
     { MODKEY,              XK_f,            fullscreen,       {0} },                     /* super f            |  开启/关闭 全屏 */
-    { MODKEY|ShiftMask,    XK_f,            togglebar,        {0} },                     /* super shift f      |  开启/关闭 状态栏 */
+    { MODKEY|ShiftMask,    XK_f,            togglebarglobal,  {0} },                     /* super shift f      |  开启/关闭 状态栏 (所有 tag 和显示器) */
     { MODKEY,              XK_g,            toggleglobal,     {0} },                     /* super g            |  开启/关闭 全局 */
     { MODKEY,              XK_u,            toggleborder,     {0} },                     /* super u            |  开启/关闭 边框 */
     { MODKEY,              XK_e,            incnmaster,       {.i = +1} },               /* super e            |  改变主工作区窗口数量 (1 2中切换) */
@@ -183,12 +184,12 @@ static Key keys[] = {
     { MODKEY|Mod1Mask,     XK_Left,         resizewin,        {.ui = H_REDUCE} },        /* super alt left     |  调整窗口 */
     { MODKEY|Mod1Mask,     XK_Right,        resizewin,        {.ui = H_EXPAND} },        /* super alt right    |  调整窗口 */
 
-  	{ MODKEY,              XK_k,            focusdir,         {.i = UP } },              /* super k            | 二维聚焦窗口 */
-  	{ MODKEY,              XK_j,            focusdir,         {.i = DOWN } },            /* super j            | 二维聚焦窗口 */
-  	{ MODKEY,              XK_h,            focusdir,         {.i = LEFT } },            /* super h            | 二维聚焦窗口 */
-  	{ MODKEY,              XK_l,            focusdir,         {.i = RIGHT } },           /* super l            | 二维聚焦窗口 */
+  	{ MODKEY,              XK_k,            focusdir,         {.i = UP } },              /* super k            | 同层聚焦上方窗口 */
+  	{ MODKEY,              XK_j,            focusdir,         {.i = DOWN } },            /* super j            | 同层聚焦下方窗口 */
+  	{ MODKEY,              XK_h,            focusdir,         {.i = LEFT } },            /* super h            | 同层聚焦左侧窗口 */
+  	{ MODKEY,              XK_l,            focusdir,         {.i = RIGHT } },           /* super l            | 同层聚焦右侧窗口 */
     { MODKEY|ShiftMask,    XK_k,            exchange_client,  {.i = UP } },              /* super shift k      | 平铺: 二维交换窗口 / 浮动: 贴边 */
-    { MODKEY|ShiftMask,    XK_j,            exchange_client,  {.i = DOWN } },            /* super shift j      | 平铺: 二维交换窗口 / 浮动: 贴边 */
+    { MODKEY|ShiftMask,    XK_j,            exchange_client,  {.i = DOWN } },            /* super shift j      | 平铺: 二维交换窗口 / 浮动: 缩回默认大小并居中 */
     { MODKEY|ShiftMask,    XK_h,            exchange_client,  {.i = LEFT} },             /* super shift h      | 平铺: 二维交换窗口 / 浮动: 贴边 */
     { MODKEY|ShiftMask,    XK_l,            exchange_client,  {.i = RIGHT } },           /* super shift l      | 平铺: 二维交换窗口 / 浮动: 贴边 */
 
@@ -201,8 +202,8 @@ static Key keys[] = {
     { MODKEY|ShiftMask,    XK_d,      spawn, SHCMD("rofi -show run") },                                         /* super shift d    | rofi: 执行命令         */
     { MODKEY,              XK_p,      spawn, SHCMD("$DWM/bin/rofi.sh") },                                       /* super p          | rofi: 执行自定义脚本   */
     { MODKEY|ControlMask,  XK_l,      spawn, SHCMD("$DWM/bin/blurlock.sh") },                                   /* super ctrl l     | 锁定屏幕               */
-    { MODKEY|ShiftMask,    XK_Up,     spawn, SHCMD("$DWM/bin/set_vol.sh up") },                                 /* super shift up   | 音量加                 */
-    { MODKEY|ShiftMask,    XK_Down,   spawn, SHCMD("$DWM/bin/set_vol.sh down") },                               /* super shift down | 音量减                 */
+    { MODKEY|ShiftMask,    XK_Up,     focuslayer, {.i = 1} },                                                    /* super shift up   | 进入浮动层 (已在浮动层则轮换并抬到最前) */
+    { MODKEY|ShiftMask,    XK_Down,   focuslayer, {.i = 0} },                                                    /* super shift down | 进入平铺层 (被盖住时把浮动窗口挪开) */
     { MODKEY|ShiftMask,    XK_a,      spawn, SHCMD("flameshot gui") },                   /* super shift a    | 截图                   */
     { MODKEY,              XK_y,      spawn, SHCMD("$DWM/bin/translate.sh") },                                  /* super y          | 翻译选中的文字         */
     { MODKEY|ShiftMask,    XK_y,      spawn, SHCMD("$DWM/bin/translate.sh input") },                            /* super shift y    | 输入文字翻译并复制     */
@@ -225,10 +226,10 @@ static Key keys[] = {
     TAGKEYS(XK_2, 1, 0)
     TAGKEYS(XK_3, 2, 0)
     TAGKEYS(XK_9, 3, "obs")
-    TAGKEYS(XK_c, 4, "google-chrome-stable")
+    TAGKEYS(XK_c, 4, "google-chrome-stable https://www.youtube.com")
     TAGKEYS(XK_m, 5, "~/.local/share/splayer/SPlayer.AppImage --no-sandbox")
     TAGKEYS(XK_0, 6, "~/.local/bin/steam")
-    TAGKEYS(XK_w, 7, "microsoft-edge-stable")
+    TAGKEYS(XK_w, 7, "microsoft-edge-stable https://www.github.com")
     TAGKEYS(XK_v, 8, "code")
 };
 

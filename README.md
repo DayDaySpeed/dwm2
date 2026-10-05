@@ -23,9 +23,9 @@ bin/      dwm 调用的脚本 (快捷键、状态栏、自启动)
   blurlock.sh rofi.sh set_vol.sh dpms.sh ...
 scripts/                     手动运行的工具脚本 (music_covers.py 补专辑封面)
 docx/                        使用说明 (dwm、终端、picom、rofi、通知、锁屏截图), 入口 docx/README.md
-wallpaper/                   壁纸; ~/Pictures/wallpaper 软链接到这里
+wallpaper/                   壁纸, 私有仓库 dwm2-wallpaper 的 Git 子模块 (Git LFS); ~/Pictures/wallpaper 软链接到这里
   static/                    静态图片, 每 5 分钟随机轮换
-  live/                      动态壁纸视频 (mp4 等, 不提交到 git)
+  live/                      动态壁纸 (mp4、Wallpaper Engine 场景)
 dwm/ st/ tabbed/ picom/      源码 (基于 yaocccc 的版本, 已含本仓库的改动), 直接修改, ./setup.sh <名字> 编译安装
 i3lock-color/                锁屏用的 i3lock-color 源码 (输入密码时显示圆点), ./setup.sh i3lock 编译安装
 setup.sh                     安装/编译入口
@@ -36,7 +36,7 @@ setup.sh                     安装/编译入口
 ## 使用
 
 ```sh
-git clone --recursive <本仓库> ~/projs/dwm2
+git clone --recursive <本仓库> ~/projs/dwm2   # wallpaper/ 是私有子模块, 需要 dwm2-wallpaper 的访问权限和 git-lfs
 cd ~/projs/dwm2 && ./setup.sh          # 依赖 + 链接 + 编译全部
 
 # 改了 config/dwm.h 后: 按 Super + Shift + R (自动编译安装并原地重启)
