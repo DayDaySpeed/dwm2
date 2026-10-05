@@ -2,6 +2,7 @@
 
 static int showsystray                   = 1;         /* 是否显示托盘栏 */
 static const int newclientathead         = 0;         /* 定义新窗口在栈顶还是栈底 */
+static const int warppointer             = 0;         /* 键盘切换焦点时是否把鼠标移到目标窗口中间; 0: 同一显示器内不移动 (跨显示器仍会移过去) */
 static const int managetransientwin      = 1;         /* 是否管理临时窗口 */
 static const unsigned int borderpx       = 3;         /* 窗口边框大小 */
 static const unsigned int systraypinning = 1;         /* 托盘跟随的显示器 0代表不指定显示器 */
@@ -114,6 +115,7 @@ static const Rule rules[] = {
 static const Layout layouts[] = {
     { "󰙀",  tile },         /* 主次栈 */
     { "󰕰",  magicgrid },    /* 网格 */
+    { "󰖲",  floating },     /* 浮动 (super shift t) */
 };
 
 #define SHCMD(cmd) { .v = (const char*[]){ "/bin/sh", "-c", cmd, NULL } }
@@ -127,8 +129,7 @@ static Key keys[] = {
     /* modifier            key              function          argument */
     { MODKEY,              XK_equal,        togglesystray,    {0} },                     /* super +            |  切换 托盘栏显示状态 */
 
-    { MODKEY,              XK_Tab,          focusstack,       {.i = +1} },               /* super tab          |  本tag内切换聚焦窗口 */
-    { MODKEY|ShiftMask,    XK_Tab,          focusstack,       {.i = -1} },               /* super shift tab    |  本tag内切换聚焦窗口 */
+    { MODKEY,              XK_Tab,          focuslast,        {0} },                     /* super tab          |  切到上一个用过的窗口 (连按来回切) */
     { MODKEY,              XK_Up,           focusstack,       {.i = -1} },               /* super up           |  本tag内切换聚焦窗口 */
     { MODKEY,              XK_Down,         focusstack,       {.i = +1} },               /* super down         |  本tag内切换聚焦窗口 */
 
@@ -149,8 +150,9 @@ static Key keys[] = {
 
     { MODKEY|ShiftMask,    XK_Return,       zoom,             {0} },                     /* super shift enter  |  将当前聚焦窗口置为主窗口 */
 
-    { MODKEY,              XK_t,            togglefloating,   {0} },                     /* super t            |  开启/关闭 聚焦目标的float模式 */
-    { MODKEY|ShiftMask,    XK_t,            toggleallfloating,{0} },                     /* super shift t      |  开启/关闭 全部目标的float模式 */
+    { MODKEY,              XK_t,            togglefloating,   {0} },                     /* super t            |  聚焦窗口 浮动/平铺 (浮动时回到上次位置) */
+    { MODKEY|ShiftMask,    XK_t,            togglefloatlayout,{0} },                     /* super shift t      |  本tag 进入/退出浮动布局 */
+    { MODKEY,              XK_space,        selectlayout,     {.v = &layouts[1]} },      /* super space        |  网格/平铺布局切换 */
     { MODKEY,              XK_f,            fullscreen,       {0} },                     /* super f            |  开启/关闭 全屏 */
     { MODKEY|ShiftMask,    XK_f,            togglebar,        {0} },                     /* super shift f      |  开启/关闭 状态栏 */
     { MODKEY,              XK_g,            toggleglobal,     {0} },                     /* super g            |  开启/关闭 全局 */
@@ -165,7 +167,6 @@ static Key keys[] = {
     { MODKEY|ShiftMask,    XK_Escape,       spawn,            SHCMD("$DWM/bin/power.sh") }, /* super shift esc    |  电源菜单: 锁屏 / 睡眠 / 休眠 / 注销 / 重启 / 关机 (注销等需确认) */
     { MODKEY|ShiftMask,    XK_r,            spawn,            SHCMD("$DWM/bin/reload.sh") }, /* super shift r   |  编译安装 dwm 并原地重启(窗口与tag保留) */
 
-	{ MODKEY|ShiftMask,    XK_space,        selectlayout,     {.v = &layouts[1]} },      /* super shift space  |  切换到网格布局 */
 	{ MODKEY,              XK_o,            showonlyorall,    {0} },                     /* super o            |  切换 只显示一个窗口 / 全部显示 */
 
     { MODKEY|ControlMask,  XK_equal,        setgap,           {.i = -6} },               /* super ctrl +       |  减小窗口间距 (窗口变大) */
@@ -186,16 +187,15 @@ static Key keys[] = {
   	{ MODKEY,              XK_j,            focusdir,         {.i = DOWN } },            /* super j            | 二维聚焦窗口 */
   	{ MODKEY,              XK_h,            focusdir,         {.i = LEFT } },            /* super h            | 二维聚焦窗口 */
   	{ MODKEY,              XK_l,            focusdir,         {.i = RIGHT } },           /* super l            | 二维聚焦窗口 */
-    { MODKEY|ShiftMask,    XK_k,            exchange_client,  {.i = UP } },              /* super shift k      | 二维交换窗口 (仅平铺) */
-    { MODKEY|ShiftMask,    XK_j,            exchange_client,  {.i = DOWN } },            /* super shift j      | 二维交换窗口 (仅平铺) */
-    { MODKEY|ShiftMask,    XK_h,            exchange_client,  {.i = LEFT} },             /* super shift h      | 二维交换窗口 (仅平铺) */
-    { MODKEY|ShiftMask,    XK_l,            exchange_client,  {.i = RIGHT } },           /* super shift l      | 二维交换窗口 (仅平铺) */
+    { MODKEY|ShiftMask,    XK_k,            exchange_client,  {.i = UP } },              /* super shift k      | 平铺: 二维交换窗口 / 浮动: 贴边 */
+    { MODKEY|ShiftMask,    XK_j,            exchange_client,  {.i = DOWN } },            /* super shift j      | 平铺: 二维交换窗口 / 浮动: 贴边 */
+    { MODKEY|ShiftMask,    XK_h,            exchange_client,  {.i = LEFT} },             /* super shift h      | 平铺: 二维交换窗口 / 浮动: 贴边 */
+    { MODKEY|ShiftMask,    XK_l,            exchange_client,  {.i = RIGHT } },           /* super shift l      | 平铺: 二维交换窗口 / 浮动: 贴边 */
 
     /* spawn + SHCMD 执行对应命令(已下部分建议完全自己重新定义) */
     { MODKEY,              XK_s,      togglescratch, SHCMD("tabbed -n scratchpad -c -r 2 st -w ''") },          /* super s          | 打开st scratchpad      */
     { MODKEY,              XK_Return, spawn, SHCMD("tabbed -n st -C tabbed -c -r 2 st -w ''") },                /* super enter      | 打开st                 */
     { MODKEY,              XK_minus,  spawn, SHCMD("tabbed -n st -C FG -c -r 2 st -w ''") },                    /* super -          | 打开全局st终端         */
-    { MODKEY,              XK_space,  spawn, SHCMD("tabbed -n st -C float -c -r 2 st -w ''") },                 /* super space      | 打开浮动st终端         */
     { MODKEY,              XK_r,      spawn, SHCMD("killall pcmanfm || pcmanfm") },                             /* super r          | 打开/关闭pcmanfm       */
     { MODKEY,              XK_d,      spawn, SHCMD("rofi -show drun") },                                        /* super d          | rofi: 启动应用 (带图标) */
     { MODKEY|ShiftMask,    XK_d,      spawn, SHCMD("rofi -show run") },                                         /* super shift d    | rofi: 执行命令         */
@@ -210,6 +210,9 @@ static Key keys[] = {
     { MODKEY,              XK_n,      spawn, SHCMD("dunstctl history-pop") },                                   /* super n          | 重新显示上一条通知     */
     { MODKEY|ShiftMask,    XK_n,      spawn, SHCMD("dunstctl close-all") },                                     /* super shift n    | 关闭所有通知           */
     { MODKEY,              XK_slash,  spawn, SHCMD("$DWM/bin/keys.sh") },                                       /* super /          | 快捷键速查             */
+    { 0,                   XF86XK_AudioRaiseVolume, spawn, SHCMD("$DWM/bin/set_vol.sh up") },                    /* 音量加键        | 音量加                 */
+    { 0,                   XF86XK_AudioLowerVolume, spawn, SHCMD("$DWM/bin/set_vol.sh down") },                  /* 音量减键        | 音量减                 */
+    { 0,                   XF86XK_AudioMute,  spawn, SHCMD("pactl set-sink-mute @DEFAULT_SINK@ toggle; $DWM/bin/statusbar/statusbar.sh update vol; bash $DWM/bin/statusbar/packages/vol.sh notify") }, /* 静音键          | 静音 / 取消静音        */
     { 0,                   XF86XK_AudioPlay,  spawn, SHCMD("playerctl play-pause; $DWM/bin/statusbar/statusbar.sh update music") }, /* 播放键          | 播放 / 暂停            */
     { 0,                   XF86XK_AudioPause, spawn, SHCMD("playerctl play-pause; $DWM/bin/statusbar/statusbar.sh update music") }, /* 暂停键          | 播放 / 暂停            */
     { 0,                   XF86XK_AudioNext,  spawn, SHCMD("playerctl next; $DWM/bin/statusbar/statusbar.sh update music") },       /* 下一首键        | 下一首                 */
@@ -237,6 +240,11 @@ static Button buttons[] = {
     /* 点击窗口操作 */
     { ClkClientWin,        MODKEY,          Button1,          movemouse,     {0} },                                   // super+左键  |  拖拽窗口     |  拖拽窗口
     { ClkClientWin,        MODKEY,          Button3,          resizemouse,   {0} },                                   // super+右键  |  拖拽窗口     |  改变窗口大小
+    /* 点击状态栏布局图标操作 */
+    { ClkLtSymbol,         0,               Button1,          selectlayout,  {.v = &layouts[1]} },                    // 左键        |  点击布局图标 |  网格/平铺布局切换
+    { ClkLtSymbol,         0,               Button3,          togglefloatlayout, {0} },                               // 右键        |  点击布局图标 |  进入/退出浮动布局
+    { ClkLtSymbol,         0,               Button4,          cyclelayout,   {.i = -1} },                             // 鼠标滚轮上  |  布局图标     |  上一个布局 (平铺/网格/浮动)
+    { ClkLtSymbol,         0,               Button5,          cyclelayout,   {.i = +1} },                             // 鼠标滚轮下  |  布局图标     |  下一个布局 (平铺/网格/浮动)
     /* 点击tag操作 */
     { ClkTagBar,           0,               Button1,          view,          {0} },                                   // 左键        |  点击tag      |  切换tag
 	{ ClkTagBar,           0,               Button3,          toggleview,    {0} },                                   // 右键        |  点击tag      |  切换是否显示tag
