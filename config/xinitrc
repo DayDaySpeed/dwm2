@@ -5,14 +5,12 @@
 export DWM=~/projs/dwm2
 
 # ================================================
-# UI 缩放(2560×1440 全局 1.35×;须最先设置)
+# UI 缩放(笔记本屏 2560×1440 全局 1.35×;只用外接屏时 1×,倍数在下面"会话服务"里按屏幕布局决定)
 # 勿设 GDK_SCALE=1,否则会与 Xft.dpi 冲突导致对话框错位/缩小
 # ================================================
 
 export XCURSOR_SIZE=32
 export QT_AUTO_SCREEN_SCALE_FACTOR=0
-export QT_SCALE_FACTOR=1.35
-export QT_SCREEN_SCALE_FACTORS=1.35
 
 # ================================================
 # 输入法配置
@@ -29,6 +27,11 @@ export GLFW_IM_MODULE=ibus # ← 加这行,kitty 用这个对接输入法
 
 # Xft.dpi 等;须在 GTK 程序与 portal 之前加载
 xrdb -merge "$DWM/config/Xresources"
+
+# 外接显示器:套用保存的布局,并按布局改 Xft.dpi(只用外接屏 100%,笔记本屏在用 135%),打印 Qt 倍数(见 bin/monitor.sh)
+QT_SCALE=$("$DWM/bin/monitor.sh" login 2>/dev/null)
+export QT_SCALE_FACTOR=${QT_SCALE:-1.35}
+export QT_SCREEN_SCALE_FACTORS=${QT_SCALE:-1.35}
 
 export XDG_CURRENT_DESKTOP=dwm
 systemctl --user import-environment \

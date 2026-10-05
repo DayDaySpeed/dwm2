@@ -232,7 +232,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 | `Super + Y` 翻译 | `translate-shell`（需要联网，使用谷歌翻译等在线服务） |
 | `Super + X` 剪贴板历史 | `clipmenu`（装好后重新登录生效；没装时用原来的 parcellite） |
 | 护眼 | `gammastep` |
-| 外接显示器自动布局 | `autorandr`：接好显示器、用 `xrandr` 调好后执行 `autorandr --save <名字>` 保存，以后插上会自动应用（登录时也会应用）；想插拔时立即生效，再执行 `sudo systemctl enable autorandr`。注意：切换屏幕布局时场景壁纸可能崩溃，按 `Super + P` 重新切一次壁纸即可 |
+| 外接显示器布局 | `autorandr`：插上显示器后按 `Super + P` 选 `monitor layout` 设置布局（`bin/monitor.sh`），也可以设外接屏分辨率和缩放（笔记本屏固定 135%，外接屏默认 100%，两块屏同时用时也各按各的显示）。会按显示器自动保存；以后插上同一台会自动套用（登录时也会），拔掉时自动点亮笔记本屏。注意：切换屏幕布局时会重新铺壁纸 |
 
 **Super + P 菜单里的其他开关：**
 

@@ -37,6 +37,7 @@ cron() {
     while true; do
         [ $((i % 300)) -eq 0 ] && $DWM/bin/livewall.sh cron # 每300秒更新静态壁纸 (及锁屏背景); 动态壁纸不打断
         $DWM/bin/powersave.sh ac >/dev/null       # 拔电自动开省电模式, 插电自动关 (只关自动开的)
+        $DWM/bin/monitor.sh check                 # 插拔外接屏: 拔掉时点亮笔记本屏, 插上用过的显示器时套用上次的布局
         [ $((i % 60)) -eq 0 ] && $DWM/bin/batalert.sh # 每60秒检查电量: 20% / 10% 提醒, 5% 自动睡眠
         sleep 10; let i+=10
     done
