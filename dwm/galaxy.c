@@ -3,9 +3,10 @@
  * 每个窗口在开始时截图一次 (XRender Picture + mipmap), 之后只在离屏 3D 场景里绘制:
  *   世界坐标 (x 右, y 下, z 远离镜头) -> 镜头变换 -> 透视投影 -> 按镜头空间 z 排序 -> XRender 合成 -> 全屏遮罩窗口
  * Tag = 星系核心, 窗口 = 沿 3D 轨道环绕核心运行的星体, 所有 tag 组成星系群.
- * 流程: 开场 (约 5.7s) -> 停在星系轨道态 (不限时, 镜头缓慢巡航, 鼠标视差 / 滚轮推拉 / 点击窗口星跳转)
+ * 流程: 开场 (约 7.7s: 起飞 / 跃迁 / 点火 / 螺旋旋转 / 俯冲铺满全屏 / 点名 / 弧线回缩) -> 停在星系轨道态 (不限时, tag 核心沿开普勒椭圆群轨道公转, 导演镜头轮换机位, 鼠标视差 / 滚轮推拉 / 点击窗口星跳转)
  *       -> Esc: 星系群沿轨道划过一段弧线后坍缩成一个光点, 停在纯壁纸 (再按 Super+Z 恢复)
- *       -> Super+Z / 点击: 回程, 窗口星飞回原位置变回截图, 露出真实桌面
+ *       -> Super+Z: 回程, 窗口星飞回原位置变回截图, 露出真实桌面
+ *       -> 点击窗口星: 卡片朝镜头前推后跳到该窗口; 点击核心: 核心亮起后切到该 tag
  * 动画期间不移动 / 隐藏 / 映射 / 重叠 / 聚焦任何真实窗口; 只在结束时恢复 (或按点击切换) tag 和焦点. */
 
 #include <X11/extensions/dpms.h>
@@ -13,7 +14,7 @@
 #define RELAXMIPS     6
 #define RELAXALPHAS   256
 #define RELAXTRAIL    12
-#define RELAXBUCKETS  8
+#define RELAXBTILE    128       /* 光带画布按 128x128 分块上传 */
 #define RELAXSPRITES  3
 #define RELAXGAPS     4096
 #define RELAXRINGS    3
@@ -26,20 +27,28 @@
 #define RELAXIDLEFPS  30.0
 #define RELAXIDLE     90.0      /* 驻留时多久无输入后降到 RELAXIDLEFPS (秒) */
 #define RELAXINTRO    1.35      /* 开场时间拉伸: 1 场景秒 = 1.35 真实秒 */
-#define RELAXHOLD     4.2       /* 开场在场景时间 4.2s 进入驻留轨道态 */
+#define RELAXHOLD     4.2       /* 关键帧曲线的驻留点: stage 停在这里 */
+#define RELAXIEND     5.7       /* 开场时钟走到这里进入驻留 (旋转后还有俯冲 / 点名 / 回缩, 真实约 7.7s) */
 #define RELAXEXIT     4.75      /* Esc 坍缩从这里接着播放到 RELAXEND (4.2~4.8 之间的曲线是平的) */
 #define RELAXEND      6.0
 #define RELAXWARP     .6        /* 开场中按键: 快进到驻留态的真实时长 */
-#define RELAXRETURN   1.6       /* 回程的真实时长 */
-#define RELAXCRUISE   18.0      /* 驻留时巡航扫掠的周期 (场景秒) */
+#define RELAXRETURN   1.6       /* Super+Z 飞回原位的真实时长 */
+#define RELAXPICK     .42       /* 点击窗口: 选中前推 */
+#define RELAXCORE     .30       /* 点击星系核心: 亮起后淡出 */
+#define RELAXSHOT     9.0       /* 导演镜头: 每个机位停留 (真实秒) */
+#define RELAXSHOTMIX  4.0       /* 机位之间的过渡 (真实秒), 巡游之间是一次飞越 */
+#define RELAXDIAG     30.0      /* 驻留时镜头翻滚 (度): 压扁的轨道盘面沿屏幕对角线铺开, 星轨更舒展; 卡片朝向镜头, 仍是正的 */
+#define RELAXSTREAK   24        /* 每个星系核心身后的长曝光星轨分段数 */
+#define RELAXSTREAKM  1.5       /* 星轨覆盖的平近点角 (rad): 近点处自然拉长, 远点处变短 */
 #define RELAXCOLLAPSE 2.35      /* Esc 后完整的环绕 / 坍缩演出 (真实秒) */
 #define RELAXEXITSTART 1.25     /* 退场从环绕切换到向中心收束的时刻 */
 #define RELAXPREP     .45       /* 开场按 Esc 时平滑进入星系群形态 */
-#define RELAXLANES    2
+#define RELAXLANES    3
 #define RELAXPI       3.14159265358979323846
 
 enum { RelaxOff, RelaxIntro, RelaxOrbit, RelaxCollapse, RelaxReturn, RelaxRest };
-enum { RelaxDustItem, RelaxCoreItem, RelaxStarItem, RelaxRingItem, RelaxClusterItem };
+enum { RelaxFlyHome, RelaxPickStar, RelaxPickCore };
+enum { RelaxDustItem, RelaxCoreItem, RelaxStarItem, RelaxRingItem, RelaxClusterItem, RelaxStreakItem, RelaxSunItem };
 enum { RelaxHalo, RelaxDisc, RelaxShapes };
 enum { RelaxWarm, RelaxCool, RelaxTints };
 
@@ -69,6 +78,11 @@ typedef struct {
     RelaxVec pos, rpos;         /* 当前世界坐标 / 回程开始时冻结的位置 */
     double rx, ry, rz;          /* 轨道平面: 倾角 / 偏航 / 翻滚 */
     double radius, speed, phase, orbitphase, precess, size, alpha, ralpha, hover;
+    double anomaly, peri, flare, ripple, flip;  /* 平近点角 / 近点亮度 / 交会闪光 / 涟漪 / 翻转中 */
+    double ignite, callout, streakreveal;       /* 开场: 点火闪光 / 逐个点名 / 星轨拉出进度 */
+    double nova, bridge;                        /* 驻留: 超新星爆闪 / 光桥到达时的闪光 */
+    int rank;                   /* 开场点火的先后顺序 */
+    RelaxVec nudge;             /* 交会时互相吸引的表现层偏移 */
     RelaxMat ring[RELAXRINGS];  /* 每条轨道环相对星系轨道平面的姿态 (环与环互相倾斜) */
     double ringr[RELAXRINGS], ringz[RELAXRINGS][RELAXARCS];
     int ringn[RELAXRINGS][RELAXARCS];
@@ -93,7 +107,7 @@ typedef struct {
     double radius, angle, speed, rock, delay;
     RelaxVec pos, vel;
     RelaxMat orient;
-    double size, brightness, alpha, vis, tint, glow, lod, hover;
+    double size, brightness, alpha, vis, tint, glow, lod, hover, flipcard, constel;
     /* 回程开始时冻结的状态 */
     RelaxVec rpos;
     RelaxMat rorient;
@@ -105,30 +119,46 @@ typedef struct {
 typedef struct {
     RelaxVec pos;
     double size, light;
+    int disk;                   /* 盘面尘带: 跟随星系群一起转 */
+    double tw, boost;           /* 远景星点的闪烁相位; 超新星附近的提亮 */
     RelaxProj p;
 } RelaxDust;
 
 typedef struct { int kind, index; double z; } RelaxItem;
 
 typedef struct {
-    int mode, grabkbd, grabptr, w, h, ntags, nstars, ndust, nitems, ntrail, triscap, rendermajor;
+    int mode, grabkbd, grabptr, w, h, ntags, nstars, ndust, nitems, ntrail, rendermajor;
     int warping, dpms, dpmsoff, hover, hovercore, handon, fulldesk;
+    int rkind, rstar, rcore;    /* 回程种类: 飞回原位 / 点中的窗口 / 点中的核心 */
+    double rcoresize;
     double tscale, starscale, orbitscale, glowscale;
     /* 时钟: scene 是场景时间, stage 驱动关键帧曲线 (驻留时停住), motion 驱动轨道运动 (一直走) */
     double last, scene, stage, motion, holdw;
     double wstart, wscene, cstart, cstage, celapsed, rstart, lastinput, lastdpms;
-    double exitspin, clusteralpha, rcluster;
+    double exitspin, clusteralpha, rcluster, streakalpha, rstreak, sunalpha, rsun, sunpulse, ripple, rippleamp;
     RelaxMat cworld;            /* Esc 时冻结星系群朝向, 避免叠加全局自转 */
+    int nlanes, lanemask, npop, *popord;
     RelaxProj clusterpts[RELAXLANES][RELAXSEG + 1];
-    double clusterz[RELAXLANES][RELAXARCS];
+    double clusterz[RELAXLANES][RELAXARCS], clusterr[RELAXLANES][RELAXSEG + 1];
     int clustern[RELAXLANES][RELAXARCS];
+    RelaxProj *streakpts, sunp;  /* 每个核心 RELAXSTREAK + 1 个点 */
+    double *streakz;
+    /* 导演镜头: dclock 只在无交互时走; 交互 (移动 / 滚轮 / 悬停) 让 dspeed 降到 0, 镜头停在当前机位 */
+    double dclock, dspeed, dfit, lastpointer, dtyaw[2];
+    int dshot, dtg[2], lastflip, lastripple, lastnova, lastcomet;
+    int bridgek, bri, brj;      /* 当前这次核心光桥连接的两个核心 */
+    /* 开场节拍: iclock 是开场时钟 (场景秒, 坍缩时冻结), beatfade 在快进 / 坍缩时把节拍效果淡掉 */
+    double iclock, beatfade, warpfx, lanereveal[RELAXLANES];
+    double divesum, divemax;    /* 俯冲段 (开场时钟 3.2–5.0) 的渲染耗时统计 */
+    int divenum;
+    RelaxVec dtour[2];          /* 巡游机位: 当前 / 下一个机位跟踪的核心 (平滑后的位置) */
     /* 驻留交互: 鼠标视差 / 滚轮推拉 (t 开头是目标值, 每帧平滑逼近) */
     double mx, my, tyaw, tpitch, pyaw, ppitch, tzoom, zoom;
     /* 每帧由 update 算出, render 只读这些 */
     double bright, vign, desk, deskover, bar, reveal, ringalpha, trailgain, dustfade, central, pulse;
     /* 回程开始时冻结的全局状态 */
     double rcdist, rcx, rcy, rcz, rring, rdust, rbright, rvign, rdesk;
-    RelaxVec rcampos;
+    RelaxVec rcampos, rctarget;
     Window overlay, wallwin;
     Cursor hand;
     Pixmap backpix, desktoppix, wallpix, vignettepix, bgpix, tilemaskpix, spinpix;
@@ -152,8 +182,16 @@ typedef struct {
     RelaxVec *tgpos;
     RelaxMat *tgplane;
     RelaxProj *tpts, *rpts;
-    XTriangle *tris[RELAXBUCKETS];
-    int ntris[RELAXBUCKETS];
+    /* 光带画布: NVIDIA 上 XRenderCompositeTriangles 在 CPU 上逐个三角形栅格化 (每个约 7µs, 驻留每帧可达 30ms),
+     * 改为进程内软件画 a8 抗锯齿光带, 只上传有内容的 128x128 块, 再用 GPU 合成 */
+    unsigned char *bandbuf, *banddirty;
+    XImage *bandimg;
+    Pixmap bandpix;
+    Picture bandpic;
+    GC bandgc;
+    int bandtw, bandth, bandn;
+    double bandraster, bandflush;   /* 统计: 软件画光带 / 上传合成的累计耗时 */
+    unsigned long bandtiles, bandflushes;
     RelaxCamera cam;
     RelaxMat world;
     struct timespec start;
@@ -173,24 +211,39 @@ typedef struct {
 } RelaxScene;
 
 static RelaxScene relaxscene;
+static double relaxnow(void);
 static const int relaxspritesize[RELAXSPRITES] = { 128, 32, 8 };
 
 /* 时间轴上的关键帧曲线 (单调分段三次 Hermite), 用于镜头和形态变化.
  * 时间是场景时间; 驻留态停在 RELAXHOLD, 坍缩从 RELAXEXIT 接着播放, 所以 4.2~4.8 的值必须相同 */
 static const RelaxKey relaxcamdist[] = {
     {0, 1}, {.15, 1}, {.6, 1.05}, {1, 1.12}, {1.5, 1.22}, {2.2, 1.5}, {2.6, 1.46},
-    {2.9, 1.38}, {3.3, 1.3}, {3.8, 1.21}, {4.2, 1.18}, {4.8, 1.18}, {5.5, 1.2}, {6, 1.2}
+    {2.9, 1.38}, {3.3, 1.3}, {3.8, 1}, {4.2, .72}, {4.8, .72}, {5.5, 1.2}, {6, 1.2}
 };
 static const RelaxKey relaxcamyaw[] = {   /* 度 */
     {0, 0}, {.15, 0}, {.6, -3}, {1, -6}, {1.5, -10}, {2.2, -12}, {2.6, -2},
-    {2.9, 10}, {3.3, 20}, {3.8, 14}, {4.2, 10}, {4.8, 10}, {5.5, 0}, {6, 0}
+    {2.9, 10}, {3.3, 20}, {3.8, 6}, {4.2, -4}, {4.8, -4}, {5.5, 0}, {6, 0}
 };
-static const RelaxKey relaxcampitch[] = { /* 负值: 镜头在上方俯视, 驻留时轨道环显出椭圆 */
+static const RelaxKey relaxcampitch[] = { /* 负值: 镜头在上方; 群轨道在水平盘面内, 驻留时低角度斜视 */
     {0, 0}, {.15, 0}, {.6, 2}, {1, 5}, {1.5, 8}, {2.2, 8}, {2.6, 4},
-    {2.9, 0}, {3.3, -5}, {3.8, -7}, {4.2, -7}, {4.8, -7}, {5.5, 0}, {6, 0}
+    {2.9, 0}, {3.3, -8}, {3.8, -12}, {4.2, -14}, {4.8, -14}, {5.5, 0}, {6, 0}
 };
 static const RelaxKey relaxcamroll[] = {
-    {0, 0}, {2.2, 0}, {2.6, .8}, {2.9, 1.6}, {3.3, 2}, {4.2, 1}, {4.8, 1}, {5.5, 0}
+    {0, 0}, {2.2, 0}, {2.6, 2}, {2.9, 5}, {3.3, 3}, {4.2, RELAXDIAG}, {4.8, RELAXDIAG}, {5.5, 0}
+};
+/* 旋转之后的节拍镜头 (时间轴是开场时钟): 俯冲进星系群内部铺满全屏 -> 逐个点名 -> 沿弧线拉回,
+ * 终点与驻留第一个机位 (wide) 的起点相同 */
+static const RelaxKey relaxbeatdist[] = {
+    {3.2, 1.32}, {3.6, .75}, {3.95, .42}, {4.5, .4}, {5.2, .8}, {5.45, .76}, {5.7, .72}
+};
+static const RelaxKey relaxbeatpitch[] = {
+    {3.2, -7}, {3.6, -20}, {3.95, -34}, {4.5, -32}, {5.2, -17}, {5.7, -14}
+};
+static const RelaxKey relaxbeatyaw[] = {
+    {3.2, 18}, {3.95, 34}, {4.5, 66}, {5.2, 8}, {5.7, -4}
+};
+static const RelaxKey relaxbeatroll[] = {
+    {3.2, 2.5}, {3.95, -3}, {4.5, -4}, {5.2, RELAXDIAG * .75}, {5.7, RELAXDIAG}
 };
 static const RelaxKey relaxbright[] = {   /* 壁纸亮度: 冻结时 70%, 星系阶段沉入深空, 结尾 70% -> 100% */
     {0, 1}, {.15, .7}, {.6, .7}, {1.5, .3}, {4.8, .3}, {5.5, .7}, {5.7, .7}, {6, 1}
@@ -215,10 +268,17 @@ static const RelaxKey relaxtrailgain[] = {
     {4.8, .5}, {5.05, .35}, {5.35, .2}, {5.5, 0}
 };
 static const RelaxKey relaxringkeys[] = { /* 轨道环的透明度: 高速旋转时稍明显, 驻留时淡 */
-    {1, 0}, {1.8, .14}, {2.4, .24}, {3.3, .24}, {4.2, .2}, {4.8, .2}, {5.1, 0}
+    {1, 0}, {1.8, .14}, {2.4, .24}, {3.3, .24}, {4.2, .13}, {4.8, .13}, {5.1, 0}
 };
 static const double relaxinclinations[] = { 8, 28, -36, 54, -22, 42, -50, 16, -62 };
 static const double relaxringtilt[RELAXRINGS] = { 0, 38, -32 };
+/* 三条开普勒椭圆群轨道 (共用焦点 = 中心光源): 半长轴 (屏宽倍数) / 偏心率 / 倾角 / 升交点 / 近点角 (度) / 周期 (真实秒) / 方向 */
+typedef struct { double a, e, inc, node, peri, period, dir; } RelaxLane;
+static const RelaxLane relaxlanes[RELAXLANES] = {
+    { .22, .35,   8,   0,  40, 30,  1 },
+    { .33, .45, -10,  70, 165, 44, -1 },
+    { .45, .52,  14, -40, 285, 60,  1 },
+};
 
 /* ---------- 数学 ---------- */
 
@@ -277,6 +337,30 @@ relaxcurve(const RelaxKey *k, int n, double t)
         + (-2*u3 + 3*u2) * k[i+1].v + (u3 - u2) * m1;
 }
 #define RELAXCURVE(k, t) relaxcurve(k, LENGTH(k), t)
+
+/* 开场节拍效果的强度 (开场 / 坍缩中有效, 快进或坍缩时随 beatfade 淡出) */
+static double
+relaxbeatw(void)
+{
+    RelaxScene *r = &relaxscene;
+
+    return r->mode == RelaxIntro || r->mode == RelaxCollapse ? r->beatfade : 0;
+}
+
+/* 开场时钟 -> 关键帧 stage: 旋转结束 (3.3) 后平滑停在 3.45, 留出俯冲 / 点名的时间, 4.5 起再落定到 RELAXHOLD (C1 连续) */
+static double
+relaxintrostage(double scene)
+{
+    double x;
+
+    if (scene <= 3.3)
+        return scene;
+    if (scene < 3.6) {
+        x = scene - 3.3;
+        return 3.3 + x - x * x / .6;
+    }
+    return 3.45 + (RELAXHOLD - 3.45) * relaxsmoothstep(relaxphase(scene, 4.5, RELAXIEND));
+}
 
 /* 可复现的伪随机数 [0, 1) */
 static double
@@ -466,6 +550,13 @@ relaxdepthlight(double z)
     return l < .25 ? .25 : l > 1.15 ? 1.15 : l;
 }
 
+/* 贴近镜头时淡出 (.45F -> .25F): 物体穿过镜头附近时不会突然出现或消失. 卡片在 .25F 处被裁掉, 正好已经完全透明 */
+static double
+relaxnearfade(double z)
+{
+    return relaxsmoothstep((z - relaxscene.cam.focal * .25) / (relaxscene.cam.focal * .2));
+}
+
 static double
 relaxdepthblur(double z)
 {
@@ -474,7 +565,7 @@ relaxdepthblur(double z)
 
 /* 镜头绕星系群中心运动: 距离 + 偏航 / 俯仰 / 翻滚 (度) */
 static void
-relaxsetcamera(double dist, double pitch, double yaw, double roll)
+relaxsetcameraat(RelaxVec target, double dist, double pitch, double yaw, double roll)
 {
     RelaxCamera *cam = &relaxscene.cam;
     double d2r = RELAXPI / 180;
@@ -484,25 +575,11 @@ relaxsetcamera(double dist, double pitch, double yaw, double roll)
     cam->rx = pitch * d2r;
     cam->ry = yaw * d2r;
     cam->rz = roll * d2r;
-    cam->target = relaxv(0, 0, 0);
+    cam->target = target;
     orbit = relaxmul(relaxroty(cam->ry), relaxrotx(cam->rx));
     cam->pos = relaxadd(cam->target, relaxapply(orbit, relaxv(0, 0, -cam->dist)));
     cam->rot = relaxmul(orbit, relaxrotz(cam->rz));
     cam->view = relaxtranspose(cam->rot);
-}
-
-/* 关键帧镜头 + 驻留时的缓慢巡航 + 鼠标视差 + 滚轮推拉 (后三者乘 holdw, 开场和坍缩时为 0) */
-static void
-relaxupdatecamera(double stage, double motion)
-{
-    RelaxScene *r = &relaxscene;
-    double hw = r->holdw, tau = 2 * RELAXPI;
-
-    relaxsetcamera(RELAXCURVE(relaxcamdist, stage) * r->cam.focal
-                * (1 + .04 * hw * sin(tau * motion / 27)) * relaxmix(1, r->zoom, hw),
-            RELAXCURVE(relaxcampitch, stage) + hw * (6 * sin(tau * motion / 23 + 1) + r->ppitch),
-            RELAXCURVE(relaxcamyaw, stage) + hw * (18 * sin(tau * motion / 35) + r->pyaw),
-            RELAXCURVE(relaxcamroll, stage));
 }
 
 /* ---------- 世界: 全局旋转 / 星系 / 星体 (都是 (stage, motion) 的纯函数, 尾迹直接回溯时间求值) ---------- */
@@ -513,26 +590,24 @@ relaxramp(double x, double r)
     return x <= 0 ? 0 : x < r ? x * x / (2 * r) : x - r / 2;
 }
 
-/* 驻留时每 RELAXCRUISE 秒一次巡航扫掠: 整个星系群再转 100°, 反复展示近大远小 / 遮挡 / 轨道侧面 */
+/* 星系群整体绕竖直轴的缓慢漂移: 开场 .09 rad/s, 进入驻留后 3s 内降到 .025 rad/s (导演镜头负责主要的视角变化) */
 static double
-relaxcruise(double motion)
+relaxdrift(double motion)
 {
-    double x = motion - (RELAXHOLD + 6), k;
+    double x = relaxclamp((motion - RELAXIEND) / 3);
 
-    if (x <= 0)
-        return 0;
-    k = floor(x / RELAXCRUISE);
-    return 1.75 * (k + relaxeaseinoutcubic((x - k * RELAXCRUISE) / 2.4));
+    return .09 * relaxramp(motion - 1, .8)
+        - .065 * (3 * (x * x * x - x * x * x * x / 2) + MAX(0, motion - RELAXIEND - 3));
 }
 
 static RelaxMat
 relaxworldat(double stage, double motion)
 {
     double u = relaxphase(stage, 2.2, 3.3);
-    /* 2.2s 静止 -> 加速 -> 约 2.85s 峰值 (≈1.5 转/秒) -> 3.3s 减速到几乎停止, 之后保持缓慢漂移和周期巡航 */
-    double theta = .09 * relaxramp(motion - 1, .8) + 2 * RELAXPI * relaxeaseinoutcubic(pow(u, 1.25)) + relaxcruise(motion);
+    /* 2.2s 静止 -> 加速 -> 约 2.85s 峰值 (≈1.5 转/秒) -> 3.3s 减速到几乎停止, 之后保持缓慢漂移 */
+    double theta = relaxdrift(motion) + 2 * RELAXPI * relaxeaseinoutcubic(pow(u, 1.25));
     double tilt = .1 * relaxsmoothstep(relaxphase(stage, 1, 2.2)) + .2 * sin(RELAXPI * u)
-        - .1 * relaxsmoothstep(relaxphase(stage, 4.8, 5.5)) + .1 * relaxscene.holdw * sin(2 * RELAXPI * motion / 40);
+        - .1 * relaxsmoothstep(relaxphase(stage, 4.8, 5.5)) + .06 * relaxscene.holdw * sin(2 * RELAXPI * motion / 40);
     return relaxmul(relaxrotx(tilt), relaxmul(relaxroty(theta), relaxrotz(.05 * sin(RELAXPI * u))));
 }
 
@@ -543,16 +618,92 @@ relaxexitangle(double elapsed)
     return 1.15 * RELAXPI * relaxsmoothstep(relaxphase(elapsed, .15, RELAXEXITSTART));
 }
 
-/* 两条倾斜的星系群轨道. 核心与画出的轨道使用同一条参数曲线. */
+/* 开普勒方程 E - e sinE = M (Newton 迭代) */
+static double
+relaxkepler(double m, double e)
+{
+    double E = m + e * sin(m);
+    int i;
+
+    for (i = 0; i < 4; i++)
+        E -= (E - e * sin(E) - m) / (1 - e * cos(E));
+    return E;
+}
+
+/* 椭圆群轨道上偏近点角 E 处的点. 轨道在水平盘面 (xz) 内, 焦点在原点 (中心光源), 再按升交点 / 倾角 / 近点角摆放 */
 static RelaxVec
-relaxclusterpoint(int lane, double angle)
+relaxlanepoint(int lane, double E)
+{
+    const RelaxLane *l = &relaxlanes[lane];
+    double a = l->a * relaxscene.w, b = a * sqrt(1 - l->e * l->e), d2r = RELAXPI / 180;
+    RelaxMat m = relaxmul(relaxroty(l->node * d2r), relaxmul(relaxrotx(l->inc * d2r), relaxroty(l->peri * d2r)));
+
+    return relaxapply(m, relaxv(a * (cos(E) - l->e), 0, b * sin(E)));
+}
+
+/* 核心在 motion 时刻的平近点角: 匀速增长, 位置由开普勒方程给出, 近点快远点慢 */
+static double
+relaxanomaly(RelaxGalaxy *g, double motion, double spin)
+{
+    const RelaxLane *l = &relaxlanes[g->lane];
+
+    return g->orbitphase + l->dir * (2 * RELAXPI * relaxscene.tscale / l->period * (motion - 2.8) + spin);
+}
+
+/* 驻留后的周期事件: 进入驻留 offset 真实秒后开始, 每 every 真实秒一次.
+ * 返回 1 表示已开始, *k 是第几次, *local 是本次开始后的真实秒数 (motion 的纯函数) */
+static int
+relaxcycle(double motion, double offset, double every, int *k, double *local)
+{
+    double ts = relaxscene.tscale, x = motion - RELAXIEND - offset / ts, e = every / ts;
+
+    if (x < 0)
+        return 0;
+    *k = (int)floor(x / e);
+    *local = (x - *k * e) * ts;
+    return 1;
+}
+
+/* 闪光包络: attack 秒内平滑亮起, 之后按 decay 指数衰减. 不能从 0 一帧跳到最亮, 否则画面会「跳一下」 */
+static double
+relaxflash(double t, double attack, double decay)
+{
+    if (t <= 0)
+        return 0;
+    return t < attack ? relaxsmoothstep(t / attack) : exp(-decay * (t - attack));
+}
+
+/* 星系翻转: 驻留后每 5s 轮到一个有窗口的星系, 用 3.2s 绕自身轨道平面的 x 轴翻转一整圈 */
+static double
+relaxflipat(RelaxGalaxy *g, double motion)
 {
     RelaxScene *r = &relaxscene;
-    double radius = r->w * (lane ? .38 : .25);
-    RelaxMat tilt = relaxeuler((lane ? -27 : 24) * RELAXPI / 180,
-            (lane ? -13 : 16) * RELAXPI / 180, (lane ? -8 : 10) * RELAXPI / 180);
+    double local;
+    int k;
 
-    return relaxapply(tilt, relaxv(radius * cos(angle), radius * r->h / r->w * 1.65 * sin(angle), 0));
+    if (r->npop < 1 || !relaxcycle(motion, 1.5, 5, &k, &local) || r->popord[k % r->npop] != g->tag)
+        return 0;
+    return 2 * RELAXPI * relaxeaseinoutcubic(local / 3.2);
+}
+
+/* 轨道呼吸: 局部轨道环缓慢胀缩, 相邻星系节奏错开. 环和环上的星体共用这个系数 */
+static double
+relaxbreathe(RelaxGalaxy *g, double motion)
+{
+    return 1 + .07 * relaxsmoothstep(relaxphase(motion, RELAXIEND, RELAXIEND + 3))
+        * sin(2 * RELAXPI * motion * relaxscene.tscale / 9 + g->phase);
+}
+
+/* 旋涡扭转: 高速旋转时内圈比外圈多转, 星系群和群轨道被拧成螺旋, 减速时解开 (stage 的纯函数) */
+static RelaxVec
+relaxtwist(RelaxVec v, double stage)
+{
+    double u = relaxphase(stage, 2.2, 3.3), a;
+
+    if (u <= 0 || u >= 1)
+        return v;
+    a = 1.8 * pow(sin(RELAXPI * u), 2) * (1 - MIN(1, sqrt(v.x * v.x + v.z * v.z) / (.5 * relaxscene.w)));
+    return relaxapply(relaxroty(a), v);
 }
 
 static void
@@ -562,7 +713,6 @@ relaxgalaxyat(RelaxGalaxy *g, double stage, double motion, RelaxMat world, Relax
     double emerge = relaxeaseoutcubic(relaxphase(stage, .6, 1));
     double expand = relaxeaseinoutcubic(relaxphase(stage, 1.5, 2.2));
     double ready = relaxeaseinoutcubic(relaxphase(stage, 1.65, 2.8));
-    double speed = g->lane ? -.11 : .13;
     double spin = r->exitspin;
     double side = g->tag % 2 ? 1 : -1;
     double merge = relaxeaseinoutcubic(relaxphase(stage, 5 + .03 * (g->tag % 4), 5.45));
@@ -572,8 +722,7 @@ relaxgalaxyat(RelaxGalaxy *g, double stage, double motion, RelaxMat world, Relax
             g->home.z * relaxmix(.45, 1, expand) + (1 - emerge) * 1.2 * r->cam.focal);
     if (r->mode == RelaxCollapse && motion < r->motion)
         spin = relaxexitangle(r->celapsed - (r->motion - motion) * r->tscale);
-    orbit = relaxclusterpoint(g->lane, g->orbitphase + speed * (motion - 2.8)
-            + spin);
+    orbit = relaxlanepoint(g->lane, relaxkepler(relaxanomaly(g, motion, spin), relaxlanes[g->lane].e));
     p = relaxlerp(p, orbit, ready);
     p = relaxadd(p, relaxv(0, (1 - ready) * .012 * r->h * sin(.9 * motion + g->phase),
                 (1 - ready) * .02 * r->cam.focal * sin(.6 * motion + 1.3 * g->phase)));
@@ -582,8 +731,9 @@ relaxgalaxyat(RelaxGalaxy *g, double stage, double motion, RelaxMat world, Relax
         ctrl = relaxadd(relaxscale(relaxapply(relaxroty(1.1 * side), p), .8), relaxv(0, -.2 * r->h * side, 0));
         p = relaxbezier(p, ctrl, relaxv(0, 0, 0), merge);
     }
-    *pos = relaxapply(world, p);
-    *plane = relaxmul(world, relaxeuler(g->rx, g->ry + g->precess * motion, g->rz));
+    *pos = relaxapply(world, relaxtwist(p, stage));
+    *plane = relaxmul(world, relaxmul(relaxeuler(g->rx, g->ry + g->precess * motion, g->rz),
+                relaxrotx(relaxflipat(g, motion))));
 }
 
 /* 星体当前的轨道角 */
@@ -603,7 +753,7 @@ relaxstarat(RelaxStar *s, double stage, double motion, RelaxMat world, RelaxVec 
     RelaxGalaxy *g = &r->galaxies[s->galaxy];
     double F = r->cam.focal, dir = s->speed < 0 ? -1 : 1;
     double c = relaxeaseincubic(relaxphase(stage, 4.8 + s->delay * .5, 5.2 + s->delay * .5));
-    double rad = s->radius * (1 - c), a = relaxorbitangle(s, stage, motion);
+    double rad = s->radius * (1 - c) * relaxbreathe(g, motion), a = relaxorbitangle(s, stage, motion);
     double u1 = s->current ? relaxeaseinoutcubic(relaxphase(stage, .1, .58)) : 1;
     double u2 = relaxeaseinoutcubic(relaxphase(stage, .6 + s->delay, 1.5));
     RelaxVec orbit, start, ctrl, d;
@@ -628,17 +778,49 @@ static void
 relaxupdategalaxies(double stage, double motion, double dt)
 {
     RelaxScene *r = &relaxscene;
-    RelaxGalaxy *g;
+    RelaxGalaxy *g, *h;
+    RelaxVec d;
     double appear = relaxeaseoutcubic(relaxphase(stage, .6, 1.1));
     double absorb = relaxeaseinoutcubic(relaxphase(stage, 4.9, 5.3));
     double merge = relaxeaseincubic(relaxphase(stage, 5.05, 5.45));
-    int i;
+    double th = .09 * r->w, flare[32] = {0}, dist, f, E;
+    int i, j;
 
     for (i = 0; i < r->ntags; i++) {
         g = &r->galaxies[i];
         relaxgalaxyat(g, stage, motion, r->world, &g->pos, &g->plane);
+        g->anomaly = relaxanomaly(g, motion, r->exitspin);
+        E = relaxkepler(g->anomaly, relaxlanes[g->lane].e);
+        /* 近点甩掠: 经过近点时更亮更大 (速度变化由开普勒运动自带) */
+        g->peri = r->holdw * relaxsmoothstep((cos(E) - .6) / .4);
+        g->flip = sin(.5 * relaxflipat(g, motion));
+        g->ripple = .6 * r->rippleamp * exp(-pow((relaxlen(g->pos) - r->ripple) / (.09 * r->w), 2));
+        g->nudge = relaxv(0, 0, 0);
         g->alpha = appear * (1 - .9 * merge) * (g->nstars ? 1 : .55) * (1 + .35 * absorb * (g->nstars > 0));
         g->hover = relaxfollow(g->hover, r->hovercore == i, dt, .12);
+    }
+    /* 交会: 不同轨道上的两个核心在 3D 中靠近时同时闪光, 并沿连线互相吸引一点 */
+    for (i = 0; i < r->ntags && i < 32; i++)
+        for (j = i + 1; j < r->ntags && j < 32; j++) {
+            g = &r->galaxies[i];
+            h = &r->galaxies[j];
+            if (g->lane == h->lane || g->alpha < .1 || h->alpha < .1)
+                continue;
+            d = relaxsub(h->pos, g->pos);
+            dist = relaxlen(d);
+            f = r->holdw * relaxclamp(1 - dist / th);
+            if (f <= 0)
+                continue;
+            d = relaxscale(d, .012 * r->w * f / MAX(dist, 1));
+            g->nudge = relaxadd(g->nudge, d);
+            h->nudge = relaxsub(h->nudge, d);
+            flare[i] = MAX(flare[i], f);
+            flare[j] = MAX(flare[j], f);
+        }
+    for (i = 0; i < r->ntags; i++) {
+        g = &r->galaxies[i];
+        g->pos = relaxadd(g->pos, g->nudge);
+        g->flare = relaxfollow(g->flare, i < 32 ? flare[i] : 0, dt, .2);
         g->p = relaxproject(g->pos);
     }
 }
@@ -662,7 +844,7 @@ relaxupdaterings(double shrink)
             if (r->ringalpha < .003 || !g->p.ok)
                 continue;
             m = relaxmul(g->plane, g->ring[k]);
-            rad = g->ringr[k] * (1 - shrink);
+            rad = g->ringr[k] * (1 - shrink) * relaxbreathe(g, r->motion);
             pts = r->rpts + (i * RELAXRINGS + k) * (RELAXSEG + 1);
             for (j = 0; j <= RELAXSEG; j++) {
                 th = 2 * RELAXPI * j / RELAXSEG;
@@ -683,37 +865,65 @@ relaxupdaterings(double shrink)
     }
 }
 
+/* 星系群椭圆轨道 (淡淡的底线) + 每个核心身后的长曝光星轨 + 中心光源 */
 static void
 relaxupdatecluster(double shrink)
 {
     RelaxScene *r = &relaxscene;
     RelaxProj *pts;
-    double angle, z;
-    int lane, j, arc;
+    RelaxGalaxy *g;
+    RelaxVec v;
+    double E, z[3], m;
+    int lane, j, arc, i, n[3];
 
     for (lane = 0; lane < RELAXLANES; lane++) {
         pts = r->clusterpts[lane];
         memset(r->clustern[lane], 0, sizeof r->clustern[lane]);
         memset(r->clusterz[lane], 0, sizeof r->clusterz[lane]);
-        if (r->clusteralpha < .003)
+        if (r->clusteralpha < .003 || !(r->lanemask & 1 << lane))
             continue;
         for (j = 0; j <= RELAXSEG; j++) {
-            angle = 2 * RELAXPI * j / RELAXSEG;
-            pts[j] = relaxproject(relaxapply(r->world,
-                        relaxscale(relaxclusterpoint(lane, angle), 1 - shrink)));
+            v = relaxscale(relaxlanepoint(lane, 2 * RELAXPI * j / RELAXSEG), 1 - shrink);
+            r->clusterr[lane][j] = relaxlen(v);
+            pts[j] = relaxproject(relaxapply(r->world, relaxtwist(v, r->stage)));
         }
         for (j = 0; j < RELAXSEG; j++) {
             if (!pts[j].ok || !pts[j + 1].ok)
                 continue;
-            z = (pts[j].z + pts[j + 1].z) * .5;
             arc = j / RELAXARCSEG;
-            r->clusterz[lane][arc] += z;
+            r->clusterz[lane][arc] += (pts[j].z + pts[j + 1].z) * .5;
             r->clustern[lane][arc]++;
         }
         for (arc = 0; arc < RELAXARCS; arc++)
             if (r->clustern[lane][arc])
                 r->clusterz[lane][arc] /= r->clustern[lane][arc];
     }
+    /* 星轨: 沿当前椭圆往回取一段平近点角. 时间均匀, 所以近点处拉得长, 远点处缩得短 */
+    for (i = 0; i < r->ntags; i++) {
+        g = &r->galaxies[i];
+        pts = r->streakpts + i * (RELAXSTREAK + 1);
+        for (j = 0; j < 3; j++) {
+            r->streakz[i * 3 + j] = -1;
+            z[j] = n[j] = 0;
+        }
+        if (r->streakalpha < .003 || g->alpha < .01 || !g->p.ok)
+            continue;
+        pts[0] = g->p;
+        for (j = 1; j <= RELAXSTREAK; j++) {
+            m = g->anomaly - relaxlanes[g->lane].dir * RELAXSTREAKM * j / RELAXSTREAK;
+            E = relaxkepler(m, relaxlanes[g->lane].e);
+            pts[j] = relaxproject(relaxapply(r->world, relaxtwist(relaxscale(relaxlanepoint(g->lane, E), 1 - shrink), r->stage)));
+        }
+        for (j = 0; j < RELAXSTREAK; j++)
+            if (pts[j].ok && pts[j + 1].ok) {
+                z[j * 3 / RELAXSTREAK] += (pts[j].z + pts[j + 1].z) * .5;
+                n[j * 3 / RELAXSTREAK]++;
+            }
+        for (j = 0; j < 3; j++)
+            if (n[j])
+                r->streakz[i * 3 + j] = z[j] / n[j];
+    }
+    r->sunp = relaxproject(relaxv(0, 0, 0));
 }
 
 static void
@@ -727,6 +937,9 @@ relaxupdatestars(double stage, double motion, double dt)
     double size = RELAXCURVE(relaxcardsize, stage), vis = RELAXCURVE(relaxcardvis, stage);
     double tint = RELAXCURVE(relaxcardtint, stage), glow = RELAXCURVE(relaxstarglow, stage);
     double hb = relaxsmoothstep(relaxphase(stage, 3.3, 4.2)), collapse, a;
+
+    /* 俯冲起卡片就转为朝向镜头: 平行于画面的卡片走仿射采样, 近在眼前也不卡 */
+    hb = MAX(hb, relaxbeatw() * relaxsmoothstep(relaxphase(r->iclock, 3.1, 3.5)));
     int i;
 
     for (i = 0; i < r->nstars; i++) {
@@ -743,6 +956,10 @@ relaxupdatestars(double stage, double motion, double dt)
         s->hover = relaxfollow(s->hover, r->hover == i, dt, .12);
         if (s->hover > .001)  /* 悬停: 稍微靠近镜头 */
             s->pos = relaxadd(s->pos, relaxscale(relaxnormalize(relaxsub(r->cam.pos, s->pos)), .06 * r->cam.focal * s->hover));
+        if (g->callout > .001)  /* 点名: 环上的卡片沿轨道半径向外弹一下 */
+            s->pos = relaxadd(s->pos, relaxscale(relaxnormalize(relaxsub(s->pos, g->pos)), .18 * s->radius * g->callout));
+        if (s->flipcard > 0)    /* 翻面亮相: 绕自身竖轴转一圈 */
+            s->orient = relaxmul(s->orient, relaxroty(2 * RELAXPI * s->flipcard));
         s->vel = dt > 0 ? relaxscale(relaxsub(s->pos, prev), 1 / dt) : relaxv(0, 0, 0);
         /* 首帧必须和桌面截图逐像素对齐; 聚焦放大等卡片离开桌面后才开始. */
         s->size = size * (1 + (s->focused ? .08 * relaxsmoothstep(relaxphase(stage, .12, .75)) : 0))
@@ -753,9 +970,12 @@ relaxupdatestars(double stage, double motion, double dt)
         s->alpha = (s->current ? 1 : relaxeaseoutquart(relaxphase(stage, .6, 1)))
             * (1 - relaxeaseincubic(relaxphase(collapse, .7, 1)));
         s->p = relaxproject(s->pos);
-        if (r->mode == RelaxOrbit && s->p.ok) {
+        if (s->p.ok && stage > 1)    /* 开场最初几帧卡片与真实窗口重合, 不能淡 */
+            s->alpha *= relaxnearfade(s->p.z);
+        if ((r->mode == RelaxOrbit || (r->mode == RelaxIntro && r->iclock > 3)) && s->p.ok) {
+            /* 驻留时卡片有尺寸上限; 俯冲时卡片近在眼前, 也限制在 700px 以内 */
             double screen = MAX(s->w, s->h) * s->size * s->p.scale;
-            double cap = relaxmix(300, 430, s->hover);
+            double cap = r->mode == RelaxOrbit ? relaxmix(460, 600, s->hover) : 700;
             if (screen > cap)
                 s->size *= cap / screen;
         }
@@ -767,6 +987,11 @@ relaxupdatestars(double stage, double motion, double dt)
         s->vis = MAX(vis * s->lod, .85 * s->hover * (vis > .05)) * s->alpha;
         s->tint = (r->mode == RelaxOrbit ? 0 : tint + .1 * s->hover) * s->alpha * MIN(1, s->vis / .3);
         s->glow = glow * s->alpha * MIN(1, s->brightness);
+        if (s->flipcard > 0 && s->flipcard < 1) {   /* 翻面时一道扫过的高光 */
+            s->tint += .5 * sin(RELAXPI * s->flipcard) * s->alpha;
+            s->glow += .6 * sin(RELAXPI * s->flipcard) * s->alpha;
+        }
+        s->brightness *= 1 + .3 * g->callout + .35 * s->constel;
     }
 }
 
@@ -803,6 +1028,11 @@ relaxsortdepth(void)
         for (arc = 0; arc < RELAXARCS; arc++)
             if (r->clustern[i][arc])
                 r->items[n++] = (RelaxItem){RelaxClusterItem, i * RELAXARCS + arc, r->clusterz[i][arc]};
+    for (i = 0; i < r->ntags * 3; i++)
+        if (r->streakz[i] > 0)
+            r->items[n++] = (RelaxItem){RelaxStreakItem, i, r->streakz[i]};
+    if (r->sunp.ok && r->sunalpha > .003)
+        r->items[n++] = (RelaxItem){RelaxSunItem, 0, r->sunp.z};
     for (i = 0; i < r->nstars; i++)
         if (r->stars[i].p.ok && r->stars[i].alpha > .002)
             r->items[n++] = (RelaxItem){RelaxStarItem, i, r->stars[i].p.z};
@@ -811,39 +1041,374 @@ relaxsortdepth(void)
 }
 
 /* 开场 / 驻留 / 坍缩: 整个场景由 (stage, motion) 决定; dt 是真实时间, 只用于平滑交互 */
+/* ---------- 导演镜头: 驻留时按机位轮换, 交互时停住让位 ---------- */
+
+typedef struct { double pitch, yaw, dist, roll; } RelaxShot;
+enum { RelaxShotWide, RelaxShotEdge, RelaxShotBelow, RelaxShotTour, RelaxShotCross, RelaxShotTop };
+static const char *relaxshotname[] = { "wide", "edge", "below", "tour", "cross", "top" };
+/* 全景与巡游交替: 巡游时镜头飞到某个星系身边绕着它转, 两次巡游之间飞越到下一个星系 */
+static const int relaxshotseq[] = {
+    RelaxShotWide, RelaxShotTour, RelaxShotTour, RelaxShotEdge, RelaxShotTour, RelaxShotBelow,
+    RelaxShotTour, RelaxShotCross, RelaxShotTour, RelaxShotTop, RelaxShotTour
+};
+
+/* 机位在其开始后 t 真实秒的参数 (t 可略超出 [0, RELAXSHOT], 用于过渡段). 角度单位: 度.
+ * slot: 巡游机位用哪个跟踪槽 (0 当前 / 1 下一个) */
+static RelaxShot
+relaxshotat(int shot, double t, int slot)
+{
+    RelaxScene *r = &relaxscene;
+    double x = t / RELAXSHOT, breathe = 1 + .12 * sin(2 * RELAXPI * r->dclock / 20);
+
+    switch (shot) {
+    case RelaxShotEdge:     /* 贴近盘面侧掠: 椭圆压成细线, 核心前后遮挡 */
+        return (RelaxShot){-4, -30 + 60 * x, .68 * breathe, RELAXDIAG + 2};
+    case RelaxShotBelow:    /* 从盘面下方仰视 */
+        return (RelaxShot){11, 34 - 34 * x, .7 * breathe, RELAXDIAG - 4};
+    case RelaxShotTour:     /* 巡游: 在核心的轨道外侧, 绕着它慢慢转, 远处是整个星系群 */
+        return (RelaxShot){-17 + 7 * sin(2 * RELAXPI * t / 14), r->dtyaw[slot] + 30 + 35 * x, .5, RELAXDIAG * .6};
+    case RelaxShotCross:    /* 镜头从盘面上方推过盘面到下方 */
+        return (RelaxShot){-20 + 32 * relaxsmoothstep(x), 48 - 18 * x, (.76 - .08 * x) * breathe, RELAXDIAG - 2};
+    case RelaxShotTop:      /* 高空俯瞰 */
+        return (RelaxShot){-34, 8 + 26 * x, .9 * breathe, RELAXDIAG};
+    default:                /* 低角度斜视全景 */
+        return (RelaxShot){-14, -4 + 28 * x, .72 * breathe, RELAXDIAG};
+    }
+}
+
+/* 第 k 个机位 (若是巡游) 轮到的星系: 依次轮到有窗口的星系, 没有窗口时轮到全部核心 */
+static int
+relaxtourgalaxy(int k)
+{
+    RelaxScene *r = &relaxscene;
+    int n = LENGTH(relaxshotseq), per = 0, before = 0, i, idx;
+
+    for (i = 0; i < n; i++) {
+        per += relaxshotseq[i] == RelaxShotTour;
+        before += i < k % n && relaxshotseq[i] == RelaxShotTour;
+    }
+    idx = k / n * per + before;
+    return r->npop ? r->popord[idx % r->npop] : idx % MAX(1, r->ntags);
+}
+
+/* 巡游跟踪槽: 平滑跟随核心位置, yaw 取核心的径向方向 (镜头在轨道外侧) */
+static void
+relaxtourtrack(int slot, double dt, int snap)
+{
+    RelaxScene *r = &relaxscene;
+    RelaxGalaxy *g;
+    double ty;
+
+    if (r->dtg[slot] < 0 || r->dtg[slot] >= r->ntags)
+        return;
+    g = &r->galaxies[r->dtg[slot]];
+    ty = atan2(-g->pos.x, -g->pos.z) * 180 / RELAXPI;
+    if (snap) {
+        r->dtour[slot] = g->pos;
+        r->dtyaw[slot] = ty;
+        return;
+    }
+    r->dtour[slot] = relaxlerp(r->dtour[slot], g->pos, 1 - exp(-dt * r->dspeed / .45));
+    r->dtyaw[slot] = relaxfollow(r->dtyaw[slot], r->dtyaw[slot] + remainder(ty - r->dtyaw[slot], 360), dt * r->dspeed, 1.2);
+}
+
+static void
+relaxupdatecamera(double stage, double motion, double dt)
+{
+    RelaxScene *r = &relaxscene;
+    RelaxShot a, b;
+    RelaxGalaxy *g;
+    RelaxVec ta = relaxv(0, 0, 0), tb = relaxv(0, 0, 0), target;
+    double hw = r->holdw, dw = hw, period = RELAXSHOT + RELAXSHOTMIX, x, mix, wf, dev, fit, dist;
+    double kd, kp, ky, kr, bw, s = r->iclock;
+    int k, sa, sb, i, active, n = LENGTH(relaxshotseq);
+
+    /* 基础镜头: 关键帧 (stage); 旋转之后换成节拍镜头 (开场时钟), 快进 / 坍缩时由 beatfade 淡回关键帧 */
+    kd = RELAXCURVE(relaxcamdist, stage);
+    kp = RELAXCURVE(relaxcampitch, stage);
+    ky = RELAXCURVE(relaxcamyaw, stage);
+    kr = RELAXCURVE(relaxcamroll, stage);
+    bw = (r->mode == RelaxIntro || r->mode == RelaxCollapse) && s < RELAXIEND
+        ? relaxsmoothstep(relaxphase(s, 3.2, 3.5)) * r->beatfade : 0;
+    if (bw > 0) {
+        kd = relaxmix(kd, RELAXCURVE(relaxbeatdist, s), bw);
+        kp = relaxmix(kp, RELAXCURVE(relaxbeatpitch, s), bw);
+        ky = relaxmix(ky, RELAXCURVE(relaxbeatyaw, s), bw);
+        kr = relaxmix(kr, RELAXCURVE(relaxbeatroll, s), bw);
+    }
+    if (r->mode == RelaxIntro || r->mode == RelaxCollapse)
+        /* 起飞时轻推一下; 超空间跃迁时镜头前冲 */
+        kd *= 1 - r->beatfade * (.03 * sin(RELAXPI * relaxphase(s, .1, .6)) + .08 * r->warpfx);
+
+    if (r->mode == RelaxCollapse)
+        dw *= 1 - relaxsmoothstep(r->celapsed / 1.1);
+    /* 交互让位: 最近 4s 动过鼠标 / 滚轮, 或指针停在星体 / 核心上时, 导演时钟平滑减速到停 */
+    active = r->last - r->lastpointer < 4 || r->hover >= 0 || r->hovercore >= 0;
+    r->dspeed = relaxfollow(r->dspeed, !active, dt, .6);
+    if (r->mode == RelaxOrbit)
+        r->dclock += dt * r->dspeed;
+    k = (int)floor(r->dclock / period);
+    x = r->dclock - k * period;
+    sa = relaxshotseq[k % n];
+    sb = relaxshotseq[(k + 1) % n];
+    if (k != r->dshot) {
+        /* 进入新机位: 原来「下一个」的跟踪槽变成「当前」 */
+        if (r->dshot >= 0 && k == r->dshot + 1) {
+            r->dtg[0] = r->dtg[1];
+            r->dtour[0] = r->dtour[1];
+            r->dtyaw[0] = r->dtyaw[1];
+        } else {
+            r->dtg[0] = sa == RelaxShotTour ? relaxtourgalaxy(k) : -1;
+            relaxtourtrack(0, dt, 1);
+        }
+        r->dtg[1] = sb == RelaxShotTour ? relaxtourgalaxy(k + 1) : -1;
+        relaxtourtrack(1, dt, 1);
+        r->dshot = k;
+        if (r->log && r->mode == RelaxOrbit)
+            fprintf(r->log, "galaxy shot: %s (tag %d) at %.1fs\n", relaxshotname[sa],
+                    sa == RelaxShotTour ? r->dtg[0] + 1 : 0, motion);
+    }
+    if (r->dspeed > .01) {
+        relaxtourtrack(0, dt, 0);
+        relaxtourtrack(1, dt, 0);
+    }
+    a = relaxshotat(sa, x, 0);
+    b = relaxshotat(sb, x - period, 1);
+    mix = relaxeaseinoutcubic((x - RELAXSHOT) / RELAXSHOTMIX);
+    b.yaw = a.yaw + remainder(b.yaw - a.yaw, 360);   /* 机位之间 yaw 走短弧 */
+    if (sa == RelaxShotTour && r->dtg[0] >= 0)
+        ta = r->dtour[0];
+    if (sb == RelaxShotTour && r->dtg[1] >= 0)
+        tb = r->dtour[1];
+    target = relaxscale(relaxlerp(ta, tb, mix), dw);
+    wf = (sa == RelaxShotTour) * (1 - mix) + (sb == RelaxShotTour) * mix;
+    /* 自动取景: 只在全景机位里让核心贴近屏幕边缘. 偏移按滚轮缩放归一, 不会把用户的缩放抵消掉 */
+    if (r->mode == RelaxOrbit && r->dspeed > .5 && wf < .5) {
+        dev = 0;
+        for (i = 0; i < r->ntags; i++) {
+            g = &r->galaxies[i];
+            if (!g->p.ok || g->alpha < .1)
+                continue;
+            dev = MAX(dev, (fabs(g->p.x - r->w * .5) + g->size * g->p.scale) / (r->w * .5));
+            dev = MAX(dev, (fabs(g->p.y - r->h * .5) + g->size * g->p.scale) / (r->h * .5));
+        }
+        if (dev > 0) {
+            dev *= relaxmix(1, r->zoom, hw);
+            fit = MAX(.8, MIN(1.25, r->dfit * dev / .98));
+            r->dfit = relaxfollow(r->dfit, fit, dt, 1.5);
+        }
+    }
+    dist = relaxmix(a.dist * relaxmix(r->dfit, 1, sa == RelaxShotTour), b.dist * relaxmix(r->dfit, 1, sb == RelaxShotTour), mix);
+    if (sa == RelaxShotTour || sb == RelaxShotTour)
+        dist += .35 * sin(RELAXPI * mix);   /* 飞越: 先拉远再推近 */
+    relaxsetcameraat(target,
+            MAX(.35, relaxmix(kd, dist, dw)) * r->cam.focal * relaxmix(1, r->zoom, hw),
+            relaxmix(kp, relaxmix(a.pitch, b.pitch, mix), dw) + hw * r->ppitch,
+            relaxmix(ky, relaxmix(a.yaw, b.yaw, mix), dw) + hw * r->pyaw,
+            relaxmix(kr, relaxmix(a.roll, b.roll, mix), dw));
+}
+
+/* 星系翻转 / 涟漪各记一行日志, 便于核对画面 */
+static void
+relaxlogactions(double motion)
+{
+    RelaxScene *r = &relaxscene;
+    double local;
+    int k;
+
+    if (!r->log || r->mode != RelaxOrbit)
+        return;
+    if (r->npop >= 1 && relaxcycle(motion, 1.5, 5, &k, &local) && k != r->lastflip) {
+        r->lastflip = k;
+        fprintf(r->log, "galaxy flip: tag %d at %.1fs\n", r->popord[k % r->npop] + 1, motion);
+    }
+    if (relaxcycle(motion, 4, 6, &k, &local) && k != r->lastripple) {
+        r->lastripple = k;
+        fprintf(r->log, "galaxy ripple at %.1fs\n", motion);
+    }
+    if (relaxcycle(motion, 9, 20, &k, &local) && k != r->lastnova) {
+        r->lastnova = k;
+        fprintf(r->log, "galaxy supernova: tag %d at %.1fs\n", (k * 5 + 3) % r->ntags + 1, motion);
+    }
+    if (relaxcycle(motion, 6, 15, &k, &local) && k != r->lastcomet) {
+        r->lastcomet = k;
+        fprintf(r->log, "galaxy comet at %.1fs\n", motion);
+    }
+}
+
+/* 涟漪: 驻留后每 6s 从中心光源发出一圈亮波, 以 .4 屏宽/秒沿轨道向外扩散, 扫过的核心短暂亮起 */
+static void
+relaxupdateripple(double motion)
+{
+    RelaxScene *r = &relaxscene;
+    double local;   /* 本次涟漪发出后的真实秒数 */
+    int k;
+
+    r->ripple = r->rippleamp = r->sunpulse = 0;
+    if (!relaxcycle(motion, 4, 6, &k, &local))
+        return;
+    r->ripple = .4 * r->w * local;
+    r->rippleamp = relaxclamp(1 - r->ripple / (.65 * r->w));
+    r->sunpulse = .7 * relaxflash(local, .6, 2);
+}
+
+/* 局部轨道环的描绘进度: 像光笔一样从起点沿环画出一整圈 */
+static double
+relaxringreveal(RelaxGalaxy *g)
+{
+    double s = relaxscene.iclock;
+
+    return 1 - relaxbeatw() * (1 - relaxeaseinoutcubic(relaxphase(s, 1 + .05 * g->rank, 1.9 + .05 * g->rank)));
+}
+
+/* 开场节拍: 跃迁 / 轨道描绘 / 点火 / 点名 / 星轨拉出 / 卡片翻面 / 转速峰值爆闪 / 落定涟漪 */
+static void
+relaxupdatebeats(double motion)
+{
+    RelaxScene *r = &relaxscene;
+    RelaxGalaxy *g;
+    double f = relaxbeatw(), s = r->iclock, t, x;
+    int i, k;
+
+    r->warpfx = f * (pow(sin(RELAXPI * relaxphase(s, .55, 1.35)), 2) + .5 * pow(sin(RELAXPI * relaxphase(s, 3.3, 3.95)), 2));
+    for (i = 0; i < RELAXLANES; i++)
+        r->lanereveal[i] = 1 - f * (1 - relaxeaseinoutcubic(relaxphase(s, 1.5 + .12 * i, 2.3 + .12 * i)));
+    for (i = 0; i < r->ntags; i++) {
+        g = &r->galaxies[i];
+        g->ignite = f * exp(-pow((s - .62 - .06 * g->rank) / .1, 2));
+        g->streakreveal = 1 - f * (1 - relaxeaseinoutcubic(relaxphase(s, 4.6 + .05 * g->rank, 5.4 + .05 * g->rank)));
+        g->callout = 0;
+    }
+    /* 铺满全屏时, 有窗口的星系依次点名 */
+    for (k = 0; k < r->npop; k++) {
+        t = 3.95 + k * .6 / r->npop;
+        r->galaxies[r->popord[k]].callout = f * exp(-pow((s - t) / .09, 2));
+    }
+    for (i = 0; i < r->nstars; i++) {
+        t = 4.9 + .45 * i / MAX(1, r->nstars);
+        r->stars[i].flipcard = f * relaxeaseinoutcubic(relaxphase(s, t, t + .5));
+    }
+    r->sunpulse += f * 1.5 * exp(-pow((s - 2.85) / .12, 2));
+    /* 回缩落定的一刻, 中心光源发出一圈大涟漪 (之后接驻留的周期涟漪) */
+    x = (motion - RELAXIEND + .25) * r->tscale;
+    if (x >= 0 && x < 2.5 && r->mode != RelaxCollapse) {
+        t = 1.3 * relaxclamp(1 - .45 * r->w * x / (.75 * r->w));
+        if (t > r->rippleamp) {
+            r->ripple = .45 * r->w * x;
+            r->rippleamp = t;
+        }
+        r->sunpulse = MAX(r->sunpulse, relaxflash(x, .6, 2));
+    }
+}
+
+/* 驻留特效的状态 (强度乘 holdw): 超新星 / 星座连线 / 核心光桥 / 超新星附近的尘埃提亮 */
+static void
+relaxupdateholdfx(double motion)
+{
+    RelaxScene *r = &relaxscene;
+    RelaxGalaxy *g, *h;
+    RelaxDust *d;
+    double f = r->holdw, local, env, best, dist;
+    int i, j, k, gi = -1;
+
+    for (i = 0; i < r->ntags; i++)
+        r->galaxies[i].nova = r->galaxies[i].bridge = 0;
+    for (i = 0; i < r->nstars; i++)
+        r->stars[i].constel = 0;
+    if (f < .01 || r->ntags < 1)
+        return;
+    /* 超新星: 每 20s 轮到一个核心 */
+    if (relaxcycle(motion, 9, 20, &k, &local) && local < 3) {
+        gi = (k * 5 + 3) % r->ntags;
+        r->galaxies[gi].nova = f * relaxflash(local, .4, 1.6);
+    }
+    for (i = 0; i < r->ndust; i++) {
+        d = &r->dust[i];
+        d->boost = 0;
+        if (gi >= 0 && d->disk) {
+            dist = relaxlen(relaxsub(relaxapply(r->world, d->pos), r->galaxies[gi].pos));
+            d->boost = r->galaxies[gi].nova * relaxclamp(1 - dist / (.25 * r->w));
+        }
+    }
+    /* 星座连线: 每 4s 轮到一个有窗口的星系 */
+    if (r->npop && relaxcycle(motion, 2, 4, &k, &local)) {
+        gi = r->popord[k % r->npop];
+        env = relaxsmoothstep(local / .4) * (1 - relaxsmoothstep((local - 1.6) / 1));
+        for (i = 0; i < r->nstars; i++)
+            if (r->stars[i].galaxy == gi)
+                r->stars[i].constel = f * env;
+    }
+    /* 核心光桥: 每 7s 一次, 连接不同轨道上相距最近的两个核心 */
+    if (relaxcycle(motion, 3, 7, &k, &local)) {
+        if (k != r->bridgek) {
+            r->bridgek = k;
+            r->bri = r->brj = -1;
+            best = 1e18;
+            for (i = 0; i < r->ntags; i++)
+                for (j = i + 1; j < r->ntags; j++) {
+                    g = &r->galaxies[i];
+                    h = &r->galaxies[j];
+                    if (g->lane == h->lane || g->alpha < .1 || h->alpha < .1 || !g->p.ok || !h->p.ok)
+                        continue;
+                    /* 加一点随机, 不总是同一对 */
+                    dist = relaxlen(relaxsub(g->pos, h->pos)) * (1 + .6 * relaxhash(k * 31 + i * 7 + j));
+                    if (dist < best) {
+                        best = dist;
+                        r->bri = k % 2 ? j : i;
+                        r->brj = k % 2 ? i : j;
+                    }
+                }
+        }
+        if (r->brj >= 0 && local > 1.15)
+            r->galaxies[r->brj].bridge = .7 * f * relaxflash(local - .9, .4, 2.5);
+    }
+}
+
 static void
 relaxupdatescene(double stage, double motion, double dt)
 {
     RelaxScene *r = &relaxscene;
     int orbit = r->mode == RelaxOrbit, i;
 
-    r->holdw = relaxsmoothstep(relaxphase(motion, RELAXHOLD - .5, RELAXHOLD + 2.5))
+    r->holdw = relaxsmoothstep(relaxphase(motion, RELAXIEND - .5, RELAXIEND + 2.5))
         * (1 - relaxsmoothstep(relaxphase(stage, RELAXEXIT, RELAXEXIT + .5)));
     r->pyaw = relaxfollow(r->pyaw, orbit ? r->tyaw : 0, dt, .35);
     r->ppitch = relaxfollow(r->ppitch, orbit ? r->tpitch : 0, dt, .35);
     r->zoom = relaxfollow(r->zoom, orbit ? r->tzoom : 1, dt, .25);
-    relaxupdatecamera(stage, motion);
+    relaxupdateripple(motion);
+    r->rippleamp *= r->holdw;
+    r->sunpulse *= r->holdw;
+    relaxupdatebeats(motion);
+    relaxupdatecamera(stage, motion, dt);
+    relaxlogactions(motion);
     r->world = r->mode == RelaxCollapse ? r->cworld : relaxworldat(stage, motion);
     relaxupdategalaxies(stage, motion, dt);
+    relaxupdateholdfx(motion);
     r->ringalpha = RELAXCURVE(relaxringkeys, stage);
     relaxupdaterings(relaxeaseincubic(relaxphase(stage, 4.8, 5.3)));
-    r->clusteralpha = .23 * relaxsmoothstep(relaxphase(stage, 1.5, 2.3))
+    /* 椭圆底线: 高速旋转时较明显, 驻留时退成淡线, 让位给星轨 */
+    r->clusteralpha = .2 * relaxsmoothstep(relaxphase(stage, 1.5, 2.3)) * relaxmix(1, .55, relaxsmoothstep(relaxphase(stage, 3.3, 4.2)))
         * (1 - relaxsmoothstep(relaxphase(stage, 5.1, 5.55)));
+    r->streakalpha = .24 * relaxsmoothstep(relaxphase(stage, 2.8, 3.8)) * (1 - relaxsmoothstep(relaxphase(stage, 4.85, 5.1)));
+    if (r->mode == RelaxIntro)  /* 开场里星轨在回缩时才点亮 */
+        r->streakalpha = .24 * relaxmix(relaxsmoothstep(relaxphase(stage, 2.8, 3.8)),
+                relaxsmoothstep(relaxphase(r->iclock, 4.6, 5)), r->beatfade);
+    r->sunalpha = relaxsmoothstep(relaxphase(stage, 1.5, 2.3)) * (1 - relaxsmoothstep(relaxphase(stage, 4.9, 5.2)));
     if (r->mode == RelaxCollapse) {
-        /* 环绕时保留两条主轨道, 淡出局部环和历史尾迹, 让运动方向一眼可辨. */
+        /* 环绕时保留群轨道和星轨, 淡出局部环和历史尾迹, 让运动方向一眼可辨. */
         r->ringalpha *= 1 - .65 * relaxsmoothstep(relaxphase(r->celapsed, .1, .6));
         r->clusteralpha *= 1 - .25 * relaxsmoothstep(relaxphase(r->celapsed, .4, 1.1));
     }
     relaxupdatecluster(relaxeaseinoutcubic(relaxphase(stage, 4.85, 5.45)));
     relaxupdatestars(stage, motion, dt);
     for (i = 0; i < r->ndust; i++)
-        r->dust[i].p = relaxproject(r->dust[i].pos);
+        r->dust[i].p = relaxproject(r->dust[i].disk ? relaxapply(r->world, r->dust[i].pos) : r->dust[i].pos);
     r->bright = RELAXCURVE(relaxbright, stage);
     r->vign = RELAXCURVE(relaxvignettekeys, stage);
     r->desk = 1 - relaxsmoothstep(relaxphase(stage, 0, .1));
     r->deskover = r->bar = 0;
     r->reveal = relaxeaseinoutcubic(relaxphase(stage, 5.7, 6));
-    r->trailgain = RELAXCURVE(relaxtrailgain, stage);
+    r->trailgain = MAX(RELAXCURVE(relaxtrailgain, stage), .6 * r->warpfx);
     if (r->mode == RelaxCollapse)
         r->trailgain *= 1 - relaxsmoothstep(relaxphase(r->celapsed, 0, .35));
     r->dustfade = relaxeaseoutcubic(relaxphase(stage, .5, 1.3)) * (1 - relaxeaseinoutcubic(relaxphase(stage, 5, 5.7)));
@@ -865,7 +1430,7 @@ relaxupdatereturn(double u)
     double v, away;
     int i;
 
-    relaxsetcamera(relaxmix(r->rcdist, F, e), relaxmix(r->rcx, 0, e), relaxmix(r->rcy, 0, e), relaxmix(r->rcz, 0, e));
+    relaxsetcameraat(relaxscale(r->rctarget, 1 - e), relaxmix(r->rcdist, F, e), relaxmix(r->rcx, 0, e), relaxmix(r->rcy, 0, e), relaxmix(r->rcz, 0, e));
     for (i = 0; i < r->ntags; i++) {
         g = &r->galaxies[i];
         g->pos = g->rpos;
@@ -875,6 +1440,9 @@ relaxupdatereturn(double u)
     r->ringalpha = r->rring * fade;
     relaxupdaterings(0);
     r->clusteralpha = r->rcluster * fade;
+    r->streakalpha = r->rstreak * fade;
+    r->sunalpha = r->rsun * fade;
+    r->rippleamp = r->sunpulse = 0;
     relaxupdatecluster(0);
     for (i = 0; i < r->nstars; i++) {
         s = &r->stars[i];
@@ -906,7 +1474,7 @@ relaxupdatereturn(double u)
         s->p = relaxproject(s->pos);
     }
     for (i = 0; i < r->ndust; i++)
-        r->dust[i].p = relaxproject(r->dust[i].pos);
+        r->dust[i].p = relaxproject(r->dust[i].disk ? relaxapply(r->world, r->dust[i].pos) : r->dust[i].pos);
     r->dustfade = r->rdust * fade;
     r->bright = relaxmix(r->rbright, 1, relaxeaseinoutcubic(relaxphase(u, .1, .85)));
     r->vign = r->rvign * (1 - relaxsmoothstep(relaxphase(u, 0, .7)));
@@ -915,6 +1483,98 @@ relaxupdatereturn(double u)
     r->deskover = r->fulldesk ? relaxsmoothstep(relaxphase(u, .8, 1)) : 0;
     r->bar = r->fulldesk ? 0 : relaxsmoothstep(relaxphase(u, .75, 1));
     r->reveal = r->trailgain = r->central = r->pulse = 0;
+    relaxsortdepth();
+}
+
+/* 点击: 镜头停住. 窗口朝镜头拉近并正对镜头; 核心只变亮, 周围淡掉. 都不飞回桌面坐标. */
+static void
+relaxupdatepick(double u)
+{
+    RelaxScene *r = &relaxscene;
+    RelaxStar *s, *pick = NULL;
+    RelaxGalaxy *g;
+    RelaxVec tocam;
+    RelaxProj pj;
+    double ack = relaxsmoothstep(relaxphase(u, 0, .12 / RELAXPICK));
+    double push = relaxeaseinoutcubic(relaxphase(u, .12 / RELAXPICK, .38 / RELAXPICK));
+    double ck = relaxsmoothstep(relaxphase(u, .38 / RELAXPICK, 1));
+    double fade, dist, travel, endsize;
+    int i, samering;
+
+    if (r->rkind == RelaxPickCore) {
+        ack = push = 0;
+        ck = relaxeaseinoutcubic(u);
+    }
+    fade = r->rkind == RelaxPickCore ? ck : push;
+    if (r->rkind == RelaxPickStar && r->rstar >= 0 && r->rstar < r->nstars)
+        pick = &r->stars[r->rstar];
+    for (i = 0; i < r->nstars; i++) {
+        s = &r->stars[i];
+        s->pos = s->rpos;
+        s->orient = s->rorient;
+        s->size = s->rsize;
+        s->tint = s->hover = 0;
+        if (s == pick) {
+            s->brightness = s->rbright * (1 + .55 * MAX(ack, push));
+            s->glow = MIN(2.4, s->rglow + 1.35 * MAX(ack, push));
+            s->vis = s->rvis;
+            s->alpha = 1;
+            if (push > 0) {
+                tocam = relaxsub(r->cam.pos, s->rpos);
+                dist = relaxlen(tocam);
+                travel = MAX(0, dist - r->cam.near * 2.5);
+                s->pos = relaxadd(s->rpos, relaxscale(relaxnormalize(tocam), travel * push));
+                s->orient = relaxblend(s->rorient, r->cam.rot, push);
+                pj = relaxproject(s->pos);
+                if (pj.ok && pj.scale > 1e-6) {
+                    endsize = .75 * r->w / (MAX(s->w, s->h) * pj.scale);
+                    endsize = MAX(.02, MIN(40, endsize));
+                    s->size = relaxmix(s->rsize, endsize, push);
+                }
+            }
+            if (!r->fulldesk)
+                s->vis *= 1 - ck;
+        } else {
+            samering = pick && s->galaxy == pick->galaxy && s->ring == pick->ring;
+            s->vis = s->rvis * (1 - MAX(samering ? ack * .75 : 0, fade));
+            s->alpha = 1 - fade;
+            s->glow = s->rglow * (1 - fade);
+            s->brightness = s->rbright;
+            if (fade > 0 && r->rkind == RelaxPickStar) {
+                tocam = relaxsub(s->rpos, r->cam.pos);
+                s->pos = relaxadd(s->rpos, relaxscale(relaxnormalize(tocam), 1.4 * r->cam.focal * fade));
+            }
+        }
+        s->p = relaxproject(s->pos);
+    }
+    for (i = 0; i < r->ntags; i++) {
+        g = &r->galaxies[i];
+        g->pos = g->rpos;
+        if (r->rkind == RelaxPickCore && i == r->rcore) {
+            g->alpha = MIN(1, g->ralpha + .35 * ck);
+            g->size = r->rcoresize * (1 + .7 * ck);
+            g->hover = ck;
+        } else {
+            g->alpha = g->ralpha * (1 - fade);
+            g->hover = 0;
+        }
+        g->p = relaxproject(g->pos);
+    }
+    r->ringalpha = r->rring * (1 - fade);
+    relaxupdaterings(0);
+    r->clusteralpha = r->rcluster * (1 - fade);
+    r->streakalpha = r->rstreak * (1 - fade);
+    r->sunalpha = r->rsun * (1 - fade);
+    r->rippleamp = r->sunpulse = 0;
+    relaxupdatecluster(0);
+    for (i = 0; i < r->ndust; i++)
+        r->dust[i].p = relaxproject(r->dust[i].disk ? relaxapply(r->world, r->dust[i].pos) : r->dust[i].pos);
+    r->dustfade = r->rdust * (1 - fade);
+    r->bright = r->rbright * (r->rkind == RelaxPickStar && r->fulldesk ? 1 : (1 - .85 * ck));
+    r->vign = r->rvign;
+    r->desk = r->rdesk;
+    r->deskover = r->rkind == RelaxPickStar && r->fulldesk ? ck : 0;
+    r->bar = r->reveal = r->trailgain = r->central = r->pulse = 0;
     relaxsortdepth();
 }
 
@@ -1252,8 +1912,11 @@ relaxrenderwindow(RelaxStar *s, double vis, double tint, double light)
         minx = MIN(minx, p.x); maxx = MAX(maxx, p.x);
         miny = MIN(miny, p.y); maxy = MAX(maxy, p.y);
     }
-    if (r->mode == RelaxOrbit && MAX(maxx - minx, maxy - miny) < 480) {
-        /* 小卡片以仿射路径采样; 透视四边形的误差小于几像素, 软件合成开销明显更低. */
+    persp = hypot(q[0][0] - q[1][0] + q[2][0] - q[3][0], q[0][1] - q[1][1] + q[2][1] - q[3][1]);
+    /* 驻留时卡片朝向镜头, 透视误差很小: 一律走仿射, 不随尺寸在两条路径之间切换 (切换那一帧卡片形状会跳一下) */
+    if ((r->mode == RelaxOrbit && (MAX(maxx - minx, maxy - miny) < 480 || persp < 6))
+            || (r->mode != RelaxOrbit && r->iclock > 1 && persp < 4)) {
+        /* 小卡片, 或几乎平行于画面的卡片, 以仿射路径采样; 透视误差小于几像素, 合成开销低得多 (约 1/7). */
         q[2][0] = q[1][0] + q[3][0] - q[0][0];
         q[2][1] = q[1][1] + q[3][1] - q[0][1];
         minx = miny = 1e9;
@@ -1299,7 +1962,7 @@ relaxrenderwindow(RelaxStar *s, double vis, double tint, double light)
         q[i][0] -= x0;
         q[i][1] -= y0;
     }
-    drawn = tiled = 0;
+    drawn = tiled = cx = cy = 0;
     if (pixelcopy) {
         relaxcopywindow(s, lvl, left, top);
         drawn = 1;
@@ -1326,16 +1989,28 @@ relaxrenderwindow(RelaxStar *s, double vis, double tint, double light)
         }
     }
     dark = r->mode == RelaxOrbit ? 0 : (1 - MIN(1, light)) * vis;
-    if (dark >= .004)
-        relaxfillquad(relaxblack(dark), q, x0, y0);
-    if (tint >= .004)
-        relaxfillquad(relaxwhite(tint * MIN(1, light * 1.1)), q, x0, y0);
+    for (i = 0; i < 2; i++) {
+        double a = i ? tint * MIN(1, light * 1.1) : dark;
+        Picture color = i ? relaxwhite(a) : relaxblack(a);
+
+        if (a < .004)
+            continue;
+        /* 压暗 / 发光叠加: 用卡片自己 (已设好变换) 当蒙版, GPU 直接按卡片形状合成.
+         * NVIDIA 上大三角形是 CPU 栅格化的, 一张大卡片约 0.8ms */
+        if (pixelcopy)
+            XRenderComposite(dpy, PictOpOver, color, None, r->back, 0, 0, 0, 0,
+                    (int)lround(left), (int)lround(top), s->mipw[lvl], s->miph[lvl]);
+        else if (!drawn && !tiled)
+            XRenderComposite(dpy, PictOpOver, color, s->mip[lvl], r->back, 0, 0, cx - x0, cy - y0, cx, cy, x1 - cx, y1 - cy);
+        else
+            relaxfillquad(color, q, x0, y0);
+    }
 }
 
 static void
 relaxrenderglow(int tint, RelaxProj p, double radius, double alpha, double blur, double halo, double outer)
 {
-    double rr = radius * p.scale;
+    double rr = MIN(radius * p.scale, 80);   /* 俯冲时核心近在眼前: 限制光晕半径, 避免整屏的大面积合成 */
 
     if (outer > 0)
         relaxsprite(RelaxHalo, tint, p.x, p.y, rr * 7 * (1 + .3 * blur), outer * alpha);
@@ -1343,45 +2018,128 @@ relaxrenderglow(int tint, RelaxProj p, double radius, double alpha, double blur,
     relaxsprite(RelaxDisc, tint, p.x, p.y, MAX(.7, rr), alpha * (1 - .5 * blur));
 }
 
-/* 细光带 (轨道环 / 尾迹): 按透明度分桶, 每桶一次 XRenderCompositeTriangles (a8 遮罩, 重叠处不会叠亮) */
+/* 细光带 (轨道环 / 尾迹 / 冲击环): 软件画进 a8 画布 (按距离算覆盖率的抗锯齿胶囊), 同一画布内取最大值, 重叠处不叠亮.
+ * a 是白色的不透明度 (上限 .25), hw 是半宽 */
 static void
 relaxband(RelaxProj *pa, RelaxProj *pb, double a, double hw)
 {
     RelaxScene *r = &relaxscene;
-    double len, nx, ny;
-    XTriangle *tri;
-    int b = (int)(a / .25 * RELAXBUCKETS + .5);
+    float ax = pa->x, ay = pa->y, dx = pb->x - pa->x, dy = pb->y - pa->y, l2, ext, t, px, py, ex, ey, d, cov;
+    int x0, y0, x1, y1, x, y, lo, hi, v, tx, ty, steep;
+    unsigned char *row;
 
-    if (b < 1)
+    double t0;
+
+    if (!r->bandbuf || a < 1 / 64.0)
         return;
-    b = MIN(b, RELAXBUCKETS) - 1;
-    len = hypot(pb->x - pa->x, pb->y - pa->y);
-    if (len < .3 || r->ntris[b] + 2 > r->triscap)
+    t0 = relaxnow();
+    a = MIN(a, .25);
+    hw = MIN(hw, 9);
+    l2 = dx * dx + dy * dy;
+    if (l2 < .09)
         return;
-    nx = -(pb->y - pa->y) / len * hw;
-    ny = (pb->x - pa->x) / len * hw;
-    tri = &r->tris[b][r->ntris[b]];
-    tri[0].p1 = (XPointFixed){XDoubleToFixed(pa->x + nx), XDoubleToFixed(pa->y + ny)};
-    tri[0].p2 = (XPointFixed){XDoubleToFixed(pa->x - nx), XDoubleToFixed(pa->y - ny)};
-    tri[0].p3 = (XPointFixed){XDoubleToFixed(pb->x - nx), XDoubleToFixed(pb->y - ny)};
-    tri[1].p1 = tri[0].p1;
-    tri[1].p2 = tri[0].p3;
-    tri[1].p3 = (XPointFixed){XDoubleToFixed(pb->x + nx), XDoubleToFixed(pb->y + ny)};
-    r->ntris[b] += 2;
+    ext = hw + 1;
+    x0 = MAX(0, (int)floor(MIN(ax, ax + dx) - ext));
+    x1 = MIN(r->w - 1, (int)ceil(MAX(ax, ax + dx) + ext));
+    y0 = MAX(0, (int)floor(MIN(ay, ay + dy) - ext));
+    y1 = MIN(r->h - 1, (int)ceil(MAX(ay, ay + dy) + ext));
+    if (x0 > x1 || y0 > y1)
+        return;
+    steep = fabsf(dy) > fabsf(dx);
+    /* 沿主轴逐列 (或逐行) 扫描, 每列只算光带附近的几个像素 */
+    for (v = steep ? y0 : x0; v <= (steep ? y1 : x1); v++) {
+        if (steep) {
+            t = (v + .5f - ay) / dy;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            px = ax + t * dx;
+            lo = MAX(x0, (int)floor(px - ext * sqrtf(l2) / fabsf(dy) - 1));
+            hi = MIN(x1, (int)ceil(px + ext * sqrtf(l2) / fabsf(dy) + 1));
+        } else {
+            t = (v + .5f - ax) / dx;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            py = ay + t * dy;
+            lo = MAX(y0, (int)floor(py - ext * sqrtf(l2) / fabsf(dx) - 1));
+            hi = MIN(y1, (int)ceil(py + ext * sqrtf(l2) / fabsf(dx) + 1));
+        }
+        for (; lo <= hi; lo++) {
+            x = steep ? lo : v;
+            y = steep ? v : lo;
+            ex = x + .5f - ax;
+            ey = y + .5f - ay;
+            t = (ex * dx + ey * dy) / l2;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            ex -= t * dx;
+            ey -= t * dy;
+            d = sqrtf(ex * ex + ey * ey);
+            cov = hw + .5f - d;
+            if (cov <= 0)
+                continue;
+            cov = (cov > 1 ? 1 : cov) * a * 255 + .5f;
+            row = r->bandbuf + (size_t)y * r->w + x;
+            if (*row < (unsigned char)cov)
+                *row = (unsigned char)cov;
+        }
+    }
+    for (ty = y0 / RELAXBTILE; ty <= y1 / RELAXBTILE; ty++)
+        for (tx = x0 / RELAXBTILE; tx <= x1 / RELAXBTILE; tx++)
+            if (!r->banddirty[ty * r->bandtw + tx]) {
+                r->banddirty[ty * r->bandtw + tx] = 1;
+                r->bandn++;
+            }
+    r->bandraster += relaxnow() - t0;
 }
 
+/* 画布上是否有尚未合成、且与这个屏幕矩形相交的光带 */
+static int
+relaxbandpending(double x0, double y0, double x1, double y1)
+{
+    RelaxScene *r = &relaxscene;
+    int tx, ty, tx0, tx1, ty1;
+
+    if (!r->bandn)
+        return 0;
+    tx0 = MAX(0, (int)floor(x0 / RELAXBTILE));
+    ty = MAX(0, (int)floor(y0 / RELAXBTILE));
+    tx1 = MIN(r->bandtw - 1, (int)floor(x1 / RELAXBTILE));
+    ty1 = MIN(r->bandth - 1, (int)floor(y1 / RELAXBTILE));
+    for (; ty <= ty1; ty++)
+        for (tx = tx0; tx <= tx1; tx++)
+            if (r->banddirty[ty * r->bandtw + tx])
+                return 1;
+    return 0;
+}
+
+/* 把画布上有内容的块 (同一行相邻的块合并) 上传并以白色合成到场景, 然后清空这些块 */
 static void
 relaxflushbands(void)
 {
     RelaxScene *r = &relaxscene;
-    int b;
+    int tx, ty, run, x, y, w, h, j;
+    double t0;
 
-    for (b = 0; b < RELAXBUCKETS; b++)
-        if (r->ntris[b]) {
-            XRenderCompositeTriangles(dpy, PictOpOver, relaxwhite(.25 * (b + 1) / RELAXBUCKETS), r->back,
-                    r->a8, 0, 0, r->tris[b], r->ntris[b]);
-            r->ntris[b] = 0;
+    if (!r->bandn)
+        return;
+    t0 = relaxnow();
+    for (ty = 0; ty < r->bandth; ty++)
+        for (tx = 0; tx < r->bandtw; tx++) {
+            if (!r->banddirty[ty * r->bandtw + tx])
+                continue;
+            for (run = 1; tx + run < r->bandtw && r->banddirty[ty * r->bandtw + tx + run]; run++);
+            x = tx * RELAXBTILE;
+            y = ty * RELAXBTILE;
+            w = MIN(run * RELAXBTILE, r->w - x);
+            h = MIN(RELAXBTILE, r->h - y);
+            XPutImage(dpy, r->bandpix, r->bandgc, r->bandimg, x, y, x, y, w, h);
+            XRenderComposite(dpy, PictOpOver, r->white[RELAXALPHAS - 1], r->bandpic, r->back, 0, 0, x, y, x, y, w, h);
+            for (j = 0; j < h; j++)   /* XPutImage 已把数据拷进请求缓冲区, 可以马上清 */
+                memset(r->bandbuf + (size_t)(y + j) * r->w + x, 0, w);
+            memset(r->banddirty + ty * r->bandtw + tx, 0, run);
+            r->bandtiles += run;
+            tx += run - 1;
         }
+    r->bandn = 0;
+    r->bandflushes++;
+    r->bandflush += relaxnow() - t0;
 }
 
 /* 局部轨道: 暗的外沿与清晰的细线叠在短弧内, 由画家算法处理穿插. */
@@ -1393,41 +2151,81 @@ relaxrenderring(int index)
     int arc = index % RELAXARCS, j;
     RelaxGalaxy *g = &r->galaxies[gi];
     RelaxProj *pts = r->rpts + (gi * RELAXRINGS + k) * (RELAXSEG + 1);
-    double base = r->ringalpha * MIN(1, g->alpha) * (1 + .55 * g->hover), z, depth, width;
+    double base = r->ringalpha * MIN(1, g->alpha) * (1 + .55 * g->hover + 3 * g->callout), z, depth, width;
+    double reveal = relaxringreveal(g) * RELAXSEG;
 
     for (j = arc * RELAXARCSEG; j < (arc + 1) * RELAXARCSEG; j++) {
-        if (!pts[j].ok || !pts[j + 1].ok)
+        if (!pts[j].ok || !pts[j + 1].ok || j >= reveal)
             continue;
+        if (j + 1 > reveal)   /* 光笔笔尖 */
+            relaxsprite(RelaxHalo, RelaxCool, pts[j].x, pts[j].y, 14 * r->starscale * MAX(.5, pts[j].scale), .5 * MIN(1, g->alpha));
         z = (pts[j].z + pts[j + 1].z) * .5;
-        depth = relaxdepthlight(z);
+        depth = relaxdepthlight(z) * relaxnearfade(z);
         width = MAX(.65, (pts[j].scale + pts[j + 1].scale) * .5 * r->starscale);
         relaxband(&pts[j], &pts[j + 1], base * depth * .24 * (1 - relaxclamp(r->qualityvisual - 2)), width * 3.2);
         relaxband(&pts[j], &pts[j + 1], base * depth * 1.25, width * .7);
     }
 }
 
+/* 椭圆群轨道底线: 很淡的细线, 涟漪经过时沿轨道亮起一圈 */
 static void
 relaxrendercluster(int index)
 {
     RelaxScene *r = &relaxscene;
     int lane = index / RELAXARCS, arc = index % RELAXARCS, j;
     RelaxProj *pts = r->clusterpts[lane];
-    double z, a, angle, glint, width;
+    double a, wave, width, rr;
 
     for (j = arc * RELAXARCSEG; j < (arc + 1) * RELAXARCSEG; j++) {
-        if (!pts[j].ok || !pts[j + 1].ok)
+        if (!pts[j].ok || !pts[j + 1].ok || j >= r->lanereveal[lane] * RELAXSEG)
             continue;
-        z = (pts[j].z + pts[j + 1].z) * .5;
-        a = r->clusteralpha * relaxdepthlight(z);
-        width = MAX(.7, .9 * (pts[j].scale + pts[j + 1].scale) * .5);
-        relaxband(&pts[j], &pts[j + 1], a * .32 * (1 - relaxclamp(r->qualityvisual - 2)), width * 4);
-        relaxband(&pts[j], &pts[j + 1], a * 1.1, width * .7);
-        /* 每条主轨道至多一段短亮弧, 相位错开以免满屏闪烁. */
-        angle = 2 * RELAXPI * (j + .5) / RELAXSEG;
-        glint = remainder(angle - fmod(r->motion * .27 + lane * RELAXPI, 2 * RELAXPI), 2 * RELAXPI);
-        if (r->mode == RelaxOrbit && fabs(glint) < .18)
-            relaxband(&pts[j], &pts[j + 1], a * (.48 * (1 - fabs(glint) / .18)), width * 1.15);
+        if (j + 1 > r->lanereveal[lane] * RELAXSEG)   /* 光笔笔尖 */
+            relaxsprite(RelaxHalo, RelaxCool, pts[j].x, pts[j].y, 22 * r->starscale * MAX(.5, pts[j].scale), .6);
+        a = r->clusteralpha * relaxdepthlight((pts[j].z + pts[j + 1].z) * .5) * relaxnearfade(pts[j].z);
+        width = MAX(.6, .8 * (pts[j].scale + pts[j + 1].scale) * .5);
+        wave = 0;
+        if (r->rippleamp > .003) {
+            rr = (r->clusterr[lane][j] + r->clusterr[lane][j + 1]) * .5;
+            wave = r->rippleamp * exp(-pow((rr - r->ripple) / (.03 * r->w), 2));
+        }
+        relaxband(&pts[j], &pts[j + 1], a * (1 + 5 * wave), width * (.6 + .5 * wave));
+        if (wave > .05)
+            relaxband(&pts[j], &pts[j + 1], .12 * wave * relaxdepthlight(pts[j].z), width * 3.5);
     }
+}
+
+/* 长曝光星轨: 从核心往回渐隐, 线宽从核心处向尾端变细. index = 核心 * 3 + 按深度划分的段 */
+static void
+relaxrenderstreak(int index)
+{
+    RelaxScene *r = &relaxscene;
+    RelaxGalaxy *g = &r->galaxies[index / 3];
+    RelaxProj *pts = r->streakpts + index / 3 * (RELAXSTREAK + 1);
+    int j0 = index % 3 * RELAXSTREAK / 3, j1 = (index % 3 + 1) * RELAXSTREAK / 3, j;
+    double base = r->streakalpha * MIN(1, g->alpha) * (1 + .6 * g->peri + .5 * g->flare + .8 * g->ripple) * (1 + .4 * g->hover);
+    double u, a, width;
+
+    for (j = j0; j < j1; j++) {
+        if (!pts[j].ok || !pts[j + 1].ok || j >= g->streakreveal * RELAXSTREAK)
+            continue;
+        u = (j + .5) / RELAXSTREAK;
+        a = base * pow(1 - u, 1.6) * relaxdepthlight((pts[j].z + pts[j + 1].z) * .5) * relaxnearfade(pts[j].z);
+        width = MAX(.6, (pts[j].scale + pts[j + 1].scale) * .5 * (3 - 2.3 * u));
+        relaxband(&pts[j], &pts[j + 1], a, width);
+        if (u < .5)
+            relaxband(&pts[j], &pts[j + 1], a * .35 * (1 - u / .5) * (1 - relaxclamp(r->qualityvisual - 2)), width * 3.5);
+    }
+}
+
+/* 中心光源: 三条椭圆的共同焦点, 发出涟漪时脉冲一次 */
+static void
+relaxrendersun(void)
+{
+    RelaxScene *r = &relaxscene;
+    double a = r->sunalpha * (1 + 1.2 * r->sunpulse);
+
+    relaxrenderglow(RelaxCool, r->sunp, 20 * r->starscale * (1 + .5 * r->sunpulse), MIN(1, .7 * a),
+            relaxdepthblur(r->sunp.z), 1.1, .5 * r->glowscale * (1 + r->sunpulse));
 }
 
 static void
@@ -1460,7 +2258,7 @@ relaxrenderitems(void)
     RelaxScene *r = &relaxscene;
     RelaxGalaxy *g;
     RelaxDust *d;
-    double a;
+    double a, rad;
     int i;
 
     for (i = 0; i < r->nstars; i++)
@@ -1468,8 +2266,13 @@ relaxrenderitems(void)
     for (i = 0; i < r->ntags; i++)
         r->galaxies[i].hit = 0;
     for (i = 0; i < r->nitems; i++) {
-        if (i && (r->items[i].kind != RelaxRingItem && r->items[i].kind != RelaxClusterItem))
-            relaxflushbands();
+        if (r->items[i].kind == RelaxStarItem && r->bandn) {
+            /* 只有卡片会遮挡: 卡片之前若有与它相交的光带, 先合成 (光点 / 光晕之间的先后无关紧要) */
+            RelaxStar *st = &r->stars[r->items[i].index];
+            double ext = .75 * MAX(st->w, st->h) * st->size * st->p.scale + 2;
+            if (st->vis > .02 && relaxbandpending(st->p.x - ext, st->p.y - ext, st->p.x + ext, st->p.y + ext))
+                relaxflushbands();
+        }
         switch (r->items[i].kind) {
         case RelaxDustItem:
             d = &r->dust[r->items[i].index];
@@ -1480,14 +2283,37 @@ relaxrenderitems(void)
                 if (r->items[i].index % 3)
                     a *= 1 - relaxclamp(r->qualityvisual - 1);
             }
+            rad = MAX(.6, d->size * d->p.scale);
+            if (r->mode == RelaxOrbit && !d->disk && d->size >= 8) {
+                /* 闪烁星空: 各自频率明暗起伏, 每颗约 20s 一次短暂闪亮 */
+                double tt = r->motion * r->tscale, sp = fmod(tt / 20 + d->tw * 7, 1);
+                a *= .55 + .7 * (.5 + .5 * sin(tt * (1.3 + 2.1 * d->tw) + d->tw * 40));
+                if (sp < .04) {
+                    a *= 1 + 2.5 * sin(RELAXPI * sp / .04);
+                    rad *= 1 + .6 * sin(RELAXPI * sp / .04);
+                }
+            }
+            a *= 1 + 2 * d->boost;
             if (a < .003)
                 break;
-            relaxsprite(RelaxHalo, RelaxCool, d->p.x, d->p.y, MAX(.6, d->size * d->p.scale), a);
+            relaxsprite(RelaxHalo, RelaxCool, d->p.x, d->p.y, rad, MIN(1, a));
+            if (r->warpfx > .01) {
+                /* 超空间跃迁: 尘埃沿屏幕中心向外拉成光线 */
+                RelaxProj q = d->p;
+                q.x += (d->p.x - r->w * .5) * .25 * r->warpfx;
+                q.y += (d->p.y - r->h * .5) * .25 * r->warpfx;
+                relaxband(&d->p, &q, MIN(.25, a * 1.2 * r->warpfx), MAX(.5, .45 * d->size * d->p.scale));
+            }
             break;
         case RelaxCoreItem:
             g = &r->galaxies[r->items[i].index];
-            relaxrenderglow(RelaxWarm, g->p, g->size * (1 + .15 * g->hover), MIN(1, g->alpha * relaxdepthlight(g->p.z)),
-                    relaxdepthblur(g->p.z), .55 * (1 + .4 * g->hover), .22 * r->glowscale
+            /* 近点 / 交会 / 涟漪 / 翻转时核心更亮, 光晕更大 */
+            a = .35 * g->peri + .6 * g->flare + .7 * g->ripple + .25 * g->flip + 1.5 * g->ignite + 1.2 * g->callout
+                + 3 * g->nova + 1.2 * g->bridge;
+            relaxrenderglow(RelaxWarm, g->p, g->size * (1 + .15 * g->hover + .12 * g->peri + .2 * g->flare + .12 * g->ripple
+                        + .4 * (g->ignite + g->callout) + .6 * g->nova + .2 * g->bridge),
+                    MIN(1, g->alpha * relaxdepthlight(g->p.z) * (1 + a)) * relaxnearfade(g->p.z),
+                    relaxdepthblur(g->p.z), .55 * (1 + .4 * g->hover + a), .22 * r->glowscale * (1 + 1.5 * a)
                     * (r->mode == RelaxOrbit ? 1 - relaxclamp(r->qualityvisual - 2) : 1));
             if (g->alpha > .2) {
                 g->hx = g->p.x;
@@ -1505,7 +2331,237 @@ relaxrenderitems(void)
         case RelaxClusterItem:
             relaxrendercluster(r->items[i].index);
             break;
+        case RelaxStreakItem:
+            relaxrenderstreak(r->items[i].index);
+            break;
+        case RelaxSunItem:
+            relaxrendersun();
+            break;
         }
+    }
+    relaxflushbands();
+}
+
+/* 冲击环: center 处 plane 的 xy 平面内的圆 (3D, 随透视变成椭圆) */
+static void
+relaxringfx(RelaxVec center, RelaxMat plane, double rad, double a, double width)
+{
+    RelaxProj pts[49];
+    double th;
+    int j;
+
+    if (a < .004 || rad < 1)
+        return;
+    for (j = 0; j <= 48; j++) {
+        th = 2 * RELAXPI * j / 48;
+        pts[j] = relaxproject(relaxadd(center, relaxapply(plane, relaxv(cos(th) * rad, sin(th) * rad, 0))));
+    }
+    for (j = 0; j < 48; j++)
+        if (pts[j].ok && pts[j + 1].ok) {
+            relaxband(&pts[j], &pts[j + 1], a * relaxnearfade(pts[j].z), MAX(.8, width * pts[j].scale));
+            relaxband(&pts[j], &pts[j + 1], a * .3 * relaxnearfade(pts[j].z), MAX(2, 4 * width * pts[j].scale));
+        }
+}
+
+/* 开场的一次性光效: 起飞冲击波 / 核心点火冲击环 / 中心光源点火 / 转速峰值的盘面冲击环 */
+static void
+relaxrenderfx(void)
+{
+    RelaxScene *r = &relaxscene;
+    RelaxGalaxy *g;
+    RelaxProj pts[65], c = {0};
+    RelaxMat disk;
+    double f = relaxbeatw(), s = r->iclock, u, t;
+    int i, j;
+
+    if (f < .01)
+        return;
+    /* 起飞: 以焦点窗口为圆心, 屏幕空间的一圈光环 */
+    u = relaxphase(s, .08, .7);
+    if (u > 0 && u < 1) {
+        c.x = r->w * .5;
+        c.y = r->h * .5;
+        for (i = 0; i < r->nstars; i++)
+            if (r->stars[i].focused && r->stars[i].p.ok)
+                c = r->stars[i].p;
+        for (j = 0; j <= 64; j++) {
+            t = 2 * RELAXPI * j / 64;
+            pts[j] = (RelaxProj){c.x + cos(t) * .7 * r->w * relaxeaseoutcubic(u), c.y + sin(t) * .7 * r->w * relaxeaseoutcubic(u), 1, 1, 1};
+        }
+        for (j = 0; j < 64; j++) {
+            relaxband(&pts[j], &pts[j + 1], f * .22 * pow(1 - u, 1.5), 1.5 + 2 * u);
+            relaxband(&pts[j], &pts[j + 1], f * .07 * pow(1 - u, 1.5), 8 + 10 * u);
+        }
+    }
+    /* 核心点火: 在各自轨道平面里扩散的冲击环 */
+    for (i = 0; i < r->ntags; i++) {
+        g = &r->galaxies[i];
+        t = .62 + .06 * g->rank;
+        u = relaxphase(s, t, t + .5);
+        if (u > 0 && u < 1 && g->p.ok)
+            relaxringfx(g->pos, g->plane, 2.4 * g->radius * relaxeaseoutcubic(u), f * .24 * pow(1 - u, 1.3), 1.4);
+    }
+    /* 中心光源点火, 以及转速峰值时: 盘面 (xz) 上的大冲击环 */
+    disk = relaxmul(r->world, relaxrotx(RELAXPI / 2));
+    u = relaxphase(s, 1.5, 2.1);
+    if (u > 0 && u < 1)
+        relaxringfx(relaxv(0, 0, 0), disk, .45 * r->w * relaxeaseoutcubic(u), f * .22 * (1 - u), 1.6);
+    u = relaxphase(s, 2.85, 3.5);
+    if (u > 0 && u < 1)
+        relaxringfx(relaxv(0, 0, 0), disk, .7 * r->w * relaxeaseoutcubic(u), f * .26 * (1 - u), 2.2);
+    relaxflushbands();
+}
+
+/* 屏幕空间光带的一个点 */
+static RelaxProj
+relaxsp(double x, double y)
+{
+    return (RelaxProj){x, y, 1, 1, 1};
+}
+
+/* 驻留特效: 轨道光流 / 星座连线 / 核心光桥 / 超新星冲击环 / 彗星 / 流星. 都是 motion 的函数, 强度乘 holdw */
+static void
+relaxrenderholdfx(void)
+{
+    RelaxScene *r = &relaxscene;
+    RelaxGalaxy *g, *h;
+    RelaxStar *st;
+    RelaxProj pts[13], c, hp;
+    RelaxMat m, disk;
+    RelaxVec v, head, tail, A, B, perp;
+    double f = r->holdw, t = r->motion * r->tscale, local, env, u, a, th, rad, ang, len, wave, phi, R;
+    int i, j, k, l, n, order[32];
+
+    if (f < .01 || (r->mode != RelaxOrbit && r->mode != RelaxCollapse))
+        return;
+    /* 轨道光流: 每条群椭圆 6 个光点, 每条局部环 2 个, 沿轨道流动, 带短尾 */
+    for (l = 0; l < RELAXLANES; l++) {
+        if (!(r->lanemask & 1 << l))
+            continue;
+        for (i = 0; i < 6; i++) {
+            for (j = 0; j <= 4; j++) {
+                th = 2 * RELAXPI * i / 6 + relaxlanes[l].dir * (.3 * t - .045 * j);
+                v = relaxlanepoint(l, th);
+                pts[j] = relaxproject(relaxapply(r->world, v));
+            }
+            wave = r->rippleamp * exp(-pow((relaxlen(v) - r->ripple) / (.04 * r->w), 2));
+            for (j = 0; j < 4; j++)
+                if (pts[j].ok && pts[j + 1].ok)
+                    relaxband(&pts[j], &pts[j + 1], f * .2 * (1 + 2 * wave) * (1 - j / 4.0) * relaxnearfade(pts[j].z),
+                            MAX(.6, 1.6 * pts[j].scale));
+            if (pts[0].ok)
+                relaxsprite(RelaxHalo, RelaxCool, pts[0].x, pts[0].y, MAX(3, 10 * pts[0].scale * r->starscale),
+                        f * .5 * (1 + wave) * relaxnearfade(pts[0].z));
+        }
+    }
+    for (i = 0; i < r->ntags; i++) {
+        g = &r->galaxies[i];
+        if (!g->nrings || g->alpha < .1 || !g->p.ok)
+            continue;
+        for (k = 0; k < g->nrings; k++) {
+            m = relaxmul(g->plane, g->ring[k]);
+            rad = g->ringr[k] * relaxbreathe(g, r->motion);
+            for (l = 0; l < 2; l++) {
+                for (j = 0; j <= 3; j++) {
+                    th = (1.1 + .2 * k) * (k == 1 ? -1 : 1) * (t - .1 * j) + RELAXPI * l + g->phase;
+                    pts[j] = relaxproject(relaxadd(g->pos, relaxapply(m, relaxv(cos(th) * rad, sin(th) * rad, 0))));
+                }
+                for (j = 0; j < 3; j++)
+                    if (pts[j].ok && pts[j + 1].ok)
+                        relaxband(&pts[j], &pts[j + 1], f * .18 * g->alpha * (1 - j / 3.0) * relaxnearfade(pts[j].z),
+                                MAX(.6, 1.3 * pts[j].scale));
+                if (pts[0].ok)
+                    relaxsprite(RelaxHalo, RelaxWarm, pts[0].x, pts[0].y, MAX(2.5, 7 * pts[0].scale * r->starscale),
+                            f * .45 * g->alpha * relaxnearfade(pts[0].z));
+            }
+        }
+    }
+    /* 星座连线: 按轨道角把这个星系的窗口卡片连起来, 首颗再连到核心 */
+    if (r->npop && relaxcycle(r->motion, 2, 4, &k, &local)) {
+        g = &r->galaxies[r->popord[k % r->npop]];
+        env = f * relaxsmoothstep(local / .4) * (1 - relaxsmoothstep((local - 1.6) / 1));
+        for (i = n = 0; i < r->nstars && n < 32; i++)
+            if (r->stars[i].galaxy == g->tag && r->stars[i].p.ok)
+                order[n++] = i;
+        for (i = 1; i < n; i++)     /* 按轨道角插入排序 (每个星系的星不多) */
+            for (j = i; j > 0 && fmod(relaxorbitangle(&r->stars[order[j]], RELAXHOLD, r->motion) + 100 * RELAXPI, 2 * RELAXPI)
+                    < fmod(relaxorbitangle(&r->stars[order[j - 1]], RELAXHOLD, r->motion) + 100 * RELAXPI, 2 * RELAXPI); j--) {
+                l = order[j]; order[j] = order[j - 1]; order[j - 1] = l;
+            }
+        if (env > .01 && n) {
+            for (i = 0; i < n; i++) {
+                st = &r->stars[order[i]];
+                hp = r->stars[order[(i + 1) % n]].p;
+                if (n > 1 && (n > 2 || i == 0))
+                    relaxband(&st->p, &hp, .2 * env, 1.1);
+                relaxsprite(RelaxHalo, RelaxCool, st->p.x, st->p.y, 12, .6 * env);
+            }
+            if (g->p.ok)
+                relaxband(&r->stars[order[0]].p, &g->p, .14 * env, .9);
+        }
+    }
+    /* 核心光桥: 一道光线连起两个核心, 一个亮点沿光线跑过去 */
+    if (r->bri >= 0 && r->brj >= 0 && relaxcycle(r->motion, 3, 7, &k, &local) && k == r->bridgek) {
+        g = &r->galaxies[r->bri];
+        h = &r->galaxies[r->brj];
+        env = f * relaxsmoothstep(local / .25) * (1 - relaxsmoothstep((local - 1.3) / .6));
+        if (env > .01 && g->p.ok && h->p.ok) {
+            relaxband(&g->p, &h->p, .14 * env, 1.2);
+            relaxband(&g->p, &h->p, .05 * env, 5);
+            u = relaxeaseinoutcubic(relaxphase(local, .25, 1.15));
+            if (u > 0 && u < 1)
+                relaxsprite(RelaxHalo, RelaxWarm, relaxmix(g->p.x, h->p.x, u), relaxmix(g->p.y, h->p.y, u), 18, .9 * env);
+        }
+    }
+    /* 超新星: 核心所在轨道平面和盘面上各一圈冲击环 */
+    if (relaxcycle(r->motion, 9, 20, &k, &local) && local < 2) {
+        g = &r->galaxies[(k * 5 + 3) % r->ntags];
+        disk = relaxmul(r->world, relaxrotx(RELAXPI / 2));
+        u = relaxphase(local, 0, 1.6);
+        if (u < 1 && g->p.ok)
+            relaxringfx(g->pos, g->plane, 3 * MAX(g->radius, 60) * relaxeaseoutcubic(u), f * .26 * (1 - u), 1.8);
+        u = relaxphase(local, .25, 2);
+        if (u > 0 && u < 1 && g->p.ok)
+            relaxringfx(g->pos, disk, .3 * r->w * relaxeaseoutcubic(u), f * .18 * (1 - u), 1.3);
+    }
+    /* 彗星: 每 15s 一颗, 从星系群外侧穿过盘面, 尾巴背向中心光源 */
+    if (relaxcycle(r->motion, 6, 15, &k, &local) && local < 5) {
+        u = local / 5;
+        phi = 2 * RELAXPI * relaxhash(k * 3 + 5);
+        R = .75 * r->w;
+        perp = relaxv(-sin(phi) * .18 * r->w, 0, cos(phi) * .18 * r->w);
+        A = relaxadd(relaxv(R * cos(phi), -.12 * r->w, R * sin(phi)), perp);
+        B = relaxadd(relaxv(-.9 * R * cos(phi), .08 * r->w, -.9 * R * sin(phi)), perp);
+        head = relaxapply(r->world, relaxlerp(A, B, u));
+        tail = relaxscale(relaxnormalize(head), .2 * r->w);
+        env = f * relaxsmoothstep(u / .1) * (1 - relaxsmoothstep((u - .85) / .15));
+        for (j = 0; j <= 10; j++)
+            pts[j] = relaxproject(relaxadd(head, relaxscale(tail, j / 10.0)));
+        for (j = 0; j < 10; j++)
+            if (pts[j].ok && pts[j + 1].ok) {
+                a = env * pow(1 - j / 10.0, 1.3) * relaxnearfade(pts[j].z);
+                relaxband(&pts[j], &pts[j + 1], .24 * a, MAX(.6, (2.6 - 2.2 * j / 10.0) * pts[j].scale));
+                relaxband(&pts[j], &pts[j + 1], .07 * a, MAX(2, 7 * pts[j].scale));
+            }
+        if (pts[0].ok && env * relaxnearfade(pts[0].z) > .01)
+            relaxrenderglow(RelaxCool, pts[0], 14, MIN(1, .9 * env) * relaxnearfade(pts[0].z), relaxdepthblur(pts[0].z), 1, .35);
+    }
+    /* 流星: 每 2.6s 一颗, 大致沿轨道盘面的对角线方向 (右上 -> 左下) 划过画面 */
+    if (relaxcycle(r->motion, .8, 2.6, &k, &local) && local < 1.1) {
+        u = local / 1.1;
+        ang = (180 - RELAXDIAG + (relaxhash(k * 7 + 11) - .5) * 30) * RELAXPI / 180;
+        len = r->w * (.5 + .3 * relaxhash(k * 7 + 13));
+        /* 起点在画面上边或右边之外, 流星从边缘飞入, 不会在画面中间凭空出现 */
+        c = relaxhash(k * 7 + 12) < .55
+            ? relaxsp(r->w * (.3 + .7 * relaxhash(k * 7 + 14)), -.06 * r->h)
+            : relaxsp(1.04 * r->w, r->h * (.05 + .45 * relaxhash(k * 7 + 14)));
+        env = f * relaxsmoothstep(u / .2) * (1 - relaxsmoothstep((u - .75) / .25));
+        hp = relaxsp(c.x + cos(ang) * len * relaxeaseoutcubic(u), c.y + sin(ang) * len * relaxeaseoutcubic(u));
+        for (j = 0; j <= 12; j++)
+            pts[j] = relaxsp(hp.x - cos(ang) * .22 * r->w * j / 12 * MIN(1, u * 3), hp.y - sin(ang) * .22 * r->w * j / 12 * MIN(1, u * 3));
+        for (j = 0; j < 12; j++)
+            relaxband(&pts[j], &pts[j + 1], .25 * env * pow(1 - j / 12.0, 1.5), 1.7 - 1.3 * j / 12);
+        relaxsprite(RelaxHalo, RelaxCool, hp.x, hp.y, 12, .8 * env);
     }
     relaxflushbands();
 }
@@ -1566,7 +2622,7 @@ relaxrendertrails(void)
                 r->tpts[i * stride] = r->stars[i].p;
             continue;
         }
-        tk = r->stage - k * dt * rate;
+        tk = r->mode == RelaxIntro ? relaxintrostage(MAX(0, MIN(r->scene, RELAXIEND) - k * dt)) : r->stage - k * dt * rate;
         mk = r->motion - k * dt;
         world = r->mode == RelaxCollapse ? r->cworld : relaxworldat(tk, mk);
         for (i = 0; i < r->ntags; i++) {
@@ -1585,7 +2641,7 @@ relaxrendertrails(void)
             speed = relaxlen(r->stars[i].vel) / r->cam.focal;
             a = gain * r->stars[i].alpha * MIN(1, r->stars[i].brightness) * (.12 + .2 * relaxclamp(3 * speed));
         } else {
-            a = .16 * gain * r->galaxies[i - r->nstars].alpha;
+            a = .16 * gain * r->galaxies[i - r->nstars].alpha * (1 - r->streakalpha / .24);  /* 驻留时由长曝光星轨取代 */
         }
         for (k = 0; k < n; k++) {
             pa = &r->tpts[i * stride + k];
@@ -1689,6 +2745,8 @@ relaxrender(void)
     relaxrendertrails();
     next = relaxnow(); r->phasecost[2] += next - t; t = next;
     relaxrenderitems();
+    relaxrenderholdfx();
+    relaxrenderfx();
     relaxrendertitle();
     relaxrendercentral();
     relaxrenderfront();
@@ -1954,10 +3012,29 @@ relaxfreescene(void)
     free(r->tgplane);
     free(r->tpts);
     free(r->rpts);
-    for (i = 0; i < RELAXBUCKETS; i++) {
-        free(r->tris[i]);
-        r->tris[i] = NULL;
-    }
+    free(r->streakpts);
+    free(r->streakz);
+    free(r->popord);
+    r->streakpts = NULL;
+    r->streakz = NULL;
+    r->popord = NULL;
+    if (r->bandimg)
+        XDestroyImage(r->bandimg);  /* 连同 bandbuf 一起释放 */
+    else
+        free(r->bandbuf);
+    if (r->bandpic)
+        XRenderFreePicture(dpy, r->bandpic);
+    if (r->bandpix)
+        XFreePixmap(dpy, r->bandpix);
+    if (r->bandgc)
+        XFreeGC(dpy, r->bandgc);
+    free(r->banddirty);
+    r->bandimg = NULL;
+    r->bandbuf = r->banddirty = NULL;
+    r->bandpic = 0;
+    r->bandpix = 0;
+    r->bandgc = 0;
+    r->bandn = 0;
     r->stars = NULL;
     r->galaxies = NULL;
     r->dust = NULL;
@@ -2017,6 +3094,65 @@ relaxxerror(Display *d, XErrorEvent *ee)
 
 /* 星系群布局: 有窗口的星系黄金角分布在一个铺满屏幕的椭球里 (x/y 占满画面, z 拉开近 / 中 / 远三层);
  * 没有窗口的 tag 退到后景作为远处的深度参照, 不占主画面 */
+/* 群轨道分配: 有窗口的 tag 先放内 / 中轨 (当前 tag 在内轨上靠镜头的一侧), 空 tag 放外轨; 同轨按平近点角均分 */
+static void
+relaxbuildlanes(int cur, int npop)
+{
+    RelaxScene *r = &relaxscene;
+    RelaxGalaxy *g;
+    RelaxMat world;
+    RelaxVec v;
+    static const double offset[RELAXLANES] = { 0, 2.2, 4.1 };
+    int order[32], count[RELAXLANES] = {0}, slot[32], n = 0, nmain = 0, lanes, i, j, k, best = 0;
+    double score, bestscore = 1e18, d;
+
+    /* 先排主星系 (当前 tag 第一), 再排空 tag */
+    if (cur >= 0)
+        order[n++] = cur;
+    for (i = 0; i < r->ntags && n < 32; i++)
+        if (i != cur && (r->galaxies[i].nstars || !npop))
+            order[n++] = i;
+    nmain = n;
+    for (i = 0; i < r->ntags && n < 32; i++)
+        if (i != cur && !(r->galaxies[i].nstars || !npop))
+            order[n++] = i;
+    /* 有窗口的星系轮流放进三条轨道 (铺满整个盘面), 空 tag 交替补在外轨和中轨 */
+    lanes = MAX(1, MIN(RELAXLANES, nmain));
+    r->npop = 0;
+    r->lanemask = 0;
+    for (j = 0; j < n; j++) {
+        g = &r->galaxies[order[j]];
+        g->lane = j < nmain ? j % lanes : RELAXLANES - 1 - (j - nmain) % 2;
+        g->rank = j;
+        slot[j] = count[g->lane]++;
+        r->lanemask |= 1 << g->lane;
+        if (g->nstars)
+            r->popord[r->npop++] = order[j];
+    }
+    for (j = 0; j < n; j++) {
+        g = &r->galaxies[order[j]];
+        g->orbitphase = 2 * RELAXPI * slot[j] / count[g->lane] + offset[g->lane];
+    }
+    if (cur < 0 || n < 1)
+        return;
+    /* 转动内轨的整体相位, 让当前 tag 在进入驻留时位于靠镜头的一侧 */
+    world = relaxworldat(RELAXHOLD, RELAXIEND + .5);
+    g = &r->galaxies[cur];
+    for (k = 0; k < 72; k++) {
+        d = 2 * RELAXPI * k / 72;
+        v = relaxapply(world, relaxlanepoint(g->lane, relaxkepler(relaxanomaly(g, RELAXIEND + .5, 0) + d,
+                        relaxlanes[g->lane].e)));
+        score = v.z + .5 * fabs(v.x);
+        if (score < bestscore) {
+            bestscore = score;
+            best = k;
+        }
+    }
+    for (j = 0; j < n; j++)
+        if (r->galaxies[order[j]].lane == g->lane)
+            r->galaxies[order[j]].orbitphase += 2 * RELAXPI * best / 72;
+}
+
 static void
 relaxbuildgalaxies(void)
 {
@@ -2037,10 +3173,6 @@ relaxbuildgalaxies(void)
     for (i = 0; i < r->ntags; i++) {
         g = &r->galaxies[i];
         g->tag = i;
-        g->lane = i % RELAXLANES;
-        g->orbitphase = 2 * RELAXPI * (i / RELAXLANES)
-            / MAX(1, (r->ntags + RELAXLANES - 1 - g->lane) / RELAXLANES)
-            + (g->lane ? .38 : -.42);
         main = g->nstars || !npop;
         idx = i == cur ? 0 : main ? pi++ : ei++;
         n = main ? (npop ? npop : r->ntags) : r->ntags - npop;
@@ -2079,6 +3211,7 @@ relaxbuildgalaxies(void)
         }
         g->hover = 0;
     }
+    relaxbuildlanes(cur, npop);
 }
 
 static void
@@ -2113,6 +3246,7 @@ relaxbuildorbits(void)
     }
 }
 
+/* 三层空间: 远景星空 (整个球壳) / 盘面尘带 (与群轨道同一平面, 随星系群转动) / 前景浮尘 (镜头与星系群之间) */
 static void
 relaxbuilddust(void)
 {
@@ -2127,22 +3261,26 @@ relaxbuilddust(void)
         v = relaxhash(i * 5 + 1001);
         th = 2 * RELAXPI * relaxhash(i * 5 + 1002);
         ph = acos(2 * v - 1);
-        if (u < .5) {           /* 远景 */
+        d->disk = 0;
+        d->tw = relaxhash(i * 5 + 1005);
+        d->boost = 0;
+        if (u < .45) {          /* 远景星空 */
             rad = F * (3.5 + 2.5 * relaxhash(i * 5 + 1003));
-            d->size = 10 + 5 * relaxhash(i * 5 + 1004);
-            d->light = .4 + .2 * relaxhash(i * 5 + 1004);
-        } else if (u < .85) {   /* 中景 */
-            rad = F * (1.6 + 1.2 * relaxhash(i * 5 + 1003));
-            d->size = 5.5 + 2 * relaxhash(i * 5 + 1004);
-            d->light = .5 + .2 * relaxhash(i * 5 + 1004);
-        } else {                /* 前景: 镜头与星系群之间, 视差最大 */
-            d->pos = relaxv((relaxhash(i * 5 + 1003) - .5) * 2.2 * F, (v - .5) * 1.3 * F,
-                    -F * (.45 + .4 * relaxhash(i * 5 + 1002)));
-            d->size = 1.8 + .8 * relaxhash(i * 5 + 1004);
-            d->light = .6 + .25 * relaxhash(i * 5 + 1004);
-            continue;
+            d->pos = relaxv(rad * sin(ph) * cos(th), rad * cos(ph) * .7, rad * sin(ph) * sin(th));
+            d->size = 8 + 6 * relaxhash(i * 5 + 1004);
+            d->light = .35 + .25 * relaxhash(i * 5 + 1004);
+        } else if (u < .8) {    /* 盘面尘带: 半径 .12–.7 屏宽, 薄薄一层 */
+            rad = r->w * (.12 + .58 * sqrt(relaxhash(i * 5 + 1003)));
+            d->pos = relaxv(rad * cos(th), (v - .5) * .035 * r->w, rad * sin(th));
+            d->disk = 1;
+            d->size = 4.5 + 4 * relaxhash(i * 5 + 1004);
+            d->light = .45 + .35 * relaxhash(i * 5 + 1004);
+        } else {                /* 前景浮尘: 视差最大 */
+            d->pos = relaxv((relaxhash(i * 5 + 1003) - .5) * 2.4 * F, (v - .5) * 1.4 * F,
+                    -F * (.35 + .45 * relaxhash(i * 5 + 1002)));
+            d->size = 1.8 + 1.2 * relaxhash(i * 5 + 1004);
+            d->light = .55 + .25 * relaxhash(i * 5 + 1004);
         }
-        d->pos = relaxv(rad * sin(ph) * cos(th), rad * cos(ph) * .6, rad * sin(ph) * sin(th));
     }
 }
 
@@ -2260,19 +3398,23 @@ relaxlogseg(const char *how)
             qsort(r->gaps, r->ngaps, sizeof *r->gaps, relaxgapcmp);
             low = r->gaps[(size_t)(r->ngaps * .99)];
         }
-        fprintf(r->log, "galaxy %s: at %.2fs frames %lu time %.3fs avg %.1f fps min %.1f fps 1%%low %.1f fps render avg %.2fms max %.2fms update %.2fms background %.2fms trails %.2fms items %.2fms present %.2fms XSync %.2fms quality %d%s xerrors %lu\n",
+        fprintf(r->log, "galaxy %s: at %.2fs frames %lu time %.3fs avg %.1f fps min %.1f fps 1%%low %.1f fps render avg %.2fms max %.2fms update %.2fms background %.2fms trails %.2fms items %.2fms present %.2fms XSync %.2fms bands %.2f+%.2fms (%.0f tiles in %.1f flushes) quality %d%s xerrors %lu\n",
                 how, now, r->frames, span, r->frames / MAX(span, 1e-3),
                 r->ngaps ? 1 / r->gaps[r->ngaps - 1] : 0, low > 0 ? 1 / low : 0,
                 r->rendersum / r->frames * 1000, r->rendermax * 1000,
                 r->phasecost[0] / r->frames * 1000, r->phasecost[1] / r->frames * 1000,
                 r->phasecost[2] / r->frames * 1000, r->phasecost[3] / r->frames * 1000,
-                r->phasecost[4] / r->frames * 1000, r->phasecost[5] / r->frames * 1000, r->quality,
+                r->phasecost[4] / r->frames * 1000, r->phasecost[5] / r->frames * 1000,
+                r->bandraster / r->frames * 1000, r->bandflush / r->frames * 1000,
+                (double)r->bandtiles / r->frames, (double)r->bandflushes / r->frames, r->quality,
                 r->mode == RelaxOrbit && now - r->lastinput > RELAXIDLE ? " (idle)" : "", r->errors);
         fflush(r->log);
     }
     r->frames = r->ngaps = 0;
     r->rendersum = r->rendermax = 0;
     memset(r->phasecost, 0, sizeof r->phasecost);
+    r->bandraster = r->bandflush = 0;
+    r->bandtiles = r->bandflushes = 0;
     r->segstart = now;
 }
 
@@ -2427,6 +3569,9 @@ relaxorbitstart(void)
 
     relaxlogfirst();
     relaxlogseg(r->warping ? "intro (warped)" : "intro");
+    if (r->log && r->divenum)
+        fprintf(r->log, "galaxy dive: frames %d render avg %.2fms max %.2fms\n",
+                r->divenum, 1000 * r->divesum / r->divenum, 1000 * r->divemax);
     r->mode = RelaxOrbit;
     r->warping = 0;
     r->lastinput = r->lastdpms = relaxnow();
@@ -2473,6 +3618,11 @@ relaxreturnstart(int tag, int star)
     if (r->mode == RelaxOff || r->mode == RelaxRest || r->mode == RelaxReturn)
         return;
     relaxlogseg(relaxmodename[r->mode]);
+    r->rkind = star >= 0 ? RelaxPickStar : tag >= 0 ? RelaxPickCore : RelaxFlyHome;
+    r->rstar = star;
+    r->rcore = tag;
+    if (r->rkind == RelaxPickCore && tag >= 0 && tag < r->ntags)
+        r->rcoresize = r->galaxies[tag].size;
     if (star >= 0) {
         s = &r->stars[star];
         r->tmon = s->mon;
@@ -2485,7 +3635,7 @@ relaxreturnstart(int tag, int star)
         r->twin = None;
         r->tshow = 0;
     }
-    /* 回程结束后可见的窗口飞回原位置, 其余的退向深处 */
+    /* Super+Z: 结束后可见的窗口飞回原位置. 点击不使用这条轨迹. */
     for (i = 0; i < r->nstars; i++) {
         s = &r->stars[i];
         if (s->mon != r->tmon)
@@ -2502,6 +3652,7 @@ relaxreturnstart(int tag, int star)
     }
     for (i = 0; i < r->ntags; i++) {
         g = &r->galaxies[i];
+        g->nova = g->bridge = 0;    /* 驻留特效不带进回程 */
         g->rpos = g->pos;
         g->ralpha = g->alpha;
     }
@@ -2517,6 +3668,9 @@ relaxreturnstart(int tag, int star)
     r->rcy = r->cam.ry * 180 / RELAXPI;
     r->rcz = r->cam.rz * 180 / RELAXPI;
     r->rcampos = r->cam.pos;
+    r->rctarget = r->cam.target;
+    r->rstreak = r->streakalpha;
+    r->rsun = r->sunalpha;
     r->rring = r->ringalpha;
     r->rcluster = r->clusteralpha;
     r->rdust = r->dustfade;
@@ -2619,17 +3773,20 @@ relaxtick(void)
     case RelaxIntro:
         if (r->warping) {
             u = (now - r->wstart) / RELAXWARP;
-            r->scene = r->wscene + (RELAXHOLD - r->wscene) * relaxeaseinoutcubic(u);
+            r->scene = r->wscene + (RELAXIEND - r->wscene) * relaxeaseinoutcubic(u);
+            r->beatfade = 1 - relaxsmoothstep(u * 2);   /* 快进跳过俯冲等节拍, 不在 0.6s 内闪一遍 */
             if (u >= 1)
-                r->scene = RELAXHOLD;
+                r->scene = RELAXIEND;
         } else {
             r->scene += dt / r->tscale;
         }
-        r->stage = MIN(r->scene, RELAXHOLD);
+        r->stage = relaxintrostage(MIN(r->scene, RELAXIEND));
+        r->iclock = r->scene;
         r->motion = r->scene;
         break;
     case RelaxOrbit:
-        r->scene += dt / r->tscale;
+        /* 交互让位: 镜头停住的同时轨道运动放慢到 30%, 窗口星容易点中 */
+        r->scene += dt / r->tscale * relaxmix(.3, 1, r->dspeed);
         r->stage = RELAXHOLD;
         r->motion = r->scene;
         break;
@@ -2645,13 +3802,15 @@ relaxtick(void)
             r->stage = RELAXEXIT + (RELAXEND - RELAXEXIT) * relaxphase(u, RELAXEXITSTART, RELAXCOLLAPSE);
         r->motion = r->scene;
         r->exitspin = relaxexitangle(u);
+        r->beatfade = MIN(r->beatfade, 1 - relaxsmoothstep(u));   /* 开场节拍 (iclock 已冻结) 用 1s 平滑淡出 */
         if (u >= RELAXCOLLAPSE) {
             relaxfinish();
             return;
         }
         break;
     case RelaxReturn:
-        u = (now - r->rstart) / RELAXRETURN;
+        u = (now - r->rstart) / (r->rkind == RelaxPickStar ? RELAXPICK
+                : r->rkind == RelaxPickCore ? RELAXCORE : RELAXRETURN);
         if (u >= 1) {
             relaxend(1);
             return;
@@ -2668,9 +3827,12 @@ relaxtick(void)
         r->hovercore = core;
         relaxsetcursor(star >= 0 || core >= 0);
     }
-    if (r->mode == RelaxReturn)
-        relaxupdatereturn(u);
-    else
+    if (r->mode == RelaxReturn) {
+        if (r->rkind == RelaxFlyHome)
+            relaxupdatereturn(u);
+        else
+            relaxupdatepick(u);
+    } else
         relaxupdatescene(r->stage, r->motion, dt);
     r->phasecost[0] += relaxnow() - begin;
     relaxrender();
@@ -2692,6 +3854,11 @@ relaxtick(void)
         }
     }
     r->qualityvisual = relaxfollow(r->qualityvisual, r->quality, dt, .35);
+    if (r->mode == RelaxIntro && r->iclock >= 3.2 && r->iclock < 5) {
+        r->divesum += cost;
+        r->divemax = MAX(r->divemax, cost);
+        r->divenum++;
+    }
     if (r->mode == RelaxIntro && r->nfirst < (int)LENGTH(r->firstcost)) {
         r->firstgap[r->nfirst] = now;   /* 相对按下 Super+Z 后时钟起点的时刻 */
         r->firstcost[r->nfirst++] = cost;
@@ -2699,7 +3866,7 @@ relaxtick(void)
     r->rendersum += cost;
     r->rendermax = MAX(r->rendermax, cost);
     r->frames++;
-    if (r->mode == RelaxIntro && r->scene >= RELAXHOLD)
+    if (r->mode == RelaxIntro && r->scene >= RELAXIEND)
         relaxorbitstart();
     else if (r->mode == RelaxOrbit && now - r->segstart >= 10)
         relaxlogseg("orbit");
@@ -2780,10 +3947,13 @@ relaxevent(XEvent *e)
                 relaxwarp();
             break;
         case RelaxOrbit:
+            /* 默认就是最近 (zoom 1), 向上滚到底不再变化, 向下滚逐级拉远 */
             if (e->xbutton.button == Button4) {
-                r->tzoom = MAX(.7, r->tzoom * .9);
+                r->tzoom = MAX(1, r->tzoom * .9);
+                r->lastpointer = relaxnow();
             } else if (e->xbutton.button == Button5) {
-                r->tzoom = MIN(1.4, r->tzoom / .9);
+                r->tzoom = MIN(1.8, r->tzoom / .9);
+                r->lastpointer = relaxnow();
             } else if (e->xbutton.button == Button1) {
                 relaxpick(r->mx, r->my, &star, &core);
                 if (star >= 0)
@@ -2798,7 +3968,7 @@ relaxevent(XEvent *e)
         }
         return 1;
     case MotionNotify:
-        r->lastinput = relaxnow();
+        r->lastinput = r->lastpointer = relaxnow();
         r->mx = e->xmotion.x_root;
         r->my = e->xmotion.y_root;
         /* 鼠标视差: 镜头随指针小幅偏航 / 俯仰 (幅度小, 瞄准窗口星时目标不会明显跑开) */
@@ -2978,6 +4148,11 @@ relax(const Arg *arg)
     r->ntags = MIN((int)LENGTH(tags), 31);
     r->hover = r->hovercore = -1;
     r->zoom = r->tzoom = 1;
+    r->dfit = r->dspeed = r->beatfade = 1;
+    r->dshot = r->lastflip = r->lastripple = r->lastnova = r->lastcomet = -1;
+    r->dtg[0] = r->dtg[1] = -1;
+    r->bridgek = r->bri = r->brj = -1;
+    r->lastpointer = -1e9;
     r->bglast[0] = -1;
     XQueryExtension(dpy, "RENDER", &r->rendermajor, &ev, &er);
     r->dpms = DPMSQueryExtension(dpy, &ev, &er) && DPMSCapable(dpy);
@@ -2994,27 +4169,36 @@ relax(const Arg *arg)
     r->starscale = MAX(.65, MIN(1.1, 1.15 - .012 * count));
     r->orbitscale = MAX(.7, MIN(1, 1.05 - .008 * count));
     r->glowscale = MAX(.55, MIN(1, 1.1 - .015 * count));
-    r->ndust = MAX(28, MIN(84, 84 - (int)(1.5 * count)));
+    r->ndust = MAX(70, MIN(140, 140 - 2 * count));
     r->ntrail = count > 24 ? 6 : RELAXTRAIL;
     r->cam.fov = 62 * RELAXPI / 180;
     r->cam.focal = r->w * .5 / tan(r->cam.fov / 2);
     r->cam.near = r->cam.focal * .12;
     r->cam.far = r->cam.focal * 14;
-    r->triscap = MAX((count + r->ntags) * r->ntrail * 2, RELAXSEG * (RELAXLANES + r->ntags * RELAXRINGS) * 4) + 2;
     r->galaxies = calloc(r->ntags, sizeof *r->galaxies);
     r->stars = calloc(MAX(1, count), sizeof *r->stars);
     r->dust = calloc(r->ndust, sizeof *r->dust);
-    r->items = calloc(r->ndust + r->ntags * (1 + RELAXARCS * RELAXRINGS) + count + RELAXARCS * RELAXLANES + 1, sizeof *r->items);
+    r->items = calloc(r->ndust + r->ntags * (4 + RELAXARCS * RELAXRINGS) + count + RELAXARCS * RELAXLANES + 2, sizeof *r->items);
     r->tgpos = calloc(r->ntags, sizeof *r->tgpos);
     r->tgplane = calloc(r->ntags, sizeof *r->tgplane);
     r->tpts = calloc((count + r->ntags) * (r->ntrail + 1), sizeof *r->tpts);
     r->rpts = calloc(r->ntags * RELAXRINGS * (RELAXSEG + 1), sizeof *r->rpts);
+    r->streakpts = calloc(r->ntags * (RELAXSTREAK + 1), sizeof *r->streakpts);
+    r->streakz = calloc(r->ntags * 3, sizeof *r->streakz);
+    r->popord = calloc(r->ntags, sizeof *r->popord);
     r->gaps = calloc(RELAXGAPS, sizeof *r->gaps);
-    for (i = 0; i < RELAXBUCKETS; i++)
-        if (!(r->tris[i] = calloc(r->triscap, sizeof(XTriangle))))
-            goto fail;
+    r->bandtw = (r->w + RELAXBTILE - 1) / RELAXBTILE;
+    r->bandth = (r->h + RELAXBTILE - 1) / RELAXBTILE;
+    r->bandbuf = calloc((size_t)r->w * r->h, 1);
+    r->banddirty = calloc(r->bandtw * r->bandth, 1);
+    if (!r->bandbuf || !r->banddirty
+            || !(r->bandimg = XCreateImage(dpy, DefaultVisual(dpy, screen), 8, ZPixmap, 0, (char *)r->bandbuf, r->w, r->h, 8, r->w)))
+        goto fail;
+    r->bandpix = XCreatePixmap(dpy, root, r->w, r->h, 8);
+    r->bandpic = XRenderCreatePicture(dpy, r->bandpix, r->a8, 0, NULL);
+    r->bandgc = XCreateGC(dpy, r->bandpix, 0, NULL);
     if (!r->galaxies || !r->stars || !r->dust || !r->items || !r->tgpos || !r->tgplane || !r->tpts || !r->rpts
-            || !r->gaps || !r->argb || !r->a8 || !r->a1)
+            || !r->streakpts || !r->streakz || !r->popord || !r->gaps || !r->argb || !r->a8 || !r->a1)
         goto fail;
     r->savedmon = r->tmon = selmon;
     r->savedtags = r->ttags = selmon->tagset[selmon->seltags] & TAGMASK;
