@@ -14,7 +14,6 @@ settings() {
     $DWM/bin/nightlight.sh apply              # 护眼开着时重新应用暖色
     numlockx on 2>/dev/null || xset led named "Num Lock" # 开启 NumLock
     xinput list --name-only | grep "^SYNA32E2" | while read -r d; do xinput disable "$d"; done # 禁用触摸板 (X 中名为 "SYNA32E2:00 06CB:CEE7 Mouse")
-    has syndaemon && syndaemon -i 1 -t -K -R -d # 设置使用键盘时触控板短暂失效(需 xf86-input-synaptics)
     xhost +local:docker >/dev/null            # 允许 Docker 使用显示器
 }
 

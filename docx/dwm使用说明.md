@@ -229,7 +229,6 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 |---|---|
 | `Super + M` 音乐播放器 | SPlayer 的 AppImage（`./setup.sh deps` 会自动下载，无需安装） |
 | `Super + R` 文件管理器 | `pcmanfm` |
-| 使用键盘时暂时禁用触控板 | `xf86-input-synaptics`（autostart 已写好 `syndaemon`，装好后自动生效） |
 | `Super + Y` 翻译 | `translate-shell`（需要联网，使用谷歌翻译等在线服务） |
 | `Super + X` 剪贴板历史 | `clipmenu`（装好后重新登录生效；没装时用原来的 parcellite） |
 | 护眼 | `gammastep` |
