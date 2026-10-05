@@ -4,7 +4,7 @@
  *   世界坐标 (x 右, y 下, z 远离镜头) -> 镜头变换 -> 透视投影 -> 按镜头空间 z 排序 -> XRender 合成 -> 全屏遮罩窗口
  * Tag = 星系核心, 窗口 = 沿 3D 轨道环绕核心运行的星体, 所有 tag 组成星系群.
  * 流程: 开场 (约 5.7s) -> 停在星系轨道态 (不限时, 镜头缓慢巡航, 鼠标视差 / 滚轮推拉 / 点击窗口星跳转)
- *       -> Esc: 坍缩成一个光点, 停在纯壁纸 (再按 Super+Z 恢复)
+ *       -> Esc: 星系群沿轨道划过一段弧线后坍缩成一个光点, 停在纯壁纸 (再按 Super+Z 恢复)
  *       -> Super+Z / 点击: 回程, 窗口星飞回原位置变回截图, 露出真实桌面
  * 动画期间不移动 / 隐藏 / 映射 / 重叠 / 聚焦任何真实窗口; 只在结束时恢复 (或按点击切换) tag 和焦点. */
 
@@ -18,6 +18,9 @@
 #define RELAXGAPS     4096
 #define RELAXRINGS    3
 #define RELAXSEG      72
+#define RELAXARCS     8         /* 每段 9 条线, 独立参加深度排序 */
+#define RELAXARCSEG   (RELAXSEG / RELAXARCS)
+#define RELAXTILES    4         /* 大截图的透视画面拆成 4x4 仿射块 */
 #define RELAXFPS      120.0
 #define RELAXORBITFPS 60.0
 #define RELAXIDLEFPS  30.0
@@ -29,10 +32,14 @@
 #define RELAXWARP     .6        /* 开场中按键: 快进到驻留态的真实时长 */
 #define RELAXRETURN   1.6       /* 回程的真实时长 */
 #define RELAXCRUISE   18.0      /* 驻留时巡航扫掠的周期 (场景秒) */
+#define RELAXCOLLAPSE 2.35      /* Esc 后完整的环绕 / 坍缩演出 (真实秒) */
+#define RELAXEXITSTART 1.25     /* 退场从环绕切换到向中心收束的时刻 */
+#define RELAXPREP     .45       /* 开场按 Esc 时平滑进入星系群形态 */
+#define RELAXLANES    2
 #define RELAXPI       3.14159265358979323846
 
 enum { RelaxOff, RelaxIntro, RelaxOrbit, RelaxCollapse, RelaxReturn, RelaxRest };
-enum { RelaxDustItem, RelaxCoreItem, RelaxStarItem, RelaxRingItem };
+enum { RelaxDustItem, RelaxCoreItem, RelaxStarItem, RelaxRingItem, RelaxClusterItem };
 enum { RelaxHalo, RelaxDisc, RelaxShapes };
 enum { RelaxWarm, RelaxCool, RelaxTints };
 
@@ -57,14 +64,14 @@ typedef struct {
 } RelaxCamera;
 
 typedef struct {
-    int tag, nstars, nrings, hit;
+    int tag, nstars, nrings, hit, lane;
     RelaxVec home;              /* 星系群坐标系中的位置 */
     RelaxVec pos, rpos;         /* 当前世界坐标 / 回程开始时冻结的位置 */
     double rx, ry, rz;          /* 轨道平面: 倾角 / 偏航 / 翻滚 */
-    double radius, speed, phase, precess, size, alpha, ralpha, hover;
+    double radius, speed, phase, orbitphase, precess, size, alpha, ralpha, hover;
     RelaxMat ring[RELAXRINGS];  /* 每条轨道环相对星系轨道平面的姿态 (环与环互相倾斜) */
-    double ringr[RELAXRINGS], ringz[RELAXRINGS][2];
-    int ringn[RELAXRINGS][2];   /* 后半圈 / 前半圈的线段数 */
+    double ringr[RELAXRINGS], ringz[RELAXRINGS][RELAXARCS];
+    int ringn[RELAXRINGS][RELAXARCS];
     RelaxMat plane;             /* 当前轨道平面 (含全局旋转) */
     double hx, hy, hr;          /* 屏幕上的点击范围 */
     RelaxProj p;
@@ -109,7 +116,12 @@ typedef struct {
     double tscale, starscale, orbitscale, glowscale;
     /* 时钟: scene 是场景时间, stage 驱动关键帧曲线 (驻留时停住), motion 驱动轨道运动 (一直走) */
     double last, scene, stage, motion, holdw;
-    double wstart, wscene, cstart, rstart, lastinput, lastdpms;
+    double wstart, wscene, cstart, cstage, celapsed, rstart, lastinput, lastdpms;
+    double exitspin, clusteralpha, rcluster;
+    RelaxMat cworld;            /* Esc 时冻结星系群朝向, 避免叠加全局自转 */
+    RelaxProj clusterpts[RELAXLANES][RELAXSEG + 1];
+    double clusterz[RELAXLANES][RELAXARCS];
+    int clustern[RELAXLANES][RELAXARCS];
     /* 驻留交互: 鼠标视差 / 滚轮推拉 (t 开头是目标值, 每帧平滑逼近) */
     double mx, my, tyaw, tpitch, pyaw, ppitch, tzoom, zoom;
     /* 每帧由 update 算出, render 只读这些 */
@@ -119,14 +131,20 @@ typedef struct {
     RelaxVec rcampos;
     Window overlay, wallwin;
     Cursor hand;
-    Pixmap backpix, desktoppix, wallpix, vignettepix, bgpix;
-    Picture back, desktop, wallpaper, live, overlaypic, vignette, bg;
+    Pixmap backpix, desktoppix, wallpix, vignettepix, bgpix, tilemaskpix, spinpix;
+    Picture back, desktop, wallpaper, live, overlaypic, vignette, bg, tilemask, spinpic;
+    int spinw, spinh, projslow;   /* projslow: 整幅透视采样明显慢于仿射, 大卡片改走半分辨率 */
+    double probeaffine, probeproj;
+    XftFont *titlefont;
+    XftDraw *titledraw;
+    XftColor titlecolor;
+    int titlecolorok;
     double bgkey[4], bglast[4];     /* 背景缓存: 驻留时壁纸亮度 / 暗角不变, 每帧只复制一次 */
     int bgok;
     Pixmap spritepix[RelaxShapes][RelaxTints][RELAXSPRITES];
     Picture sprite[RelaxShapes][RelaxTints][RELAXSPRITES];
     Picture white[RELAXALPHAS], black[RELAXALPHAS];
-    XRenderPictFormat *argb, *a8;
+    XRenderPictFormat *argb, *a8, *a1;
     RelaxGalaxy *galaxies;
     RelaxStar *stars;
     RelaxDust *dust;
@@ -148,6 +166,8 @@ typedef struct {
     FILE *log;
     unsigned long frames, errors, ngaps;
     double segstart, rendersum, rendermax, *gaps;
+    double phasecost[6], qualityavg, qualitylast, qualityvisual;
+    int quality, qualitybad, qualitygood;
     double firstgap[24], firstcost[24];    /* 开场前 24 帧的时刻和渲染耗时 */
     int nfirst, firstlogged;
 } RelaxScene;
@@ -516,19 +536,47 @@ relaxworldat(double stage, double motion)
     return relaxmul(relaxrotx(tilt), relaxmul(relaxroty(theta), relaxrotz(.05 * sin(RELAXPI * u))));
 }
 
+static double
+relaxexitangle(double elapsed)
+{
+    /* 不满一圈的同向弧线, 以平缓的速度曲线进入收束. */
+    return 1.15 * RELAXPI * relaxsmoothstep(relaxphase(elapsed, .15, RELAXEXITSTART));
+}
+
+/* 两条倾斜的星系群轨道. 核心与画出的轨道使用同一条参数曲线. */
+static RelaxVec
+relaxclusterpoint(int lane, double angle)
+{
+    RelaxScene *r = &relaxscene;
+    double radius = r->w * (lane ? .38 : .25);
+    RelaxMat tilt = relaxeuler((lane ? -27 : 24) * RELAXPI / 180,
+            (lane ? -13 : 16) * RELAXPI / 180, (lane ? -8 : 10) * RELAXPI / 180);
+
+    return relaxapply(tilt, relaxv(radius * cos(angle), radius * r->h / r->w * 1.65 * sin(angle), 0));
+}
+
 static void
 relaxgalaxyat(RelaxGalaxy *g, double stage, double motion, RelaxMat world, RelaxVec *pos, RelaxMat *plane)
 {
     RelaxScene *r = &relaxscene;
     double emerge = relaxeaseoutcubic(relaxphase(stage, .6, 1));
     double expand = relaxeaseinoutcubic(relaxphase(stage, 1.5, 2.2));
+    double ready = relaxeaseinoutcubic(relaxphase(stage, 1.65, 2.8));
+    double speed = g->lane ? -.11 : .13;
+    double spin = r->exitspin;
     double side = g->tag % 2 ? 1 : -1;
     double merge = relaxeaseinoutcubic(relaxphase(stage, 5 + .03 * (g->tag % 4), 5.45));
-    RelaxVec p, ctrl;
+    RelaxVec p, ctrl, orbit;
 
     p = relaxv(g->home.x * relaxmix(.62, 1, expand), g->home.y * relaxmix(.62, 1, expand),
             g->home.z * relaxmix(.45, 1, expand) + (1 - emerge) * 1.2 * r->cam.focal);
-    p = relaxadd(p, relaxv(0, .012 * r->h * sin(.9 * motion + g->phase), .02 * r->cam.focal * sin(.6 * motion + 1.3 * g->phase)));
+    if (r->mode == RelaxCollapse && motion < r->motion)
+        spin = relaxexitangle(r->celapsed - (r->motion - motion) * r->tscale);
+    orbit = relaxclusterpoint(g->lane, g->orbitphase + speed * (motion - 2.8)
+            + spin);
+    p = relaxlerp(p, orbit, ready);
+    p = relaxadd(p, relaxv(0, (1 - ready) * .012 * r->h * sin(.9 * motion + g->phase),
+                (1 - ready) * .02 * r->cam.focal * sin(.6 * motion + 1.3 * g->phase)));
     if (merge > 0) {
         /* 星系核心沿各自方向的 3D 曲线汇聚到中心 */
         ctrl = relaxadd(relaxscale(relaxapply(relaxroty(1.1 * side), p), .8), relaxv(0, -.2 * r->h * side, 0));
@@ -595,7 +643,7 @@ relaxupdategalaxies(double stage, double motion, double dt)
     }
 }
 
-/* 轨道环: 每条环采样 RELAXSEG 段投影到屏幕; 按镜头空间深度分成后半圈 / 前半圈, 分别参与深度排序 */
+/* 轨道环拆为短弧, 用每段的镜头深度与窗口和核心一起排序. */
 static void
 relaxupdaterings(double shrink)
 {
@@ -604,13 +652,13 @@ relaxupdaterings(double shrink)
     RelaxProj *pts;
     RelaxMat m;
     double th, rad, z;
-    int i, k, j, half;
+    int i, k, j, arc;
 
     for (i = 0; i < r->ntags; i++) {
         g = &r->galaxies[i];
         for (k = 0; k < g->nrings; k++) {
-            g->ringn[k][0] = g->ringn[k][1] = 0;
-            g->ringz[k][0] = g->ringz[k][1] = 0;
+            memset(g->ringn[k], 0, sizeof g->ringn[k]);
+            memset(g->ringz[k], 0, sizeof g->ringz[k]);
             if (r->ringalpha < .003 || !g->p.ok)
                 continue;
             m = relaxmul(g->plane, g->ring[k]);
@@ -624,14 +672,47 @@ relaxupdaterings(double shrink)
                 if (!pts[j].ok || !pts[j + 1].ok)
                     continue;
                 z = (pts[j].z + pts[j + 1].z) * .5;
-                half = z < g->p.z;
-                g->ringz[k][half] += z;
-                g->ringn[k][half]++;
+                arc = j / RELAXARCSEG;
+                g->ringz[k][arc] += z;
+                g->ringn[k][arc]++;
             }
-            for (half = 0; half < 2; half++)
-                if (g->ringn[k][half])
-                    g->ringz[k][half] /= g->ringn[k][half];
+            for (arc = 0; arc < RELAXARCS; arc++)
+                if (g->ringn[k][arc])
+                    g->ringz[k][arc] /= g->ringn[k][arc];
         }
+    }
+}
+
+static void
+relaxupdatecluster(double shrink)
+{
+    RelaxScene *r = &relaxscene;
+    RelaxProj *pts;
+    double angle, z;
+    int lane, j, arc;
+
+    for (lane = 0; lane < RELAXLANES; lane++) {
+        pts = r->clusterpts[lane];
+        memset(r->clustern[lane], 0, sizeof r->clustern[lane]);
+        memset(r->clusterz[lane], 0, sizeof r->clusterz[lane]);
+        if (r->clusteralpha < .003)
+            continue;
+        for (j = 0; j <= RELAXSEG; j++) {
+            angle = 2 * RELAXPI * j / RELAXSEG;
+            pts[j] = relaxproject(relaxapply(r->world,
+                        relaxscale(relaxclusterpoint(lane, angle), 1 - shrink)));
+        }
+        for (j = 0; j < RELAXSEG; j++) {
+            if (!pts[j].ok || !pts[j + 1].ok)
+                continue;
+            z = (pts[j].z + pts[j + 1].z) * .5;
+            arc = j / RELAXARCSEG;
+            r->clusterz[lane][arc] += z;
+            r->clustern[lane][arc]++;
+        }
+        for (arc = 0; arc < RELAXARCS; arc++)
+            if (r->clustern[lane][arc])
+                r->clusterz[lane][arc] /= r->clustern[lane][arc];
     }
 }
 
@@ -663,20 +744,28 @@ relaxupdatestars(double stage, double motion, double dt)
         if (s->hover > .001)  /* 悬停: 稍微靠近镜头 */
             s->pos = relaxadd(s->pos, relaxscale(relaxnormalize(relaxsub(r->cam.pos, s->pos)), .06 * r->cam.focal * s->hover));
         s->vel = dt > 0 ? relaxscale(relaxsub(s->pos, prev), 1 / dt) : relaxv(0, 0, 0);
-        s->size = size * (s->focused ? 1.08 : 1) * (1 + .12 * s->hover);
+        /* 首帧必须和桌面截图逐像素对齐; 聚焦放大等卡片离开桌面后才开始. */
+        s->size = size * (1 + (s->focused ? .08 * relaxsmoothstep(relaxphase(stage, .12, .75)) : 0))
+            * (1 + .42 * s->hover);
         collapse = relaxphase(stage, 4.8 + s->delay * .5, 5.2 + s->delay * .5);
         /* 当前桌面的窗口从第一帧起就画在自己原来的位置上 (与真实窗口逐像素重合), 背后的桌面截图先淡出再开始移动,
          * 移动中的窗口不会和静止的桌面截图叠成重影 */
         s->alpha = (s->current ? 1 : relaxeaseoutquart(relaxphase(stage, .6, 1)))
             * (1 - relaxeaseincubic(relaxphase(collapse, .7, 1)));
         s->p = relaxproject(s->pos);
+        if (r->mode == RelaxOrbit && s->p.ok) {
+            double screen = MAX(s->w, s->h) * s->size * s->p.scale;
+            double cap = relaxmix(300, 430, s->hover);
+            if (screen > cap)
+                s->size *= cap / screen;
+        }
         s->brightness = s->p.ok ? relaxdepthlight(s->p.z) * (s->focused ? 1.1 : 1) * (1 + .25 * s->hover) : 0;
         if (s->current)  /* 脱离桌面前与背景一起变暗 (100% -> 70%), 之后过渡到深度亮度 */
             s->brightness = relaxmix(RELAXCURVE(relaxbright, stage), s->brightness, relaxsmoothstep(relaxphase(stage, .1, .58)));
         /* 深度 LOD: 投影后的卡片足够大才显示截图面板, 远处只剩光点 */
-        s->lod = s->p.ok ? relaxsmoothstep((s->w * s->size * s->p.scale - 40) / 110) : 0;
+        s->lod = s->p.ok ? relaxsmoothstep((MAX(s->w, s->h) * s->size * s->p.scale - 52) / 58) : 0;
         s->vis = MAX(vis * s->lod, .85 * s->hover * (vis > .05)) * s->alpha;
-        s->tint = (tint + .1 * s->hover) * s->alpha * MIN(1, s->vis / .3);  /* 发光随面板一起消失, 不留白色方块 */
+        s->tint = (r->mode == RelaxOrbit ? 0 : tint + .1 * s->hover) * s->alpha * MIN(1, s->vis / .3);
         s->glow = glow * s->alpha * MIN(1, s->brightness);
     }
 }
@@ -688,13 +777,13 @@ relaxitemcmp(const void *pa, const void *pb)
     return a->z > b->z ? -1 : a->z < b->z;
 }
 
-/* 画家算法: 每帧按镜头空间 z 从远到近排序 (轨道环的前后半圈各是一个对象, 能与核心和星体互相遮挡) */
+/* 画家算法: 每帧按镜头空间 z 从远到近排序, 轨道短弧与核心和窗口穿插. */
 static void
 relaxsortdepth(void)
 {
     RelaxScene *r = &relaxscene;
     RelaxGalaxy *g;
-    int i, k, half, n = 0;
+    int i, k, arc, n = 0;
 
     for (i = 0; i < r->ndust; i++)
         if (r->dust[i].p.ok)
@@ -706,10 +795,14 @@ relaxsortdepth(void)
         if (r->ringalpha * g->alpha < .003)
             continue;
         for (k = 0; k < g->nrings; k++)
-            for (half = 0; half < 2; half++)
-                if (g->ringn[k][half])
-                    r->items[n++] = (RelaxItem){RelaxRingItem, (i * RELAXRINGS + k) * 2 + half, g->ringz[k][half]};
+            for (arc = 0; arc < RELAXARCS; arc++)
+                if (g->ringn[k][arc])
+                    r->items[n++] = (RelaxItem){RelaxRingItem, (i * RELAXRINGS + k) * RELAXARCS + arc, g->ringz[k][arc]};
     }
+    for (i = 0; i < RELAXLANES; i++)
+        for (arc = 0; arc < RELAXARCS; arc++)
+            if (r->clustern[i][arc])
+                r->items[n++] = (RelaxItem){RelaxClusterItem, i * RELAXARCS + arc, r->clusterz[i][arc]};
     for (i = 0; i < r->nstars; i++)
         if (r->stars[i].p.ok && r->stars[i].alpha > .002)
             r->items[n++] = (RelaxItem){RelaxStarItem, i, r->stars[i].p.z};
@@ -730,10 +823,18 @@ relaxupdatescene(double stage, double motion, double dt)
     r->ppitch = relaxfollow(r->ppitch, orbit ? r->tpitch : 0, dt, .35);
     r->zoom = relaxfollow(r->zoom, orbit ? r->tzoom : 1, dt, .25);
     relaxupdatecamera(stage, motion);
-    r->world = relaxworldat(stage, motion);
+    r->world = r->mode == RelaxCollapse ? r->cworld : relaxworldat(stage, motion);
     relaxupdategalaxies(stage, motion, dt);
     r->ringalpha = RELAXCURVE(relaxringkeys, stage);
     relaxupdaterings(relaxeaseincubic(relaxphase(stage, 4.8, 5.3)));
+    r->clusteralpha = .23 * relaxsmoothstep(relaxphase(stage, 1.5, 2.3))
+        * (1 - relaxsmoothstep(relaxphase(stage, 5.1, 5.55)));
+    if (r->mode == RelaxCollapse) {
+        /* 环绕时保留两条主轨道, 淡出局部环和历史尾迹, 让运动方向一眼可辨. */
+        r->ringalpha *= 1 - .65 * relaxsmoothstep(relaxphase(r->celapsed, .1, .6));
+        r->clusteralpha *= 1 - .25 * relaxsmoothstep(relaxphase(r->celapsed, .4, 1.1));
+    }
+    relaxupdatecluster(relaxeaseinoutcubic(relaxphase(stage, 4.85, 5.45)));
     relaxupdatestars(stage, motion, dt);
     for (i = 0; i < r->ndust; i++)
         r->dust[i].p = relaxproject(r->dust[i].pos);
@@ -743,6 +844,8 @@ relaxupdatescene(double stage, double motion, double dt)
     r->deskover = r->bar = 0;
     r->reveal = relaxeaseinoutcubic(relaxphase(stage, 5.7, 6));
     r->trailgain = RELAXCURVE(relaxtrailgain, stage);
+    if (r->mode == RelaxCollapse)
+        r->trailgain *= 1 - relaxsmoothstep(relaxphase(r->celapsed, 0, .35));
     r->dustfade = relaxeaseoutcubic(relaxphase(stage, .5, 1.3)) * (1 - relaxeaseinoutcubic(relaxphase(stage, 5, 5.7)));
     r->central = relaxeaseoutcubic(relaxphase(stage, 5.15, 5.45)) * (1 - relaxeaseinoutcubic(relaxphase(stage, 5.7, 6)));
     r->pulse = sin(RELAXPI * relaxphase(stage, 5.5, 5.7));
@@ -771,6 +874,8 @@ relaxupdatereturn(double u)
     }
     r->ringalpha = r->rring * fade;
     relaxupdaterings(0);
+    r->clusteralpha = r->rcluster * fade;
+    relaxupdatecluster(0);
     for (i = 0; i < r->nstars; i++) {
         s = &r->stars[i];
         if (s->back) {
@@ -960,15 +1065,178 @@ relaxfillquad(Picture color, double q[4][2], int ox, int oy)
     XRenderCompositeTriangles(dpy, PictOpOver, color, r->back, r->a8, 0, 0, t, 2);
 }
 
+/* 四角几乎共面成矩形时返回屏幕上的外接矩形. 开场前几帧卡片还没转, 走这条路径. */
+static int
+relaxquadrect(double q[4][2], double eps, double *x, double *y, double *w, double *h)
+{
+    double l, r, t, b;
+
+    if (fabs(q[0][1] - q[1][1]) > eps || fabs(q[2][1] - q[3][1]) > eps
+            || fabs(q[0][0] - q[3][0]) > eps || fabs(q[1][0] - q[2][0]) > eps)
+        return 0;
+    l = (q[0][0] + q[3][0]) * .5;
+    r = (q[1][0] + q[2][0]) * .5;
+    t = (q[0][1] + q[1][1]) * .5;
+    b = (q[3][1] + q[2][1]) * .5;
+    if (r - l < 1 || b - t < 1)
+        return 0;
+    *x = l;
+    *y = t;
+    *w = r - l;
+    *h = b - t;
+    return 1;
+}
+
+/* 与截图像素 1:1 的轴对齐卡片: 无变换的拷贝, 比带蒙版的双线性合成便宜得多. */
+static void
+relaxcopywindow(RelaxStar *s, int lvl, double left, double top)
+{
+    RelaxScene *r = &relaxscene;
+    int dx = (int)lround(left), dy = (int)lround(top);
+    int sx = 0, sy = 0, dw = s->mipw[lvl], dh = s->miph[lvl];
+
+    if (dx < 0) {
+        sx = -dx;
+        dw += dx;
+        dx = 0;
+    }
+    if (dy < 0) {
+        sy = -dy;
+        dh += dy;
+        dy = 0;
+    }
+    if (dx + dw > r->w)
+        dw = r->w - dx;
+    if (dy + dh > r->h)
+        dh = r->h - dy;
+    if (dw < 1 || dh < 1)
+        return;
+    relaxaffine(s->mip[lvl], 1, 1, 0, 0);
+    XRenderSetPictureFilter(dpy, s->mip[lvl], FilterNearest, NULL, 0);
+    XRenderComposite(dpy, PictOpSrc, s->mip[lvl], None, r->back, sx, sy, 0, 0, dx, dy, dw, dh);
+    XRenderSetPictureFilter(dpy, s->mip[lvl], FilterBilinear, NULL, 0);
+}
+
+/* 软件透视很慢时, 先画进半分辨率离屏图再放大. 一次采样, 目标像素约为整屏的四分之一. */
+static int
+relaxrenderhalf(RelaxStar *s, int lvl, double vis, double q[4][2], int x0, int y0, int x1, int y1)
+{
+    RelaxScene *r = &relaxscene;
+    double hq[4][2];
+    int bw = x1 - x0, bh = y1 - y0, dw, dh, i, cx, cy, dx1, dy1;
+
+    if (!r->spinpic || bw < 2 || bh < 2)
+        return 0;
+    dw = MIN(r->spinw, MAX(1, bw / 2));
+    dh = MIN(r->spinh, MAX(1, bh / 2));
+    for (i = 0; i < 4; i++) {
+        hq[i][0] = q[i][0] * dw / (double)bw;
+        hq[i][1] = q[i][1] * dh / (double)bh;
+    }
+    if (!relaxhomography(s->mip[lvl], hq, dw, dh, s->mipw[lvl], s->miph[lvl]))
+        return 0;
+    XRenderComposite(dpy, PictOpSrc, s->mip[lvl], None, r->spinpic, 0, 0, 0, 0, 0, 0, dw, dh);
+    relaxaffine(r->spinpic, (double)dw / bw, (double)dh / bh, 0, 0);
+    cx = MAX(0, x0);
+    cy = MAX(0, y0);
+    dx1 = MIN(r->w, x1);
+    dy1 = MIN(r->h, y1);
+    if (dx1 <= cx || dy1 <= cy)
+        return 0;
+    XRenderComposite(dpy, PictOpOver, r->spinpic, vis > .996 ? None : relaxwhite(vis), r->back,
+            cx - x0, cy - y0, 0, 0, cx, cy, dx1 - cx, dy1 - cy);
+    return 1;
+}
+
+/* 大卡片把透视面切成小块, 每块用仿射采样; A1 蒙版避免块与块之间的抗锯齿暗缝.
+ * 只在单应矩阵放不下时使用: 分块在 GPU 上是十几次往返, 比一次透视采样更慢. */
+static int
+relaxrendertiled(RelaxStar *s, int lvl, double vis)
+{
+    RelaxScene *r = &relaxscene;
+    RelaxProj p[4];
+    RelaxVec corner;
+    XTriangle tri[2];
+    XTransform tr;
+    XRenderColor clear = {0, 0, 0, 0};
+    double q[4][2], dx0, dx1, dy0, dy1, det, sx, sy, minx, miny, maxx, maxy;
+    double ax, bx, cx, ay, by, cy, u, v;
+    int tx, ty, j, x0, y0, x1, y1, used = 0;
+
+    if (!r->tilemask)
+        return 0;
+    for (ty = 0; ty < RELAXTILES; ty++)
+        for (tx = 0; tx < RELAXTILES; tx++) {
+            for (j = 0; j < 4; j++) {
+                u = (tx + (j == 1 || j == 2)) / (double)RELAXTILES;
+                v = (ty + (j >= 2)) / (double)RELAXTILES;
+                corner = relaxadd(s->pos, relaxapply(s->orient,
+                            relaxv((u - .5) * s->w * s->size, (v - .5) * s->h * s->size, 0)));
+                p[j] = relaxproject(corner);
+                if (!p[j].ok)
+                    break;
+                q[j][0] = p[j].x;
+                q[j][1] = p[j].y;
+            }
+            if (j < 4)
+                continue;
+            minx = maxx = q[0][0];
+            miny = maxy = q[0][1];
+            for (j = 1; j < 4; j++) {
+                minx = MIN(minx, q[j][0]); maxx = MAX(maxx, q[j][0]);
+                miny = MIN(miny, q[j][1]); maxy = MAX(maxy, q[j][1]);
+            }
+            x0 = MAX(0, (int)floor(minx)); y0 = MAX(0, (int)floor(miny));
+            x1 = MIN(r->w, (int)ceil(maxx) + 1); y1 = MIN(r->h, (int)ceil(maxy) + 1);
+            if (x1 <= x0 || y1 <= y0)
+                continue;
+            dx0 = q[1][0] - q[0][0]; dx1 = q[3][0] - q[0][0];
+            dy0 = q[1][1] - q[0][1]; dy1 = q[3][1] - q[0][1];
+            det = dx0 * dy1 - dx1 * dy0;
+            if (fabs(det) < 1e-6)
+                continue;
+            sx = s->mipw[lvl] / (double)RELAXTILES;
+            sy = s->miph[lvl] / (double)RELAXTILES;
+            ax = sx * dy1 / det; bx = -sx * dx1 / det;
+            ay = -sy * dy0 / det; by = sy * dx0 / det;
+            cx = tx * sx - ax * q[0][0] - bx * q[0][1];
+            cy = ty * sy - ay * q[0][0] - by * q[0][1];
+            if (MAX(MAX(fabs(ax), fabs(bx)), MAX(fabs(cx), MAX(fabs(ay), MAX(fabs(by), fabs(cy))))) > 32000)
+                continue;
+            tr = (XTransform){{
+                {XDoubleToFixed(ax), XDoubleToFixed(bx), XDoubleToFixed(cx)},
+                {XDoubleToFixed(ay), XDoubleToFixed(by), XDoubleToFixed(cy)},
+                {0, 0, XDoubleToFixed(1)}}};
+            XRenderFillRectangle(dpy, PictOpSrc, r->tilemask, &clear, x0, y0, x1 - x0, y1 - y0);
+            tri[0] = (XTriangle){
+                {XDoubleToFixed(q[0][0]), XDoubleToFixed(q[0][1])},
+                {XDoubleToFixed(q[1][0]), XDoubleToFixed(q[1][1])},
+                {XDoubleToFixed(q[2][0]), XDoubleToFixed(q[2][1])}};
+            tri[1] = (XTriangle){
+                {XDoubleToFixed(q[0][0]), XDoubleToFixed(q[0][1])},
+                {XDoubleToFixed(q[2][0]), XDoubleToFixed(q[2][1])},
+                {XDoubleToFixed(q[3][0]), XDoubleToFixed(q[3][1])}};
+            XRenderCompositeTriangles(dpy, PictOpOver, relaxwhite(vis), r->tilemask,
+                    r->a1, 0, 0, tri, 2);
+            XRenderSetPictureTransform(dpy, s->mip[lvl], &tr);
+            XRenderComposite(dpy, PictOpOver, s->mip[lvl], r->tilemask, r->back,
+                    x0, y0, x0, y0, x0, y0, x1 - x0, y1 - y0);
+            used = 1;
+        }
+    return used;
+}
+
 static void
 relaxrenderwindow(RelaxStar *s, double vis, double tint, double light)
 {
     RelaxScene *r = &relaxscene;
     static const double sx[4] = {-1, 1, 1, -1}, sy[4] = {-1, -1, 1, 1};
     double q[4][2], minx = 1e9, miny = 1e9, maxx = -1e9, maxy = -1e9, edge, hw, hh, dark;
+    double left, top, rw, rh, persp;
     RelaxVec corner, normal, tocam;
     RelaxProj p;
-    int i, lvl, x0, y0, x1, y1, cx, cy;
+    Picture mask;
+    int i, lvl, x0, y0, x1, y1, cx, cy, tiled, aligned, pixelcopy, drawn, opaque;
 
     if (!s->snap || (vis < .004 && tint < .004))
         return;
@@ -983,6 +1251,17 @@ relaxrenderwindow(RelaxStar *s, double vis, double tint, double light)
         q[i][1] = p.y;
         minx = MIN(minx, p.x); maxx = MAX(maxx, p.x);
         miny = MIN(miny, p.y); maxy = MAX(maxy, p.y);
+    }
+    if (r->mode == RelaxOrbit && MAX(maxx - minx, maxy - miny) < 480) {
+        /* 小卡片以仿射路径采样; 透视四边形的误差小于几像素, 软件合成开销明显更低. */
+        q[2][0] = q[1][0] + q[3][0] - q[0][0];
+        q[2][1] = q[1][1] + q[3][1] - q[0][1];
+        minx = miny = 1e9;
+        maxx = maxy = -1e9;
+        for (i = 0; i < 4; i++) {
+            minx = MIN(minx, q[i][0]); maxx = MAX(maxx, q[i][0]);
+            miny = MIN(miny, q[i][1]); maxy = MAX(maxy, q[i][1]);
+        }
     }
     if (maxx < 0 || maxy < 0 || minx > r->w || miny > r->h || maxx - minx < 1 || maxy - miny < 1)
         return;
@@ -999,8 +1278,19 @@ relaxrenderwindow(RelaxStar *s, double vis, double tint, double light)
     /* 选择 mip: 源像素 / 屏幕像素 不超过 2, 远处再降一级 (景深模糊) */
     edge = MAX(hypot(q[1][0] - q[0][0], q[1][1] - q[0][1]), hypot(q[3][0] - q[0][0], q[3][1] - q[0][1]) * s->w / MAX(1, s->h));
     for (lvl = s->base; lvl < RELAXMIPS - 1 && s->mip[lvl + 1] && s->mipw[lvl] > 2 * edge; lvl++);
+    if (r->mode == RelaxOrbit) {
+        int budget = edge < 150 ? 256 : 512;
+        while (lvl < RELAXMIPS - 1 && s->mip[lvl + 1] && s->mipw[lvl] > budget)
+            lvl++;
+    }
     if (relaxdepthblur(s->p.z) > .55 && lvl < RELAXMIPS - 1 && s->mip[lvl + 1])
         lvl++;
+    /* 开场仍与桌面截图像素重合时直接拷贝. 一开始就转的全屏卡如果走 4x4 分块,
+     * 每帧十几次合成, 在 :0 上会从约 8ms 掉到 40ms 以上. */
+    aligned = relaxquadrect(q, .75, &left, &top, &rw, &rh);
+    persp = hypot(q[0][0] - q[1][0] + q[2][0] - q[3][0], q[0][1] - q[1][1] + q[2][1] - q[3][1]);
+    opaque = vis > .996 && r->mode != RelaxOrbit;
+    pixelcopy = aligned && opaque && fabs(rw - s->mipw[lvl]) < 1.25 && fabs(rh - s->miph[lvl]) < 1.25;
     x0 = (int)floor(minx);
     y0 = (int)floor(miny);
     x1 = (int)ceil(maxx) + 1;
@@ -1009,19 +1299,33 @@ relaxrenderwindow(RelaxStar *s, double vis, double tint, double light)
         q[i][0] -= x0;
         q[i][1] -= y0;
     }
-    if (!relaxhomography(s->mip[lvl], q, x1 - x0, y1 - y0, s->mipw[lvl], s->miph[lvl]))
-        return;
-    cx = MAX(0, x0);
-    cy = MAX(0, y0);
-    x1 = MIN(r->w, x1);
-    y1 = MIN(r->h, y1);
-    if (x1 <= cx || y1 <= cy)
-        return;
-    /* 截图只做一次透视采样 (软件渲染时透视采样约是仿射的 8 倍开销); 景深变暗 / 面板发光是盖在同一四边形上的纯色 */
-    if (vis >= .004)
-        XRenderComposite(dpy, PictOpOver, s->mip[lvl], relaxwhite(vis), r->back,
-                cx - x0, cy - y0, 0, 0, cx, cy, x1 - cx, y1 - cy);
-    dark = (1 - MIN(1, light)) * vis;
+    drawn = tiled = 0;
+    if (pixelcopy) {
+        relaxcopywindow(s, lvl, left, top);
+        drawn = 1;
+    } else if (opaque && (maxx - minx) * (maxy - miny) > 450000 && persp > 1 && r->projslow) {
+        drawn = relaxrenderhalf(s, lvl, vis, q, x0, y0, x1, y1);
+    }
+    if (!drawn) {
+        if (!relaxhomography(s->mip[lvl], q, x1 - x0, y1 - y0, s->mipw[lvl], s->miph[lvl])) {
+            if (vis < .004 || !relaxrendertiled(s, lvl, vis))
+                return;
+            tiled = 1;
+        }
+        cx = MAX(0, x0);
+        cy = MAX(0, y0);
+        x1 = MIN(r->w, x1);
+        y1 = MIN(r->h, y1);
+        if (x1 <= cx || y1 <= cy)
+            return;
+        if (vis >= .004 && !tiled) {
+            /* 不透明卡片不用实心蒙版. 透视时四边形外的角是透明的, 必须 Over, 不能 Src. */
+            mask = opaque ? None : relaxwhite(r->mode == RelaxOrbit ? vis * (.7 + .3 * MIN(1, light)) : vis);
+            XRenderComposite(dpy, opaque && aligned ? PictOpSrc : PictOpOver, s->mip[lvl], mask, r->back,
+                    cx - x0, cy - y0, 0, 0, cx, cy, x1 - cx, y1 - cy);
+        }
+    }
+    dark = r->mode == RelaxOrbit ? 0 : (1 - MIN(1, light)) * vis;
     if (dark >= .004)
         relaxfillquad(relaxblack(dark), q, x0, y0);
     if (tint >= .004)
@@ -1080,27 +1384,50 @@ relaxflushbands(void)
         }
 }
 
-/* 一条轨道环的后半圈 (half=0) 或前半圈 (half=1): 透视下正面是圆, 斜看是椭圆, 侧看接近一条线;
- * 线宽随透视缩放, 亮度随深度, 前半圈更亮 */
+/* 局部轨道: 暗的外沿与清晰的细线叠在短弧内, 由画家算法处理穿插. */
 static void
 relaxrenderring(int index)
 {
     RelaxScene *r = &relaxscene;
-    int gi = index / (2 * RELAXRINGS), k = index / 2 % RELAXRINGS, half = index % 2, j;
+    int gi = index / (RELAXARCS * RELAXRINGS), k = index / RELAXARCS % RELAXRINGS;
+    int arc = index % RELAXARCS, j;
     RelaxGalaxy *g = &r->galaxies[gi];
     RelaxProj *pts = r->rpts + (gi * RELAXRINGS + k) * (RELAXSEG + 1);
-    double base = r->ringalpha * MIN(1, g->alpha) * (half ? 1.25 : .6) * (1 + .6 * g->hover), z;
+    double base = r->ringalpha * MIN(1, g->alpha) * (1 + .55 * g->hover), z, depth, width;
 
-    for (j = 0; j < RELAXSEG; j++) {
+    for (j = arc * RELAXARCSEG; j < (arc + 1) * RELAXARCSEG; j++) {
         if (!pts[j].ok || !pts[j + 1].ok)
             continue;
         z = (pts[j].z + pts[j + 1].z) * .5;
-        if ((z < g->p.z) != half)
-            continue;
-        relaxband(&pts[j], &pts[j + 1], base * relaxdepthlight(z),
-                MAX(.75, (pts[j].scale + pts[j + 1].scale) * .5 * r->starscale));
+        depth = relaxdepthlight(z);
+        width = MAX(.65, (pts[j].scale + pts[j + 1].scale) * .5 * r->starscale);
+        relaxband(&pts[j], &pts[j + 1], base * depth * .24 * (1 - relaxclamp(r->qualityvisual - 2)), width * 3.2);
+        relaxband(&pts[j], &pts[j + 1], base * depth * 1.25, width * .7);
     }
-    relaxflushbands();
+}
+
+static void
+relaxrendercluster(int index)
+{
+    RelaxScene *r = &relaxscene;
+    int lane = index / RELAXARCS, arc = index % RELAXARCS, j;
+    RelaxProj *pts = r->clusterpts[lane];
+    double z, a, angle, glint, width;
+
+    for (j = arc * RELAXARCSEG; j < (arc + 1) * RELAXARCSEG; j++) {
+        if (!pts[j].ok || !pts[j + 1].ok)
+            continue;
+        z = (pts[j].z + pts[j + 1].z) * .5;
+        a = r->clusteralpha * relaxdepthlight(z);
+        width = MAX(.7, .9 * (pts[j].scale + pts[j + 1].scale) * .5);
+        relaxband(&pts[j], &pts[j + 1], a * .32 * (1 - relaxclamp(r->qualityvisual - 2)), width * 4);
+        relaxband(&pts[j], &pts[j + 1], a * 1.1, width * .7);
+        /* 每条主轨道至多一段短亮弧, 相位错开以免满屏闪烁. */
+        angle = 2 * RELAXPI * (j + .5) / RELAXSEG;
+        glint = remainder(angle - fmod(r->motion * .27 + lane * RELAXPI, 2 * RELAXPI), 2 * RELAXPI);
+        if (r->mode == RelaxOrbit && fabs(glint) < .18)
+            relaxband(&pts[j], &pts[j + 1], a * (.48 * (1 - fabs(glint) / .18)), width * 1.15);
+    }
 }
 
 static void
@@ -1112,7 +1439,8 @@ relaxrenderstar(RelaxStar *s)
     /* 截图面板背后的柔光, 让面板像发光体而不是贴图 */
     if (s->vis > .02 && s->glow > .01)
         relaxsprite(RelaxHalo, RelaxCool, s->p.x, s->p.y, .62 * hypot(s->w, s->h) * s->size * s->p.scale,
-                .16 * r->glowscale * s->glow * MIN(1, s->vis * 1.3));
+                .16 * r->glowscale * s->glow * MIN(1, s->vis * 1.3)
+                * (r->mode == RelaxOrbit ? 1 - relaxclamp(r->qualityvisual - 1) : 1));
     relaxrenderwindow(s, s->vis, s->tint, s->brightness);
     a = s->glow * (1 - .7 * MIN(1, s->vis * 1.5));
     rad = 8.5 * r->starscale * (s->focused ? 1.18 : 1) * (1 + .3 * s->hover);
@@ -1140,16 +1468,27 @@ relaxrenderitems(void)
     for (i = 0; i < r->ntags; i++)
         r->galaxies[i].hit = 0;
     for (i = 0; i < r->nitems; i++) {
+        if (i && (r->items[i].kind != RelaxRingItem && r->items[i].kind != RelaxClusterItem))
+            relaxflushbands();
         switch (r->items[i].kind) {
         case RelaxDustItem:
             d = &r->dust[r->items[i].index];
             a = d->light * r->dustfade * relaxsmoothstep(relaxphase(d->p.z, r->cam.near * 1.5, r->cam.near * 3));
+            if (r->mode == RelaxOrbit) {
+                if (r->items[i].index % 2)
+                    a *= 1 - relaxclamp(r->qualityvisual);
+                if (r->items[i].index % 3)
+                    a *= 1 - relaxclamp(r->qualityvisual - 1);
+            }
+            if (a < .003)
+                break;
             relaxsprite(RelaxHalo, RelaxCool, d->p.x, d->p.y, MAX(.6, d->size * d->p.scale), a);
             break;
         case RelaxCoreItem:
             g = &r->galaxies[r->items[i].index];
             relaxrenderglow(RelaxWarm, g->p, g->size * (1 + .15 * g->hover), MIN(1, g->alpha * relaxdepthlight(g->p.z)),
-                    relaxdepthblur(g->p.z), .55 * (1 + .4 * g->hover), .22 * r->glowscale);
+                    relaxdepthblur(g->p.z), .55 * (1 + .4 * g->hover), .22 * r->glowscale
+                    * (r->mode == RelaxOrbit ? 1 - relaxclamp(r->qualityvisual - 2) : 1));
             if (g->alpha > .2) {
                 g->hx = g->p.x;
                 g->hy = g->p.y;
@@ -1163,8 +1502,37 @@ relaxrenderitems(void)
         case RelaxRingItem:
             relaxrenderring(r->items[i].index);
             break;
+        case RelaxClusterItem:
+            relaxrendercluster(r->items[i].index);
+            break;
         }
     }
+    relaxflushbands();
+}
+
+static void
+relaxrendertitle(void)
+{
+    RelaxScene *r = &relaxscene;
+    RelaxStar *s;
+    XGlyphInfo ext;
+    XRenderColor shade = {0x0700, 0x0b00, 0x1700, 0xd000};
+    int x, y, w, h, len;
+
+    if (r->mode != RelaxOrbit || r->hover < 0 || r->hover >= r->nstars || !r->titledraw || !r->titlefont)
+        return;
+    s = &r->stars[r->hover];
+    if (!s->hit || s->hover < .2 || !s->title[0])
+        return;
+    len = strlen(s->title);
+    XftTextExtentsUtf8(dpy, r->titlefont, (XftChar8 *)s->title, len, &ext);
+    w = MIN(r->w - 16, ext.xOff + 22);
+    h = r->titlefont->height + 12;
+    x = MAX(8, MIN(r->w - w - 8, (int)(s->p.x - w * .5)));
+    y = MAX(8, MIN(r->h - h - 8, (int)(s->by1 + 12)));
+    XRenderFillRectangle(dpy, PictOpOver, r->back, &shade, x, y, w, h);
+    XftDrawStringUtf8(r->titledraw, &r->titlecolor, r->titlefont, x + 11, y + 6 + r->titlefont->ascent,
+            (XftChar8 *)s->title, len);
 }
 
 /* 低透明度的尾迹: 回溯时间求出星体之前的 3D 位置, 用当前镜头投影.
@@ -1182,16 +1550,28 @@ relaxrendertrails(void)
 
     if (gain < .01 || n < 1)
         return;
+    if (r->mode == RelaxOrbit && r->qualityvisual >= 1.99)
+        n = MAX(4, n / 2);
     /* 尾迹覆盖的总时长: 高速旋转时 0.12s (短促流光), 驻留时 1s (沿轨道的彗星弧) */
-    dt = relaxmix(.12, 1, relaxsmoothstep(relaxphase(r->stage, 3.3, 4.2))) / n;
+    dt = relaxmix(.12, 1, relaxsmoothstep(relaxphase(r->stage, 3.3, 4.2))) / r->ntrail;
     rate = r->mode == RelaxOrbit ? 0 : 1;   /* 驻留时 stage 停住, 只有 motion 在走 */
     for (k = 0; k <= n; k++) {
+        if (k == 0) {
+            for (i = 0; i < r->ntags; i++) {
+                r->tgpos[i] = r->galaxies[i].pos;
+                r->tgplane[i] = r->galaxies[i].plane;
+                r->tpts[(r->nstars + i) * stride] = r->stage >= 2.8 ? r->galaxies[i].p : (RelaxProj){0};
+            }
+            for (i = 0; i < r->nstars; i++)
+                r->tpts[i * stride] = r->stars[i].p;
+            continue;
+        }
         tk = r->stage - k * dt * rate;
         mk = r->motion - k * dt;
-        world = relaxworldat(tk, mk);
+        world = r->mode == RelaxCollapse ? r->cworld : relaxworldat(tk, mk);
         for (i = 0; i < r->ntags; i++) {
             relaxgalaxyat(&r->galaxies[i], tk, mk, world, &r->tgpos[i], &r->tgplane[i]);
-            r->tpts[(r->nstars + i) * stride + k] = r->stage >= 4.9 ? relaxproject(r->tgpos[i]) : (RelaxProj){0};
+            r->tpts[(r->nstars + i) * stride + k] = r->stage >= 2.8 ? relaxproject(r->tgpos[i]) : (RelaxProj){0};
         }
         for (i = 0; i < r->nstars; i++) {
             g = &r->galaxies[r->stars[i].galaxy];
@@ -1212,7 +1592,9 @@ relaxrendertrails(void)
             pb = &r->tpts[i * stride + k + 1];
             if (!pa->ok || !pb->ok)
                 break;
-            relaxband(pa, pb, a * (1 - (double)k / n), MAX(.45, .9 * pa->scale * r->starscale));
+            relaxband(pa, pb, a * (1 - (double)k / r->ntrail)
+                    * (r->mode == RelaxOrbit && k >= r->ntrail / 2 ? 1 - relaxclamp(r->qualityvisual - 1) : 1),
+                    MAX(.45, .9 * pa->scale * r->starscale));
         }
     }
     relaxflushbands();
@@ -1287,6 +1669,8 @@ relaxpresent(void)
     XRenderComposite(dpy, PictOpSrc, r->back, None, r->overlaypic, 0, 0, 0, 0, 0, 0, r->w, r->h);
 }
 
+static double relaxnow(void);
+
 static double
 relaxnow(void)
 {
@@ -1298,14 +1682,22 @@ relaxnow(void)
 static void
 relaxrender(void)
 {
+    RelaxScene *r = &relaxscene;
+    double t = relaxnow(), next;
     relaxrenderbackground();
+    next = relaxnow(); r->phasecost[1] += next - t; t = next;
     relaxrendertrails();
+    next = relaxnow(); r->phasecost[2] += next - t; t = next;
     relaxrenderitems();
+    relaxrendertitle();
     relaxrendercentral();
     relaxrenderfront();
+    next = relaxnow(); r->phasecost[3] += next - t; t = next;
     relaxpresent();
+    next = relaxnow(); r->phasecost[4] += next - t; t = next;
     /* 等服务器画完这一帧: 既是帧时间的真实测量, 也避免请求堆积 */
     XSync(dpy, False);
+    r->phasecost[5] += relaxnow() - t;
 }
 
 /* ---------- 资源 ---------- */
@@ -1512,6 +1904,15 @@ relaxfreescene(void)
 
     for (i = 0; i < r->nstars; i++)
         relaxfreestar(&r->stars[i]);
+    if (r->titledraw)
+        XftDrawDestroy(r->titledraw);
+    if (r->titlecolorok)
+        XftColorFree(dpy, DefaultVisual(dpy, screen), DefaultColormap(dpy, screen), &r->titlecolor);
+    if (r->titlefont)
+        XftFontClose(dpy, r->titlefont);
+    r->titledraw = NULL;
+    r->titlefont = NULL;
+    r->titlecolorok = 0;
     for (i = 0; i < RelaxShapes; i++)
         for (j = 0; j < RelaxTints; j++)
             for (k = 0; k < RELAXSPRITES; k++) {
@@ -1531,8 +1932,20 @@ relaxfreescene(void)
         XRenderFreePicture(dpy, r->vignette);
     if (r->vignettepix)
         XFreePixmap(dpy, r->vignettepix);
+    if (r->tilemask)
+        XRenderFreePicture(dpy, r->tilemask);
+    if (r->tilemaskpix)
+        XFreePixmap(dpy, r->tilemaskpix);
+    if (r->spinpic)
+        XRenderFreePicture(dpy, r->spinpic);
+    if (r->spinpix)
+        XFreePixmap(dpy, r->spinpix);
     r->vignette = 0;
     r->vignettepix = 0;
+    r->tilemask = 0;
+    r->tilemaskpix = 0;
+    r->spinpic = 0;
+    r->spinpix = 0;
     free(r->stars);
     free(r->galaxies);
     free(r->dust);
@@ -1624,6 +2037,10 @@ relaxbuildgalaxies(void)
     for (i = 0; i < r->ntags; i++) {
         g = &r->galaxies[i];
         g->tag = i;
+        g->lane = i % RELAXLANES;
+        g->orbitphase = 2 * RELAXPI * (i / RELAXLANES)
+            / MAX(1, (r->ntags + RELAXLANES - 1 - g->lane) / RELAXLANES)
+            + (g->lane ? .38 : -.42);
         main = g->nstars || !npop;
         idx = i == cur ? 0 : main ? pi++ : ei++;
         n = main ? (npop ? npop : r->ntags) : r->ntags - npop;
@@ -1843,15 +2260,19 @@ relaxlogseg(const char *how)
             qsort(r->gaps, r->ngaps, sizeof *r->gaps, relaxgapcmp);
             low = r->gaps[(size_t)(r->ngaps * .99)];
         }
-        fprintf(r->log, "galaxy %s: at %.2fs frames %lu time %.3fs avg %.1f fps min %.1f fps 1%%low %.1f fps render avg %.2fms max %.2fms%s xerrors %lu\n",
+        fprintf(r->log, "galaxy %s: at %.2fs frames %lu time %.3fs avg %.1f fps min %.1f fps 1%%low %.1f fps render avg %.2fms max %.2fms update %.2fms background %.2fms trails %.2fms items %.2fms present %.2fms XSync %.2fms quality %d%s xerrors %lu\n",
                 how, now, r->frames, span, r->frames / MAX(span, 1e-3),
                 r->ngaps ? 1 / r->gaps[r->ngaps - 1] : 0, low > 0 ? 1 / low : 0,
                 r->rendersum / r->frames * 1000, r->rendermax * 1000,
+                r->phasecost[0] / r->frames * 1000, r->phasecost[1] / r->frames * 1000,
+                r->phasecost[2] / r->frames * 1000, r->phasecost[3] / r->frames * 1000,
+                r->phasecost[4] / r->frames * 1000, r->phasecost[5] / r->frames * 1000, r->quality,
                 r->mode == RelaxOrbit && now - r->lastinput > RELAXIDLE ? " (idle)" : "", r->errors);
         fflush(r->log);
     }
     r->frames = r->ngaps = 0;
     r->rendersum = r->rendermax = 0;
+    memset(r->phasecost, 0, sizeof r->phasecost);
     r->segstart = now;
 }
 
@@ -2018,6 +2439,9 @@ relaxcollapsestart(void)
     RelaxScene *r = &relaxscene;
 
     relaxlogseg(relaxmodename[r->mode]);
+    r->cstage = r->stage;
+    r->cworld = r->world;
+    r->exitspin = 0;
     r->mode = RelaxCollapse;
     r->cstart = relaxnow();
     r->hover = r->hovercore = -1;
@@ -2094,6 +2518,7 @@ relaxreturnstart(int tag, int star)
     r->rcz = r->cam.rz * 180 / RELAXPI;
     r->rcampos = r->cam.pos;
     r->rring = r->ringalpha;
+    r->rcluster = r->clusteralpha;
     r->rdust = r->dustfade;
     r->rbright = r->bright;
     r->rvign = r->vign;
@@ -2210,9 +2635,17 @@ relaxtick(void)
         break;
     case RelaxCollapse:
         r->scene += dt / r->tscale;
-        r->stage = RELAXEXIT + (now - r->cstart) / r->tscale;
+        u = now - r->cstart;
+        r->celapsed = u;
+        if (u < RELAXPREP)
+            r->stage = relaxmix(r->cstage, RELAXHOLD, relaxeaseinoutcubic(u / RELAXPREP));
+        else if (u < RELAXEXITSTART)
+            r->stage = RELAXHOLD;
+        else
+            r->stage = RELAXEXIT + (RELAXEND - RELAXEXIT) * relaxphase(u, RELAXEXITSTART, RELAXCOLLAPSE);
         r->motion = r->scene;
-        if (r->stage >= RELAXEND) {
+        r->exitspin = relaxexitangle(u);
+        if (u >= RELAXCOLLAPSE) {
             relaxfinish();
             return;
         }
@@ -2239,8 +2672,26 @@ relaxtick(void)
         relaxupdatereturn(u);
     else
         relaxupdatescene(r->stage, r->motion, dt);
+    r->phasecost[0] += relaxnow() - begin;
     relaxrender();
     cost = relaxnow() - begin;
+    if (r->mode == RelaxOrbit && now - r->lastinput < RELAXIDLE) {
+        r->qualityavg = r->qualityavg ? relaxmix(r->qualityavg, cost, .045) : cost;
+        r->qualitybad = r->qualityavg > .0168 ? r->qualitybad + 1 : 0;
+        r->qualitygood = r->qualityavg < .0135 ? r->qualitygood + 1 : 0;
+        if (now - r->qualitylast > 2.5) {
+            if (r->qualitybad >= 45 && r->quality < 3) {
+                r->quality++;
+                r->qualitylast = now;
+                r->qualitybad = r->qualitygood = 0;
+            } else if (r->qualitygood >= 150 && r->quality > 0) {
+                r->quality--;
+                r->qualitylast = now;
+                r->qualitybad = r->qualitygood = 0;
+            }
+        }
+    }
+    r->qualityvisual = relaxfollow(r->qualityvisual, r->quality, dt, .35);
     if (r->mode == RelaxIntro && r->nfirst < (int)LENGTH(r->firstcost)) {
         r->firstgap[r->nfirst] = now;   /* 相对按下 Super+Z 后时钟起点的时刻 */
         r->firstcost[r->nfirst++] = cost;
@@ -2292,7 +2743,7 @@ relaxevent(XEvent *e)
         switch (r->mode) {
         case RelaxIntro:
             if (esc)
-                relaxcancel();
+                relaxcollapsestart();
             else if (superz)
                 relaxreturnstart(-1, -1);
             else
@@ -2421,6 +2872,85 @@ relaxpost(XEvent *e)
         relaxrest();
 }
 
+/* 比较一次仿射和一次透视, 决定大卡片旋转时走哪条路径. 在遮罩映射前做, 用户看不到. */
+static void
+relaxprobeprojective(void)
+{
+    RelaxScene *r = &relaxscene;
+    RelaxStar *s, *best = NULL;
+    double q[4][2];
+    struct timespec a, b;
+    int i, lvl, w, h, pass;
+
+    for (i = 0; i < r->nstars; i++) {
+        s = &r->stars[i];
+        if (!s->snap || !s->mip[s->base])
+            continue;
+        if (!best || (long)s->mipw[s->base] * s->miph[s->base]
+                > (long)best->mipw[best->base] * best->miph[best->base])
+            best = s;
+    }
+    if (!best)
+        return;
+    lvl = best->base;
+    w = MIN(best->mipw[lvl], 1280);
+    h = MIN(best->miph[lvl], 720);
+    if (w < 32 || h < 32)
+        return;
+    XRenderSetPictureFilter(dpy, best->mip[lvl], FilterBilinear, NULL, 0);
+    XSync(dpy, False);
+    relaxaffine(best->mip[lvl], (double)best->mipw[lvl] / w, (double)best->miph[lvl] / h, 0, 0);
+    XRenderComposite(dpy, PictOpSrc, best->mip[lvl], None, r->back, 0, 0, 0, 0, 0, 0, w, h);
+    XSync(dpy, False);
+    clock_gettime(CLOCK_MONOTONIC, &a);
+    XRenderComposite(dpy, PictOpSrc, best->mip[lvl], None, r->back, 0, 0, 0, 0, 0, 0, w, h);
+    XSync(dpy, False);
+    clock_gettime(CLOCK_MONOTONIC, &b);
+    r->probeaffine = (b.tv_sec - a.tv_sec) + (b.tv_nsec - a.tv_nsec) / 1e9;
+    q[0][0] = 0;
+    q[0][1] = 0;
+    q[1][0] = w;
+    q[1][1] = h * .06;
+    q[2][0] = w * .94;
+    q[2][1] = h;
+    q[3][0] = w * .05;
+    q[3][1] = h * .93;
+    if (!relaxhomography(best->mip[lvl], q, w, h, best->mipw[lvl], best->miph[lvl]))
+        return;
+    for (pass = 0; pass < 2; pass++) {
+        clock_gettime(CLOCK_MONOTONIC, &a);
+        XRenderComposite(dpy, PictOpSrc, best->mip[lvl], None, r->back, 0, 0, 0, 0, 0, 0, w, h);
+        XSync(dpy, False);
+        clock_gettime(CLOCK_MONOTONIC, &b);
+        r->probeproj = (b.tv_sec - a.tv_sec) + (b.tv_nsec - a.tv_nsec) / 1e9;
+    }
+    /* 第二次才算数: 第一次含着色器 / 纹理上传.
+     * 只在透视像软件采样那样慢几倍时才降到半分辨率, 避免 GPU 上为了几毫秒损失清晰度. */
+    r->projslow = r->probeproj > .012 && r->probeproj > r->probeaffine * 4;
+    if (r->projslow) {
+        r->spinw = MAX(1, (r->w + 1) / 2);
+        r->spinh = MAX(1, (r->h + 1) / 2);
+        r->spinpic = relaxargb(r->spinw, r->spinh, &r->spinpix);
+        if (!r->spinpic)
+            r->projslow = 0;
+        else
+            XRenderSetPictureFilter(dpy, r->spinpic, FilterBilinear, NULL, 0);
+    }
+    /* 当前桌面的大截图开场会整幅拷贝, 先做一遍, 避免前几帧卡在第一次上传. */
+    for (i = 0; i < r->nstars; i++) {
+        s = &r->stars[i];
+        if (!s->current || !s->snap || !s->mip[s->base] || s->mipw[s->base] < 800)
+            continue;
+        w = MIN(s->mipw[s->base], r->w);
+        h = MIN(s->miph[s->base], r->h);
+        relaxaffine(s->mip[s->base], 1, 1, 0, 0);
+        XRenderSetPictureFilter(dpy, s->mip[s->base], FilterNearest, NULL, 0);
+        XRenderComposite(dpy, PictOpSrc, s->mip[s->base], None, r->back, 0, 0, 0, 0, 0, 0, w, h);
+        XRenderSetPictureFilter(dpy, s->mip[s->base], FilterBilinear, NULL, 0);
+    }
+    XSync(dpy, False);
+}
+
 static void
 relax(const Arg *arg)
 {
@@ -2454,6 +2984,7 @@ relax(const Arg *arg)
     XSetErrorHandler(relaxxerror);
     r->argb = XRenderFindStandardFormat(dpy, PictStandardARGB32);
     r->a8 = XRenderFindStandardFormat(dpy, PictStandardA8);
+    r->a1 = XRenderFindStandardFormat(dpy, PictStandardA1);
     for (m = mons; m; m = m->next)
         for (c = m->clients; c; c = c->next)
             if (!c->isscratchpad)
@@ -2469,11 +3000,11 @@ relax(const Arg *arg)
     r->cam.focal = r->w * .5 / tan(r->cam.fov / 2);
     r->cam.near = r->cam.focal * .12;
     r->cam.far = r->cam.focal * 14;
-    r->triscap = MAX((count + r->ntags) * r->ntrail * 2, RELAXSEG * 2) + 2;
+    r->triscap = MAX((count + r->ntags) * r->ntrail * 2, RELAXSEG * (RELAXLANES + r->ntags * RELAXRINGS) * 4) + 2;
     r->galaxies = calloc(r->ntags, sizeof *r->galaxies);
     r->stars = calloc(MAX(1, count), sizeof *r->stars);
     r->dust = calloc(r->ndust, sizeof *r->dust);
-    r->items = calloc(r->ndust + r->ntags * (1 + 2 * RELAXRINGS) + count + 1, sizeof *r->items);
+    r->items = calloc(r->ndust + r->ntags * (1 + RELAXARCS * RELAXRINGS) + count + RELAXARCS * RELAXLANES + 1, sizeof *r->items);
     r->tgpos = calloc(r->ntags, sizeof *r->tgpos);
     r->tgplane = calloc(r->ntags, sizeof *r->tgplane);
     r->tpts = calloc((count + r->ntags) * (r->ntrail + 1), sizeof *r->tpts);
@@ -2483,7 +3014,7 @@ relax(const Arg *arg)
         if (!(r->tris[i] = calloc(r->triscap, sizeof(XTriangle))))
             goto fail;
     if (!r->galaxies || !r->stars || !r->dust || !r->items || !r->tgpos || !r->tgplane || !r->tpts || !r->rpts
-            || !r->gaps || !r->argb || !r->a8)
+            || !r->gaps || !r->argb || !r->a8 || !r->a1)
         goto fail;
     r->savedmon = r->tmon = selmon;
     r->savedtags = r->ttags = selmon->tagset[selmon->seltags] & TAGMASK;
@@ -2493,12 +3024,27 @@ relax(const Arg *arg)
     if (!(r->back = relaxopaque(r->w, r->h, &r->backpix)) || !(r->desktop = relaxopaque(r->w, r->h, &r->desktoppix))
             || !(r->wallpaper = relaxopaque(r->w, r->h, &r->wallpix)) || !(r->bg = relaxopaque(r->w, r->h, &r->bgpix)))
         goto fail;
+    r->titlefont = XftFontOpenName(dpy, screen, "sans:size=11");
+    if (r->titlefont)
+        r->titledraw = XftDrawCreate(dpy, r->backpix, DefaultVisual(dpy, screen), DefaultColormap(dpy, screen));
+    if (r->titledraw) {
+        XRenderColor white = {0xe900, 0xf600, 0xffff, 0xffff};
+        r->titlecolorok = XftColorAllocValue(dpy, DefaultVisual(dpy, screen),
+                DefaultColormap(dpy, screen), &white, &r->titlecolor);
+    }
+    if (!r->titlecolorok && r->titledraw) {
+        XftDrawDestroy(r->titledraw);
+        r->titledraw = NULL;
+    }
     for (i = 0; i < RELAXALPHAS; i++) {
         color.alpha = color.red = color.green = color.blue = (unsigned short)(65535L * i / (RELAXALPHAS - 1));
         r->white[i] = XRenderCreateSolidFill(dpy, &color);
         color.red = color.green = color.blue = 0;
         r->black[i] = XRenderCreateSolidFill(dpy, &color);
     }
+    r->tilemaskpix = XCreatePixmap(dpy, root, r->w, r->h, 8);
+    if (!r->tilemaskpix || !(r->tilemask = XRenderCreatePicture(dpy, r->tilemaskpix, r->a8, 0, NULL)))
+        goto fail;
     relaxbuildsprites();
     relaxbuildvignette();
 
@@ -2543,6 +3089,7 @@ relax(const Arg *arg)
     XSync(dpy, False);
     XUngrabServer(dpy);
     clock_gettime(CLOCK_MONOTONIC, &t1);
+    relaxprobeprojective();
     relaxbuildgalaxies();
     relaxbuildorbits();
     relaxbuilddust();
@@ -2582,9 +3129,10 @@ relax(const Arg *arg)
     relaxtick();
     if (r->log) {
         clock_gettime(CLOCK_MONOTONIC, &t2);
-        fprintf(r->log, "galaxy setup: grab+capture %.1fms, key -> first frame %.1fms\n",
+        fprintf(r->log, "galaxy setup: grab+capture %.1fms, key -> first frame %.1fms, probe affine %.1fms proj %.1fms %s\n",
                 (t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6,
-                (t2.tv_sec - t0.tv_sec) * 1e3 + (t2.tv_nsec - t0.tv_nsec) / 1e6);
+                (t2.tv_sec - t0.tv_sec) * 1e3 + (t2.tv_nsec - t0.tv_nsec) / 1e6,
+                r->probeaffine * 1e3, r->probeproj * 1e3, r->projslow ? "half" : "direct");
         fflush(r->log);
     }
     return;

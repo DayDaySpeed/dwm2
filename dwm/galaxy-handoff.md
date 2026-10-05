@@ -14,7 +14,7 @@
 
 功能已经完成, 在 Xvfb 测试会话里验证过。
 
-**待用户确认的一件事**: 用户反馈「平铺的窗口前几帧会很卡」, 已经修好, 但用户桌面上 (:0) 跑的还是修复前的二进制。`~/.local/bin/dwm` 是 10:06 装的, 修复是 10:19 编译的。已经请用户按 Super+Shift+R 重载。
+**当前桌面尚未加载这次增强**：只在独立 Xvfb `:17` 测试了新二进制，没有重启用户的 `:0` dwm。用户可在准备好时按 Super+Shift+R 重载。
 
 用户重载并试过 Super+Z 之后, 先读 `~/.cache/dwm-galaxy.log`, 看这两行:
 
@@ -23,22 +23,22 @@
 
 如果这两行不存在, 说明用户跑的仍是旧版本。
 
-如果 NVIDIA 上开场前几帧单帧仍超过约 16 ms, 下一步优化的方向是: 大卡片在透视倾斜时不走一次全尺寸的 projective composite, 而是切成 N×N 小块, 每块用仿射变换近似。原因是 pixman 的 projective 路径约 18 ns/像素, affine 约 2.4 ns/像素。
+大卡片倾斜时优先一次透视采样。用户 :0 的日志里 4×4 分块会把全屏窗口从约 8ms 打到 40ms 以上；分块只留作单应矩阵放不下时的退路。开场仍与桌面重合的卡片改为无变换拷贝。若探测到软件透视很慢，大卡片改画进半分辨率再放大。
 
 ## 2. 用户确认过的交互设计
 
 | 状态 | Esc | Super+Z | 其他键 | 左键 | 滚轮 / 鼠标移动 |
 |---|---|---|---|---|---|
-| Intro (开场约 5.7s) | 硬取消, 立即恢复 | 从当前画面回程 | 快进到驻留 (0.6s 时间扭曲) | 快进 | – |
+| Intro (开场约 5.7s) | 从当前画面接入约 2.35s 收束坍缩 | 从当前画面回程 | 快进到驻留 (0.6s 时间扭曲) | 快进 | – |
 | Orbit (驻留, 不限时) | 坍缩 | 回程到原 tag 和焦点 | 忽略 | 点窗口星: 跳到它的 tag 并聚焦它 (隐藏窗口会被恢复); 点核心: 只切 tag | 推拉镜头 / 视差, 悬停高亮 |
-| Collapse (约 1.6s) | 立即进入 Rest | 立即取消并恢复 | – | – | – |
+| Collapse (约 2.35s，星系群同向划过一段弧线后坍缩) | 立即进入 Rest | 立即取消并恢复 | – | – | – |
 | Return (约 1.6s) | 立即结束 | 立即结束 | – | – | – |
 | Rest (纯壁纸) | 恢复 | 恢复 | 恢复 | 恢复 | – |
 
 其他已确认的设计:
 
 - 窗口形态按深度 LOD 混合: 近处是截图小面板, 远处退化成光点。
-- 轨道环必须看得见: 同一 ring 的星共享一个平面, 3D 椭圆环按前后半圈分别做深度排序, 星身后有彗星弧。
+- 轨道环必须看得见: 同一 ring 的星共享一个平面, 3D 椭圆环按前后半圈分别做深度排序, 星身后有彗星弧。tag 核心沿两条倾斜的星系群轨道公转，群轨道也按前后深度排序。
 - 驻留时不抓键盘和鼠标, 锁屏程序能盖在遮罩之上。无输入 90 秒后降到 30fps, 熄屏 (DPMS) 时暂停渲染。
 
 ## 3. 代码结构
@@ -60,7 +60,7 @@
 - `scene`: 场景时间。真实秒除以 `tscale = RELAXINTRO = 1.35`。
 - `stage = min(scene, RELAXHOLD = 4.2)`: 驱动所有关键帧曲线 (镜头、卡片尺寸、亮度等)。驻留时停在 4.2。
 - `motion = scene`: 一直往前走, 驱动轨道角、进动、全局自转、巡航扫掠 (`RELAXCRUISE` 18s)。
-- 坍缩时 `stage` 从 `RELAXEXIT` (4.75) 播到 `RELAXEND` (6.0)。**所有关键帧在 4.2 到 4.8 之间必须是平的**, 否则从驻留进入坍缩会跳变。
+- Esc 退场有独立的 2.35s 真实时间轴：开场按 Esc 时先在 0.45s 内从当前 `stage` 平滑进入 `RELAXHOLD`；冻结星系群全局朝向，tag 核心沿共用轨道同向转过约 207°，同时淡出局部轨道和尾迹；最后 1.1s 把 `stage` 从 `RELAXEXIT` (4.75) 播到 `RELAXEND` (6.0)。**所有关键帧在 4.2 到 4.8 之间必须是平的**, 否则驻留进入坍缩会跳变。
 - 快进: `relaxwarp` 把 scene 时钟用 easeInOutCubic 在 `RELAXWARP` (0.6s) 内推到 HOLD。
 - 回程有自己的时钟 u (0 到 1, `RELAXRETURN` 1.6s)。开始时把所有星和镜头的状态冻结进 `r*` 字段, 之后不再依赖世界旋转。
 
@@ -74,7 +74,7 @@
 | 镜头与投影 | `relaxproject`、`relaxsetcamera`、`relaxupdatecamera` (驻留运镜 + 视差 + zoom) (425–490) |
 | 世界与星体 | `relaxworldat`、`relaxgalaxyat`、`relaxstarat` (纯函数, 尾迹靠回溯时间重算)、`relaxupdate*`、`relaxsortdepth` (painter's algorithm) (495–750) |
 | 回程 | `relaxupdatereturn` (Bezier + slerp 回到 home, 最后交叉淡入桌面截图) (754) |
-| 渲染 | `relaxhomography` (单位正方形到四边形的单应变换, 按包围盒自适应缩放 k 以避免 pixman 溢出条纹)、`relaxrenderwindow` (一次 projective composite, 加上三角形四边形做暗化和着色)、`relaxrenderring` / `relaxband` / `relaxflushbands` (a8 mask 的 `XRenderCompositeTriangles`)、`relaxrenderbackground` (带缓存)、`relaxrender` (820–1310) |
+| 渲染 | `relaxhomography` (小卡片透视)、`relaxrendertiled` (大卡片 4×4 仿射块与 A1 蒙版)、`relaxrenderwindow` (卡片合成与着色)、`relaxrenderring` / `relaxrendercluster` / `relaxband` / `relaxflushbands` (局部与星系群轨道)、`relaxrenderbackground` (带缓存)、`relaxrender` |
 | 资源 | 截图 `relaxcapture` (总预算 320MB, 超出的截半尺寸)、`relaxbuildmips`、`relaxfree*` (1310–1600) |
 | 场景构建 | `relaxbuildgalaxies` (椭球布局, 当前 tag 在前, 空 tag 在后景壳层)、`relaxbuildorbits`、`relaxbuilddust`、壁纸和背景截图 (1600–1800) |
 | 日志 | `relaxlogstart`、`relaxlogseg` (分阶段统计 fps / 1% low / 渲染耗时, 驻留时每 10s 一行)、`relaxlogfirst` (1796–1875) |
@@ -88,10 +88,10 @@
 - **帧内不 malloc**: 三角形和投影点数组都在 `relax()` 里按上限预分配。
 - **透视大卡片**: `relaxhomography` 的 k 缩放不能随便改, 改坏了会出现条纹。
 - **防重影 (卡顿修复的核心)**:
-  - 当前 tag 的卡片第 0 帧就与真实窗口像素对齐;
+  - 当前 tag 的卡片第 0 帧就与真实窗口像素对齐，聚焦放大须等离开桌面后再生效;
   - 桌面截图只在 stage 0 到 0.1 内淡出 (`r->desk`);
   - 卡片浮起从 stage 约 0.1 开始 (`relaxstarat` 里的 `u1`)。
-  - 不要让桌面截图和已经开始移动的卡片同时可见。
+  - 不要让桌面截图和已经开始移动的卡片同时可见。大卡片倾斜时走一次透视采样；不要为了 Xvfb 改回 4×4 分块，那会在用户的 NVIDIA 会话里把旋转帧率打下去。
 
 ### 日志
 
@@ -122,7 +122,8 @@ DWM_RESTARTED=1 DWM=/home/jiang/projs/dwm2 /home/jiang/projs/dwm2/dwm/dwm > /tmp
 
 ### 已通过的测试 (修复卡顿后重跑过)
 
-- `interrupt.sh`: 16 个用例全部通过, 覆盖第 2 节状态表里的每个格子:
+- 早期 `interrupt.sh` 的 16 个用例适用于修改前行为，开场 Esc 预期已改为约 2.35s 坍缩，脚本旧断言不能直接复用。当前节奏已在 `:17` 测过开场 0.1 / 2.5s 按 Esc、驻留后完整坍缩，以及坍缩中按 Super+Z；窗口状态和 X 资源恢复一致。
+  旧用例包括：
   - 开场 0.4、1.2、2.5、3.5、4.8s 时按 Esc;
   - 开场中按 Return、space、a 或点击快进;
   - 开场中按 Super+Z;
@@ -130,7 +131,7 @@ DWM_RESTARTED=1 DWM=/home/jiang/projs/dwm2 /home/jiang/projs/dwm2/dwm/dwm > /tmp
   - Esc 后 Esc / Super+Z;
   - 回程中按 Esc;
   - Rest 态下点击 / 按键。
-- `loop.sh`: 60 次混合循环 (回程、坍缩→Rest→恢复、开场取消、快进后回程)。dwm 的 RSS (22916 kB) 和 X 资源 (`/tmp/gx/xres`: windows / pixmaps / pictures / gcs) 前后完全不变, 窗口状态一致。
+- 旧 `loop.sh`: 60 次混合循环 (回程、坍缩→Rest→恢复、开场取消、快进后回程)。其中开场取消路径已变更，需要更新脚本后重跑。
 - 点击跳转 (`clickstar.py`: 截图后按卡片颜色定位再点击): 同 tag 的窗口、其他 tag 的窗口、隐藏窗口、星系核心都验证过。
 - 锁屏 (`fakelock`) 在驻留时能盖在遮罩之上。无输入时降到 30fps。0 个窗口和 32 个窗口都正常。
 - 录屏和抽帧: `rec.sh out.mp4 秒数 "key super+z@0.8" ...` (用 ffmpeg x11grab), 用 `frames.py` 或 ffmpeg `-ss` 抽帧, 然后用 Read 查看。
@@ -156,3 +157,11 @@ Xvfb 没有 GPU, 只用来验证逻辑, 性能结论以用户 :0 的日志为准
 ## 6. 让用户的修改生效
 
 用户按 Super+Shift+R 会执行 `bin/reload.sh`: 编译、安装到 `~/.local/bin/dwm`、向 dwm 发 SIGHUP 原地重启, 窗口会保留。不要未经同意替用户重启 :0 上的 dwm。
+
+## 2026-10-04 驻留轨道和性能调整
+
+- `RELAXARCS=8` 把每条 72 段的主轨道和局部轨道分成 9 段短弧参与画家深度排序；相邻同层光带共用 `relaxflushbands`，两条主轨道每条只有一段短流光。空 tag 保持原有点击范围和较低亮度。
+- 驻留卡片按投影尺寸选择近处清晰截图、中景低 mip、远处光点，最大边限制在 300px，悬停平滑增到 430px 并在卡片旁显示名称；小卡走仿射采样，驻留时不额外盖白色 tint / 黑色 quad。
+- 质量级 0–3 仅调节装饰：隔帧成本的指数均值超过 16.8ms 连续 45 帧且距上次切换超过 2.5s 后降低细节；低于 13.5ms 连续 150 帧后恢复。切换效果通过 `qualityvisual` 平滑。主轨道、近处窗口和点击始终绘制。
+- 日志分开打印 update、background、trails、items、present、XSync；Xvfb 2560×1440、11 窗口的瓶颈集中在 XSync（服务器合成）。本轮没有重启用户的 `:0` dwm，真实硬件的 58 FPS / 50 FPS 目标仍需用户下次重载后看 `~/.cache/dwm-galaxy.log`。
+- 独立 Xvfb `:17` 检查过 Esc 坍缩和资源恢复；`:18` 检查过 11 窗口、悬停标题、滚轮、回程、重复进入退出。Xft 首次绘字会多留一个进程级 Picture 缓存，第二次进入退出后数量没有继续增加；`xerrors=0`。
