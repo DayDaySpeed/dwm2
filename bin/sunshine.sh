@@ -17,6 +17,19 @@ lanip() {
     ip -4 -o addr show scope global | awk '$2 !~ /^(docker|br-|veth|Meta|tun)/ {sub(/\/.*/, "", $4); print $4}' \
         | grep -E '^(192\.168|10)\.' | head -1
 }
+# 串流时 Sunshine 把默认输出切到自己的虚拟声卡, 异常退出时不会切回, 本机就没声音了: 清掉残留的虚拟声卡, 默认输出回到真实声卡
+restore_sink() {
+    local m
+    for m in $(pactl list short modules 2>/dev/null | awk '/sink-sunshine/ {print $1}'); do pactl unload-module "$m"; done
+}
+
+# Intel 核显的 render 节点 (BIOS 切到独显直连时核显从 PCI 总线消失, 此时为空)
+igpu() {
+    local r
+    for r in /sys/class/drm/renderD*; do
+        case $(basename "$(readlink "$r/device/driver")") in i915|xe) echo "/dev/dri/${r##*/}"; return ;; esac
+    done
+}
 # Tailscale IP: 固定不变, 换网络也能连 (未安装/未登录时为空)
 tsip() { tailscale ip -4 2>/dev/null | head -1; }
 # 连接地址: 优先 Tailscale IP
@@ -36,13 +49,18 @@ altkey() {
 
 start() {
     running && { notify "已在运行 ($(addr))"; return; }
+    restore_sink                                             # 上次异常退出的残留
     command -v sunshine >/dev/null || { notify "未安装 sunshine: yay -S sunshine-bin"; exit 1; }
     # 网页控制台默认只信任 https://localhost 来源, 从 Windows 用 IP 访问会被 CSRF 保护拦截, 启动时加上局域网 IP 与 Tailscale IP
     local origins="https://$(lanip):$WEBPORT" t
     t=$(tsip); [ -n "$t" ] && origins="$origins,https://$t:$WEBPORT"
     # 每次客户端连上 (开始串流) 时重新设置 Alt <-> Super: X 重启后虚拟键盘会被重新接入, 之前的设置会丢失
     local prep="[{\"do\":\"$DWM/bin/sunshine.sh altkey\",\"undo\":\"\"}]"
-    setsid -f sunshine "csrf_allowed_origins=$origins" "global_prep_cmd=$prep" >/dev/null 2>&1
+    # 混合模式: 用配置文件里的 KMS + 核显 VAAPI; 独显直连: KMS 在 NVIDIA 上初始化失败, 改用 X11 抓屏 + NVENC
+    local gpu dev
+    dev=$(igpu)
+    if [ -n "$dev" ]; then gpu=("adapter_name=$dev"); else gpu=(capture=x11 encoder=nvenc); fi
+    setsid -f sunshine "csrf_allowed_origins=$origins" "global_prep_cmd=$prep" "${gpu[@]}" >/dev/null 2>&1
     for _ in $(seq 20); do                                   # 等待网页控制台端口开始监听 (最多 10 秒)
         ss -ltn | grep -q ":$WEBPORT " && { altkey; notify "已开启, Moonlight 添加主机: $(addr)"; return; }
         sleep 0.5
@@ -52,10 +70,11 @@ start() {
 }
 
 stop() {
-    running || { notify "未在运行"; return; }
+    running || { restore_sink; notify "未在运行"; return; }
     pkill -x sunshine
     for _ in $(seq 10); do running || break; sleep 0.3; done   # 等进程真正退出
     running && pkill -9 -x sunshine
+    restore_sink
     notify "已关闭"
 }
 
