@@ -330,6 +330,7 @@ static void togglebar(const Arg *arg);
 static void togglesystray();
 static void floating(Monitor *m);
 static void savefloat(Client *c);
+static void noanim(long ms);
 static int restorefloat(Client *c);
 static void cyclelayout(const Arg *arg);
 static void savelayouts(void);
@@ -4190,6 +4191,11 @@ previewallwin() {
 void
 focuspreviewwin(Client *focus_c, Monitor *m) {
     Client *c;
+
+    /* 先切到选中窗口所在的 tag 并排好位置, 再映射窗口: 窗口没映射时移动, picom 不会做成"从屏幕外滑进来",
+     * 映射时 picom 播放打开动画, 窗口在各自位置放大出现。已在当前视图里 (含全局窗口) 就不切 tag */
+    if (focus_c && !ISVISIBLE(focus_c))
+        view(&(Arg) { .ui = focus_c->tags & TAGMASK });
     for (c = m->clients; c; c = c->next) {
         if (c->preview.win) {
             XUnmapWindow(dpy, c->preview.win);
@@ -4198,11 +4204,16 @@ focuspreviewwin(Client *focus_c, Monitor *m) {
         if (c->preview.scaled_image) XDestroyImage(c->preview.scaled_image);
     }
 
-    if (focus_c) {
+    if (focus_c)
         show(focus_c);
-        selmon->seltags ^= 1;
-        m->tagset[selmon->seltags] = focus_c->tags;
-    }
+}
+
+/* 通知 picom 接下来 ms 毫秒内的窗口变化不做动画 (picom 读 root 的 _DWM_NOANIM, 见 picom/src/event.c) */
+void
+noanim(long ms)
+{
+    XChangeProperty(dpy, root, XInternAtom(dpy, "_DWM_NOANIM", False), XA_CARDINAL, 32,
+            PropModeReplace, (unsigned char *)&ms, 1);
 }
 
 void

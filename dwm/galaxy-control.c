@@ -96,6 +96,8 @@ galaxyend(int restore)
     for (m = mons; m && m != tmon; m = m->next);
     if (m) {
         selmon = m;
+        /* 星系自己已经把窗口飞回了原位, 让 picom 别再给切 tag / 恢复隐藏窗口加滑动或放大动画, 直接切换 */
+        noanim(400);
         if (c && tshow && HIDDEN(c))
             show(c);  /* 点击了隐藏窗口的星体: 恢复它 (与 Super+A 预览选中隐藏窗口一致) */
         if (ttags && (m->tagset[m->seltags] & TAGMASK) != ttags)
