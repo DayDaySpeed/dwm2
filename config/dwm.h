@@ -2,6 +2,7 @@
 
 static int showsystray                   = 1;         /* 是否显示托盘栏 */
 static const int newclientathead         = 0;         /* 定义新窗口在栈顶还是栈底 */
+static const int warppointer             = 0;         /* 键盘切换焦点时是否把鼠标移到目标窗口中间; 0: 同一显示器内不移动 (跨显示器仍会移过去) */
 static const int managetransientwin      = 1;         /* 是否管理临时窗口 */
 static const unsigned int borderpx       = 3;         /* 窗口边框大小 */
 static const unsigned int systraypinning = 1;         /* 托盘跟随的显示器 0代表不指定显示器 */
@@ -85,7 +86,8 @@ static const Rule rules[] = {
     {"chrome",               NULL,                 NULL,             1 << 4,       0,          0,          0,        -1,      0}, // chrome     tag -> 
     {"Chromium",             NULL,                 NULL,             1 << 4,       0,          0,          0,        -1,      0}, // Chromium   tag -> 
     {"music",                NULL,                 NULL,             1 << 5,       1,          0,          1,        -1,      0}, // music      tag -> 󰎄 浮动、无边框
-    {"SPlayer",              NULL,                 NULL,             1 << 5,       0,          0,          0,        -1,      0}, // SPlayer    tag -> 󰎄 (网易云风格, 支持本地音乐 ~/Music)
+    {"splayer",              NULL,                 NULL,             1 << 5,       0,          0,          0,        -1,      0}, // 主窗口 class 是小写 splayer, 固定在 Super+M
+    {"SPlayer",              NULL,                 NULL,             1 << 5,       1,          0,          1,        -1,      0}, // Electron 的 10x10 / 200x200 小窗, 浮动无边框, 不参与平铺
     {"steam",                NULL,                 NULL,             1 << 6,       0,          0,          0,        -1,      0}, // steam      tag -> 
     {"Microsoft-edge",       NULL,                 NULL,             1 << 7,       0,          0,          0,        -1,      0}, // edge       tag -> 󰇩
     {"Code",                 NULL,                 NULL,             1 << 8,       0,          0,          0,        -1,      0}, // vscode     tag -> 󰨞
@@ -97,6 +99,7 @@ static const Rule rules[] = {
 
     /** 部分特殊class的规则 */
     {"float",                NULL,                 NULL,             0,            1,          0,          0,        -1,      0}, // class = float       浮动
+    {"linux-wallpaperengine",NULL,                 NULL,             0,            1,          1,          1,        -1,      1}, // 场景壁纸窗口刚出现时浮动在左上角 (随后 livewall.sh 把它改成不受 dwm 管理的最底层窗口), 不打乱平铺
     {"global",               NULL,                 NULL,             TAGMASK,      0,          1,          0,        -1,      0}, // class = gloabl      全局
     {"noborder",             NULL,                 NULL,             0,            0,          0,          1,        -1,      0}, // class = noborder    无边框
     {"FGN",                  NULL,                 NULL,             TAGMASK,      1,          1,          1,        -1,      0}, // class = FGN         浮动、全局、无边框
@@ -113,6 +116,7 @@ static const Rule rules[] = {
 static const Layout layouts[] = {
     { "󰙀",  tile },         /* 主次栈 */
     { "󰕰",  magicgrid },    /* 网格 */
+    { "󰖲",  floating },     /* 浮动 (super shift t) */
 };
 
 #define SHCMD(cmd) { .v = (const char*[]){ "/bin/sh", "-c", cmd, NULL } }
@@ -126,8 +130,7 @@ static Key keys[] = {
     /* modifier            key              function          argument */
     { MODKEY,              XK_equal,        togglesystray,    {0} },                     /* super +            |  切换 托盘栏显示状态 */
 
-    { MODKEY,              XK_Tab,          focusstack,       {.i = +1} },               /* super tab          |  本tag内切换聚焦窗口 */
-    { MODKEY|ShiftMask,    XK_Tab,          focusstack,       {.i = -1} },               /* super shift tab    |  本tag内切换聚焦窗口 */
+    { MODKEY,              XK_Tab,          focuslast,        {0} },                     /* super tab          |  切到上一个用过的窗口 (连按来回切) */
     { MODKEY,              XK_Up,           focusstack,       {.i = -1} },               /* super up           |  本tag内切换聚焦窗口 */
     { MODKEY,              XK_Down,         focusstack,       {.i = +1} },               /* super down         |  本tag内切换聚焦窗口 */
 
@@ -138,6 +141,7 @@ static Key keys[] = {
     { MODKEY|ShiftMask,    XK_Right,        tagtoright,       {0} },                     /* super shift right  |  将本窗口移动到右边tag */
 
     { MODKEY,              XK_a,            previewallwin,    {0} },                     /* super a            |  overview */
+    { MODKEY,              XK_z,            galaxy,           {0} },                     /* super z            |  3D 工作空间星系 (停在轨道态) / 回到桌面 */
 
     { MODKEY,              XK_comma,        setmfact,         {.f = -0.05} },            /* super ,            |  缩小主工作区 */
     { MODKEY,              XK_period,       setmfact,         {.f = +0.05} },            /* super .            |  放大主工作区 */
@@ -147,10 +151,11 @@ static Key keys[] = {
 
     { MODKEY|ShiftMask,    XK_Return,       zoom,             {0} },                     /* super shift enter  |  将当前聚焦窗口置为主窗口 */
 
-    { MODKEY,              XK_t,            togglefloating,   {0} },                     /* super t            |  开启/关闭 聚焦目标的float模式 */
-    { MODKEY|ShiftMask,    XK_t,            toggleallfloating,{0} },                     /* super shift t      |  开启/关闭 全部目标的float模式 */
+    { MODKEY,              XK_t,            togglefloating,   {0} },                     /* super t            |  聚焦窗口 浮动/平铺 (浮动时回到上次位置) */
+    { MODKEY|ShiftMask,    XK_t,            togglefloatlayout,{0} },                     /* super shift t      |  本tag 进入/退出浮动布局 */
+    { MODKEY,              XK_space,        selectlayout,     {.v = &layouts[1]} },      /* super space        |  网格/平铺布局切换 */
     { MODKEY,              XK_f,            fullscreen,       {0} },                     /* super f            |  开启/关闭 全屏 */
-    { MODKEY|ShiftMask,    XK_f,            togglebar,        {0} },                     /* super shift f      |  开启/关闭 状态栏 */
+    { MODKEY|ShiftMask,    XK_f,            togglebarglobal,  {0} },                     /* super shift f      |  开启/关闭 状态栏 (所有 tag 和显示器) */
     { MODKEY,              XK_g,            toggleglobal,     {0} },                     /* super g            |  开启/关闭 全局 */
     { MODKEY,              XK_u,            toggleborder,     {0} },                     /* super u            |  开启/关闭 边框 */
     { MODKEY,              XK_e,            incnmaster,       {.i = +1} },               /* super e            |  改变主工作区窗口数量 (1 2中切换) */
@@ -160,15 +165,14 @@ static Key keys[] = {
 
     { MODKEY,              XK_q,            killclient,       {0} },                     /* super q            |  关闭窗口 */
     { MODKEY|ControlMask,  XK_q,            forcekillclient,  {0} },                     /* super ctrl q       |  强制关闭窗口(处理某些情况下无法销毁的窗口) */
-    { MODKEY|ShiftMask,    XK_Escape,       quit,             {0} },                     /* super shift esc   |  退出dwm */
+    { MODKEY|ShiftMask,    XK_Escape,       spawn,            SHCMD("$DWM/bin/power.sh") }, /* super shift esc    |  电源菜单: 锁屏 / 睡眠 / 休眠 / 注销 / 重启 / 关机 (注销等需确认) */
     { MODKEY|ShiftMask,    XK_r,            spawn,            SHCMD("$DWM/bin/reload.sh") }, /* super shift r   |  编译安装 dwm 并原地重启(窗口与tag保留) */
 
-	{ MODKEY|ShiftMask,    XK_space,        selectlayout,     {.v = &layouts[1]} },      /* super shift space  |  切换到网格布局 */
 	{ MODKEY,              XK_o,            showonlyorall,    {0} },                     /* super o            |  切换 只显示一个窗口 / 全部显示 */
 
-    { MODKEY|ControlMask,  XK_equal,        setgap,           {.i = -6} },               /* super ctrl +       |  窗口增大 */
-    { MODKEY|ControlMask,  XK_minus,        setgap,           {.i = +6} },               /* super ctrl -       |  窗口减小 */
-    { MODKEY|ControlMask,  XK_space,        setgap,           {.i = 0} },                /* super ctrl space   |  窗口重置 */
+    { MODKEY|ControlMask,  XK_equal,        setgap,           {.i = -6} },               /* super ctrl +       |  减小窗口间距 (窗口变大) */
+    { MODKEY|ControlMask,  XK_minus,        setgap,           {.i = +6} },               /* super ctrl -       |  增大窗口间距 (窗口变小) */
+    { MODKEY|ControlMask,  XK_space,        setgap,           {.i = 0} },                /* super ctrl space   |  重置窗口间距 */
 
     { MODKEY|ControlMask,  XK_Up,           movewin,          {.ui = UP} },              /* super ctrl up      |  移动窗口 */
     { MODKEY|ControlMask,  XK_Down,         movewin,          {.ui = DOWN} },            /* super ctrl down    |  移动窗口 */
@@ -180,31 +184,40 @@ static Key keys[] = {
     { MODKEY|Mod1Mask,     XK_Left,         resizewin,        {.ui = H_REDUCE} },        /* super alt left     |  调整窗口 */
     { MODKEY|Mod1Mask,     XK_Right,        resizewin,        {.ui = H_EXPAND} },        /* super alt right    |  调整窗口 */
 
-  	{ MODKEY,              XK_k,            focusdir,         {.i = UP } },              /* super k            | 二维聚焦窗口 */
-  	{ MODKEY,              XK_j,            focusdir,         {.i = DOWN } },            /* super j            | 二维聚焦窗口 */
-  	{ MODKEY,              XK_h,            focusdir,         {.i = LEFT } },            /* super h            | 二维聚焦窗口 */
-  	{ MODKEY,              XK_l,            focusdir,         {.i = RIGHT } },           /* super l            | 二维聚焦窗口 */
-    { MODKEY|ShiftMask,    XK_k,            exchange_client,  {.i = UP } },              /* super shift k      | 二维交换窗口 (仅平铺) */
-    { MODKEY|ShiftMask,    XK_j,            exchange_client,  {.i = DOWN } },            /* super shift j      | 二维交换窗口 (仅平铺) */
-    { MODKEY|ShiftMask,    XK_h,            exchange_client,  {.i = LEFT} },             /* super shift h      | 二维交换窗口 (仅平铺) */
-    { MODKEY|ShiftMask,    XK_l,            exchange_client,  {.i = RIGHT } },           /* super shift l      | 二维交换窗口 (仅平铺) */
+  	{ MODKEY,              XK_k,            focusdir,         {.i = UP } },              /* super k            | 同层聚焦上方窗口 */
+  	{ MODKEY,              XK_j,            focusdir,         {.i = DOWN } },            /* super j            | 同层聚焦下方窗口 */
+  	{ MODKEY,              XK_h,            focusdir,         {.i = LEFT } },            /* super h            | 同层聚焦左侧窗口 */
+  	{ MODKEY,              XK_l,            focusdir,         {.i = RIGHT } },           /* super l            | 同层聚焦右侧窗口 */
+    { MODKEY|ShiftMask,    XK_k,            exchange_client,  {.i = UP } },              /* super shift k      | 平铺: 二维交换窗口 / 浮动: 贴边 */
+    { MODKEY|ShiftMask,    XK_j,            exchange_client,  {.i = DOWN } },            /* super shift j      | 平铺: 二维交换窗口 / 浮动: 缩回默认大小并居中 */
+    { MODKEY|ShiftMask,    XK_h,            exchange_client,  {.i = LEFT} },             /* super shift h      | 平铺: 二维交换窗口 / 浮动: 贴边 */
+    { MODKEY|ShiftMask,    XK_l,            exchange_client,  {.i = RIGHT } },           /* super shift l      | 平铺: 二维交换窗口 / 浮动: 贴边 */
 
     /* spawn + SHCMD 执行对应命令(已下部分建议完全自己重新定义) */
     { MODKEY,              XK_s,      togglescratch, SHCMD("tabbed -n scratchpad -c -r 2 st -w ''") },          /* super s          | 打开st scratchpad      */
     { MODKEY,              XK_Return, spawn, SHCMD("tabbed -n st -C tabbed -c -r 2 st -w ''") },                /* super enter      | 打开st                 */
-    { MODKEY,              XK_minus,  spawn, SHCMD("tabbed -n st -C FG -c -r 2 st -w ''") },                    /* super +          | 打开全局st终端         */
-    { MODKEY,              XK_space,  spawn, SHCMD("tabbed -n st -C float -c -r 2 st -w ''") },                 /* super space      | 打开浮动st终端         */
+    { MODKEY,              XK_minus,  spawn, SHCMD("tabbed -n st -C FG -c -r 2 st -w ''") },                    /* super -          | 打开全局st终端         */
     { MODKEY,              XK_r,      spawn, SHCMD("killall pcmanfm || pcmanfm") },                             /* super r          | 打开/关闭pcmanfm       */
-    { MODKEY,              XK_d,      spawn, SHCMD("rofi -show run") },                                         /* super d          | rofi: 执行run          */
+    { MODKEY,              XK_d,      spawn, SHCMD("rofi -show drun") },                                        /* super d          | rofi: 启动应用 (带图标) */
+    { MODKEY|ShiftMask,    XK_d,      spawn, SHCMD("rofi -show run") },                                         /* super shift d    | rofi: 执行命令         */
     { MODKEY,              XK_p,      spawn, SHCMD("$DWM/bin/rofi.sh") },                                       /* super p          | rofi: 执行自定义脚本   */
-    { MODKEY,              XK_n,      spawn, SHCMD("$DWM/bin/blurlock.sh") },                                   /* super n          | 锁定屏幕               */
     { MODKEY|ControlMask,  XK_l,      spawn, SHCMD("$DWM/bin/blurlock.sh") },                                   /* super ctrl l     | 锁定屏幕               */
-    { MODKEY|ShiftMask,    XK_Up,     spawn, SHCMD("$DWM/bin/set_vol.sh up") },                                 /* super shift up   | 音量加                 */
-    { MODKEY|ShiftMask,    XK_Down,   spawn, SHCMD("$DWM/bin/set_vol.sh down") },                               /* super shift down | 音量减                 */
+    { MODKEY|ShiftMask,    XK_Up,     focuslayer, {.i = 1} },                                                    /* super shift up   | 进入浮动层 (已在浮动层则轮换并抬到最前) */
+    { MODKEY|ShiftMask,    XK_Down,   focuslayer, {.i = 0} },                                                    /* super shift down | 进入平铺层 (被盖住时把浮动窗口挪开) */
     { MODKEY|ShiftMask,    XK_a,      spawn, SHCMD("flameshot gui") },                   /* super shift a    | 截图                   */
     { MODKEY,              XK_y,      spawn, SHCMD("$DWM/bin/translate.sh") },                                  /* super y          | 翻译选中的文字         */
     { MODKEY|ShiftMask,    XK_y,      spawn, SHCMD("$DWM/bin/translate.sh input") },                            /* super shift y    | 输入文字翻译并复制     */
-    { MODKEY|ShiftMask,    XK_q,      spawn, SHCMD("kill -9 $(xprop | grep _NET_WM_PID | awk '{print $3}')") }, /* super shift q    | 选中某个窗口并强制kill */
+    { MODKEY,              XK_x,      spawn, SHCMD("CM_LAUNCHER=rofi clipmenu -p 剪贴板") },                    /* super x          | 剪贴板历史 (选中的放进剪贴板) */
+    { MODKEY,              XK_n,      spawn, SHCMD("dunstctl history-pop") },                                   /* super n          | 重新显示上一条通知     */
+    { MODKEY|ShiftMask,    XK_n,      spawn, SHCMD("dunstctl close-all") },                                     /* super shift n    | 关闭所有通知           */
+    { MODKEY,              XK_slash,  spawn, SHCMD("$DWM/bin/keys.sh") },                                       /* super /          | 快捷键速查             */
+    { 0,                   XF86XK_AudioRaiseVolume, spawn, SHCMD("$DWM/bin/set_vol.sh up") },                    /* 音量加键        | 音量加                 */
+    { 0,                   XF86XK_AudioLowerVolume, spawn, SHCMD("$DWM/bin/set_vol.sh down") },                  /* 音量减键        | 音量减                 */
+    { 0,                   XF86XK_AudioMute,  spawn, SHCMD("pactl set-sink-mute @DEFAULT_SINK@ toggle; $DWM/bin/statusbar/statusbar.sh update vol; bash $DWM/bin/statusbar/packages/vol.sh notify") }, /* 静音键          | 静音 / 取消静音        */
+    { 0,                   XF86XK_AudioPlay,  spawn, SHCMD("playerctl play-pause; $DWM/bin/statusbar/statusbar.sh update music") }, /* 播放键          | 播放 / 暂停            */
+    { 0,                   XF86XK_AudioPause, spawn, SHCMD("playerctl play-pause; $DWM/bin/statusbar/statusbar.sh update music") }, /* 暂停键          | 播放 / 暂停            */
+    { 0,                   XF86XK_AudioNext,  spawn, SHCMD("playerctl next; $DWM/bin/statusbar/statusbar.sh update music") },       /* 下一首键        | 下一首                 */
+    { 0,                   XF86XK_AudioPrev,  spawn, SHCMD("playerctl previous; $DWM/bin/statusbar/statusbar.sh update music") },   /* 上一首键        | 上一首                 */
 
     /* super key : 跳转到对应tag (可附加一条命令 若目标目录无窗口，则执行该命令) */
     /* super shift key : 将聚焦窗口移动到对应tag */
@@ -213,10 +226,10 @@ static Key keys[] = {
     TAGKEYS(XK_2, 1, 0)
     TAGKEYS(XK_3, 2, 0)
     TAGKEYS(XK_9, 3, "obs")
-    TAGKEYS(XK_c, 4, "google-chrome-stable")
+    TAGKEYS(XK_c, 4, "google-chrome-stable https://www.youtube.com")
     TAGKEYS(XK_m, 5, "~/.local/share/splayer/SPlayer.AppImage --no-sandbox")
     TAGKEYS(XK_0, 6, "~/.local/bin/steam")
-    TAGKEYS(XK_w, 7, "microsoft-edge-stable")
+    TAGKEYS(XK_w, 7, "microsoft-edge-stable https://www.github.com")
     TAGKEYS(XK_v, 8, "code")
 };
 
@@ -228,6 +241,11 @@ static Button buttons[] = {
     /* 点击窗口操作 */
     { ClkClientWin,        MODKEY,          Button1,          movemouse,     {0} },                                   // super+左键  |  拖拽窗口     |  拖拽窗口
     { ClkClientWin,        MODKEY,          Button3,          resizemouse,   {0} },                                   // super+右键  |  拖拽窗口     |  改变窗口大小
+    /* 点击状态栏布局图标操作 */
+    { ClkLtSymbol,         0,               Button1,          selectlayout,  {.v = &layouts[1]} },                    // 左键        |  点击布局图标 |  网格/平铺布局切换
+    { ClkLtSymbol,         0,               Button3,          togglefloatlayout, {0} },                               // 右键        |  点击布局图标 |  进入/退出浮动布局
+    { ClkLtSymbol,         0,               Button4,          cyclelayout,   {.i = -1} },                             // 鼠标滚轮上  |  布局图标     |  上一个布局 (平铺/网格/浮动)
+    { ClkLtSymbol,         0,               Button5,          cyclelayout,   {.i = +1} },                             // 鼠标滚轮下  |  布局图标     |  下一个布局 (平铺/网格/浮动)
     /* 点击tag操作 */
     { ClkTagBar,           0,               Button1,          view,          {0} },                                   // 左键        |  点击tag      |  切换tag
 	{ ClkTagBar,           0,               Button3,          toggleview,    {0} },                                   // 右键        |  点击tag      |  切换是否显示tag
@@ -257,3 +275,12 @@ static Button buttons[] = {
     { ClkStatusText,       MODKEY,          Button4,          viewtoleft,    {0} },                                   // super+滚轮上  |  Any          |  向前切换tag
     { ClkStatusText,       MODKEY,          Button5,          viewtoright,   {0} },                                   // super+滚轮下  |  Any          |  向后切换tag
 };
+
+/* Super+Z 星系 (dwm/galaxy*.c). 不写时用 galaxy.c 里的默认值; 改完按 Super+Shift+R 重新编译生效.
+ * 省电模式 (Super+P / 拔电自动) 打开时星系自动进入安静模式: 特效间隔 x2.5, 不显示流星 / 彗星 / 轨道光流, 帧率降低 */
+#define GALAXY_INTRO    1.35    /* 开场时间拉伸: 越大开场越慢 (1.35 约 7.7 秒) */
+#define GALAXY_FXGAP    1.0     /* 驻留特效间隔的倍数: 2 = 特效少一半 */
+#define GALAXY_DIAG     30.0    /* 驻留时镜头翻滚 (度), 轨道盘面沿屏幕对角线铺开; 0 = 水平 */
+#define GALAXY_TOURDIST .5      /* 巡游镜头离星系的距离: 越小越近 */
+#define GALAXY_SHOT     9.0     /* 每个机位停留的秒数 */
+#define GALAXY_QUIETFPS 30.0    /* 安静模式的驻留帧率 */

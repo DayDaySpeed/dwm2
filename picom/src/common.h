@@ -188,6 +188,8 @@ typedef struct session {
 	// Damage root_damage;
     int selmon_center_x;
     int selmon_center_y;
+    /// dwm 设置 root 的 _DWM_NOANIM 后, 到这个时间 (CLOCK_MONOTONIC 毫秒) 之前窗口变化都不做动画
+    int64_t noanim_until_ms;
 	/// X Composite overlay window.
 	xcb_window_t overlay;
 	/// The target window for debug mode

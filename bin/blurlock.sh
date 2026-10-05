@@ -1,6 +1,6 @@
 #! /bin/bash
 # 锁屏 (betterlockscreen, 基于 i3lock-color): 当前壁纸调暗 + 模糊作背景, 屏幕中央显示时间、日期和密码圆环
-#   blurlock.sh          锁屏 (Super+N, xss-lock 自动锁屏)
+#   blurlock.sh          锁屏 (Super+Ctrl+L, xss-lock 自动锁屏)
 #   blurlock.sh update   用当前壁纸重新生成锁屏背景 (autostart 每次换壁纸后在后台调用; 未换壁纸时跳过)
 #   blurlock.sh update -f  强制重新生成 (修改 config/betterlockscreenrc 后执行)
 # 主题配置: config/betterlockscreenrc
@@ -28,6 +28,20 @@ lock() {
     command -v betterlockscreen >/dev/null || exec i3lock -n --blur 5 --clock --force-clock
     [ -f "$LOCKIMG" ] || update            # 首次使用还没有背景: 先生成 (几秒)
     (sleep 0.5; xdotool mousemove_relative 1 1) & # 解决自动锁屏后未展示锁屏界面的问题 (移动一下鼠标)
+    # 睡眠前锁屏 (xss-lock --transfer-sleep-lock): 系统要等它关掉 XSS_SLEEP_LOCK_FD 才进入睡眠,
+    # 所以等锁屏界面 (i3lock) 真正出来后再关, 唤醒时就不会先露出桌面
+    # 锁屏子进程里关掉这个 fd 并去掉环境变量: i3lock 认得这个变量, 留着变量却没有 fd 会让它崩溃
+    if [ -n "$XSS_SLEEP_LOCK_FD" ]; then
+        ( fd=$XSS_SLEEP_LOCK_FD; unset XSS_SLEEP_LOCK_FD; eval "exec $fd<&-"; show_lock ) &
+        for _ in $(seq 30); do pgrep -x i3lock-color >/dev/null || pgrep -x i3lock >/dev/null && break; sleep 0.1; done
+        eval "exec $XSS_SLEEP_LOCK_FD<&-"
+        wait
+    else
+        show_lock
+    fi
+}
+
+show_lock() {
     # -- 之后的参数覆盖 betterlockscreen 内置的版面 (内置为左下角小字, 不适合 2560x1440); 星期用中文显示
     # 密码指示器: 铺满屏幕底部的跳动竖条 (沿用原 i3lock 的参数), 输错时底部横带变为半透明白色
     LC_TIME=zh_CN.UTF-8 betterlockscreen -q -l dimblur -- \

@@ -457,6 +457,15 @@ static inline void ev_property_notify(session_t *ps, xcb_property_notify_event_t
             }
             free_winprop(&prop);
         }
+        // dwm: 接下来 N 毫秒内的窗口变化不做动画 (Super+Z 选中窗口后直接切换 tag, 不要再滑动)
+        if (ev->atom == ps->atoms->a_DWM_NOANIM) {
+            winprop_t prop = x_get_prop(ps->c, ps->root, ps->atoms->a_DWM_NOANIM, 1L, XCB_ATOM_CARDINAL, 32);
+            if (prop.nitems == 1) {
+                struct timespec now = get_time_timespec();
+                ps->noanim_until_ms = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000 + prop.p32[0];
+            }
+            free_winprop(&prop);
+        }
 
 		if (ps->o.use_ewmh_active_win && ps->atoms->a_NET_ACTIVE_WINDOW == ev->atom) {
 			// to update focus
