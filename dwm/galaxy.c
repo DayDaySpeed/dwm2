@@ -65,15 +65,25 @@
 #define GALAXYEXITSTART 1.25     /* 退场从环绕切换到向中心收束的时刻 */
 #define GALAXYPREP     .45       /* 开场按 Esc 时平滑进入星系群形态 */
 #define GALAXYLANES    3
+#define GALAXYSPARE    8         /* 星系运行中新开的窗口最多再诞生几颗星 */
+#define GALAXYNOTES    6         /* 通知彗星队列 (同时最多 2 颗) */
+#define GALAXYRIVER    60        /* 星际尘埃流: 沿三条群轨道流动的粒子数 */
+#define GALAXYSHARDX   20        /* 开场 A: 桌面碎成 20x12 块 */
+#define GALAXYSHARDY   12
+#define GALAXYSHARDA   8         /* 碎块蒙版的透明度级数 */
+#define GALAXYBANGN    90        /* 开场 C: 大爆炸喷出的粒子数 */
 #define GALAXYPI       3.14159265358979323846
 
 enum { GalaxyOff, GalaxyIntro, GalaxyOrbit, GalaxyCollapse, GalaxyReturn, GalaxyRest };
 enum { GalaxyFlyHome, GalaxyPickStar, GalaxyPickCore };
 enum { GalaxyDustItem, GalaxyCoreItem, GalaxyStarItem, GalaxyRingItem, GalaxyClusterItem, GalaxyStreakItem, GalaxySunItem };
-enum { GalaxyHalo, GalaxyDisc, GalaxyShapes };
+enum { GalaxyHalo, GalaxyDisc, GalaxySpike, GalaxyShapes };   /* 柔光 / 实心光点 / 衍射芒 */
 enum { GalaxyWarm, GalaxyCool, GalaxyTints };
 
 static const char *galaxymodename[] = { "off", "intro", "orbit", "collapse", "return", "rest" };
+/* 开场的三套编排 (随机轮换, 不连续重复; 环境变量 GALAXY_VARIANT=A|B|C 固定一套), 其余节拍共用 */
+enum { GalaxyShatter, GalaxyGate, GalaxyBang, GalaxyVariants };
+static const char *galaxyvariantname[] = { "A shatter", "B gate", "C bigbang" };
 
 typedef struct { double x, y, z; } GalaxyVec;
 typedef struct { double m[3][3]; } GalaxyMat;
@@ -102,6 +112,7 @@ typedef struct {
     double anomaly, peri, flare, ripple, flip, eclipse;  /* 平近点角 / 交会 / 掩食 / 涟漪 */
     double ignite, callout, streakreveal;       /* 开场: 点火闪光 / 逐个点名 / 星轨拉出进度 */
     double nova, bridge;                        /* 驻留: 超新星爆闪 / 光桥到达时的闪光 */
+    double fill;                /* 有窗口的程度: 空星系诞生第一颗星时从 0 长到 1 (亮度 / 轨道环半径随之长大) */
     int rank;                   /* 开场点火的先后顺序 */
     GalaxyVec nudge;             /* 交会时互相吸引的表现层偏移 */
     GalaxyMat ring[GALAXYRINGS];  /* 每条轨道环相对星系轨道平面的姿态 (环与环互相倾斜) */
@@ -134,6 +145,9 @@ typedef struct {
     GalaxyMat rorient;
     double rsize, rvis, rtint, rglow, rbright;
     double bx0, by0, bx1, by1;  /* 屏幕上的点击范围 */
+    /* 天象: 星系运行中新开的窗口诞生 / 关闭的窗口化作流星 (galaxynow 时刻, 0 表示没有) */
+    double born, died;
+    GalaxyVec dpos, dvel;        /* 关闭时的位置和速度: 流星沿轨道切线飞出 */
     GalaxyProj p;
 } GalaxyStar;
 
@@ -181,6 +195,20 @@ typedef struct {
     int eclipsepair;            /* 当前掩食的前后核心, 用于一次性日志 */
     /* 开场节拍: iclock 是开场时钟 (场景秒, 坍缩时冻结), beatfade 在快进 / 坍缩时把节拍效果淡掉 */
     double iclock, beatfade, warpfx, lanereveal[GALAXYLANES];
+    double space, rspace;       /* 深空背景的不透明度 (开场由壁纸溶解过去) / 回程开始时冻结的值 */
+    /* 天象: 新窗口等待截图 (映射后 0.6s, 窗口画好了再截) / 通知彗星 / 整点报时. 时刻都是 galaxynow */
+    int maxstars, nbirth, nnote, lasthour, chimehour, pulsar;
+    Window birthwin[GALAXYSPARE];
+    double birthat[GALAXYSPARE];
+    char note[GALAXYNOTES][128];
+    double noteat[GALAXYNOTES];  /* 0: 还在排队 */
+    double chimeat, fakehour, hushuntil, calm;  /* calm: 天象发生时随机特效让位 (降到 .3) */
+    XftFont *notefont, *clockfont;
+    /* 开场变体. A: 桌面 (壁纸 + 状态栏) 切成碎块, 旋转着被吸进视口中心的灭点; C: 爆心 (焦点窗口中心, 世界坐标) */
+    int variant, shardw, shardh;
+    Pixmap shardpix, shardmaskpix[GALAXYSHARDA];
+    Picture shardsrc, shardflat, shardmask[GALAXYSHARDA];
+    GalaxyVec bang;
     int quiet;                  /* 安静模式: 省电模式打开时特效变少变稀, 帧率降低 */
     int trace;                  /* 环境变量 GALAXY_TRACE: 每帧把镜头参数写进日志 */
     int saver;                  /* 屏保模式 (无操作时由 bin/galaxysaver.py 触发): 任何输入都回到桌面 */
@@ -289,6 +317,9 @@ static const GalaxyKey galaxybeatroll[] = {
 static const GalaxyKey galaxybright[] = {   /* 壁纸亮度: 冻结时 70%, 星系阶段沉入深空, 结尾 70% -> 100% */
     {0, 1}, {.15, .7}, {.6, .7}, {1.5, .3}, {4.8, .3}, {5.5, .7}, {5.7, .7}, {6, 1}
 };
+static const GalaxyKey galaxyspacekeys[] = {   /* 深空背景: 开场由壁纸溶解过去, 坍缩时溶解回壁纸 */
+    {.2, 0}, {1.5, 1}, {4.8, 1}, {5, 1}, {5.7, 0}
+};
 static const GalaxyKey galaxyvignettekeys[] = {
     {.15, 0}, {1.5, .75}, {4.8, .75}, {5.6, .25}, {6, 0}
 };
@@ -329,6 +360,7 @@ static double galaxyphase(double t, double a, double b) { return galaxyclamp((t 
 static double galaxyeaseincubic(double x) { x = galaxyclamp(x); return x * x * x; }
 static double galaxyeaseoutcubic(double x) { x = 1 - galaxyclamp(x); return 1 - x * x * x; }
 static double galaxyeaseoutquart(double x) { x = 1 - galaxyclamp(x); return 1 - x * x * x * x; }
+static double galaxyeaseoutback(double x) { x = galaxyclamp(x) - 1; return 1 + x * x * (2.2 * x + 1.2); }  /* 略冲过 1 再回落 */
 static double galaxysmoothstep(double x) { x = galaxyclamp(x); return x * x * (3 - 2 * x); }
 
 static double
@@ -386,6 +418,13 @@ galaxybeatw(void)
     GalaxyScene *r = &galaxyscene;
 
     return r->mode == GalaxyIntro || r->mode == GalaxyCollapse ? r->beatfade : 0;
+}
+
+/* 核心点火的时刻 (开场时钟): 开场 C 里核心先从爆心飞到位, 再依次点火 */
+static double
+galaxyignitet(GalaxyCore *g)
+{
+    return galaxyscene.variant == GalaxyBang ? 1.15 + .05 * g->rank : .62 + .06 * g->rank;
 }
 
 /* 开场时钟 -> 关键帧 stage: 旋转结束 (3.3) 后平滑停在 3.45, 留出俯冲 / 点名的时间, 4.5 起再落定到 GALAXYHOLD (C1 连续) */
@@ -625,6 +664,7 @@ galaxysetcameraat(GalaxyVec target, double dist, double pitch, double yaw, doubl
 
 /* 其余部分按依赖顺序 include (同一个编译单元, 都是 static) */
 #include "galaxy-scene.c"
+#include "galaxy-space.c"
 #include "galaxy-render.c"
 #include "galaxy-build.c"
 #include "galaxy-control.c"

@@ -118,6 +118,34 @@ main(void)
         for (k = 0; k < 240; k++) { int x = k % 20 * 128, y = k / 20 * 128;
             XPutImage(dpy, mp, g8, im, 0, 0, x, y, 128, 128);
             XRenderComposite(dpy, PictOpOver, white, mk, back, 0, 0, x, y, x, y, 128, 128); });
+    {
+        /* 深空远景图的合成: a8 蒙版 480x270 双线性放大到 3328x1872, 纯色上色 */
+        Pixmap fp = XCreatePixmap(dpy, root, 3328, 1872, depth), np = XCreatePixmap(dpy, root, 480, 270, 8);
+        Picture far = XRenderCreatePicture(dpy, fp, vis, 0, NULL), neb = XRenderCreatePicture(dpy, np, a8, 0, NULL);
+        XRenderFillRectangle(dpy, PictOpSrc, neb, &(XRenderColor){0, 0, 0, 0x8000}, 0, 0, 480, 270);
+        XRenderSetPictureFilter(dpy, neb, FilterBilinear, NULL, 0);
+        XTransform tr = {{{XDoubleToFixed(480.0 / 3328), 0, 0}, {0, XDoubleToFixed(270.0 / 1872), 0}, {0, 0, XDoubleToFixed(1)}}};
+        XRenderSetPictureTransform(dpy, neb, &tr);
+        BENCH("space bake: a8 mask 480x270 -> 3328x1872 bilinear, solid", 10,
+            XRenderComposite(dpy, PictOpOver, half, neb, far, 0, 0, 0, 0, 0, 0, 3328, 1872));
+        BENCH("space frame: 2560x1440 Src copy from far image", 20,
+            XRenderComposite(dpy, PictOpSrc, far, None, back, 300, 200, 0, 0, 0, 0, W, H));
+    }
+    {
+        /* 开场 A 的桌面碎块: 每块源图 + 蒙版各设一次旋转缩放变换, 带蒙版合成 (20x12 块, 视口 2560x1440) */
+        Pixmap sp = XCreatePixmap(dpy, root, 130, 122, 8);
+        Picture smk = XRenderCreatePicture(dpy, sp, a8, 0, NULL);
+        XRenderFillRectangle(dpy, PictOpSrc, smk, &(XRenderColor){0, 0, 0, 0xffff}, 0, 0, 130, 122);
+        XRenderSetPictureFilter(dpy, smk, FilterBilinear, NULL, 0);
+        XRenderSetPictureFilter(dpy, full, FilterBilinear, NULL, 0);
+        BENCH("240 shards: rotate+scale src & mask, masked Over", 10,
+            for (k = 0; k < 240; k++) { double a = .01 * k, sc = .3 + .003 * k, c = cos(a) / sc, sn = sin(a) / sc;
+                XTransform tr = {{{XDoubleToFixed(c), XDoubleToFixed(sn), 0}, {XDoubleToFixed(-sn), XDoubleToFixed(c), 0},
+                                  {0, 0, XDoubleToFixed(1)}}};
+                XRenderSetPictureTransform(dpy, full, &tr);
+                XRenderSetPictureTransform(dpy, smk, &tr);
+                XRenderComposite(dpy, PictOpOver, full, smk, back, 0, 0, 0, 0, k % 20 * 128, k / 20 * 120, 128 * sc + 4, 120 * sc + 4); });
+    }
     BENCH("card 1268x688 -> 700px affine bilinear", 20,
         scale(card, 1268.0 / 700); XRenderComposite(dpy, PictOpOver, card, None, back, 0, 0, 0, 0, 800, 400, 700, 380));
     persp = (XTransform){{{XDoubleToFixed(1.8), XDoubleToFixed(.1), 0}, {XDoubleToFixed(.05), XDoubleToFixed(1.8), 0},

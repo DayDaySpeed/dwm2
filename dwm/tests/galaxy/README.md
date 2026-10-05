@@ -13,6 +13,7 @@ dwm/tests/galaxy/start.sh          # 起会话并建好测试窗口 (加 --multi
 dwm/tests/galaxy/interrupt.sh      # 16 个中断 / 按键场景, 全部 ok 才算通过
 dwm/tests/galaxy/mouse.sh          # 驻留态鼠标睡眠 / 唤醒 / 8 秒超时 / Esc
 dwm/tests/galaxy/loop.sh 40        # 连续进出 40 次, RSS 和 X 资源应保持不变
+dwm/tests/galaxy/events.sh         # 驻留态天象: 新窗口诞生 / 关窗流星 / 通知彗星 / 整点报时
 # 改了代码之后:
 dwm/tests/galaxy/reload.sh         # 重编, 替换测试副本并原地重启 (窗口保留)
 dwm/tests/galaxy/stop.sh           # 结束会话
@@ -31,12 +32,21 @@ dwm/tests/galaxy/stop.sh           # 结束会话
 | `interrupt.sh` | 开场 / 驻留 / 坍缩 / 回程 / 壁纸态下的 Esc、Super+Z、普通键、点击; 检查遮罩销毁、窗口状态恢复、日志里的结束路径 |
 | `mouse.sh` | 驻留态首次左键只唤醒、右键拖动视角、睡眠时忽略滚轮和移动、8 秒自动休眠、Esc 先关闭交互 |
 | `loop.sh` | 连续进出 N 次, 检查内存、X 资源和窗口状态 |
+| `events.sh` | 驻留中开一个 xterm (诞生新星)、关掉 green-a (化作流星)、发两条通知 (`bin/galaxynote.sh`, 第二条排队), 检查日志里的 birth / death / note / chime 行。`events.sh out.mp4` 同时录屏 |
 | `clickstar.py` | 先唤醒鼠标，再按颜色找窗口卡片并点击，验证点击跳转。例: `clickstar.py 74 26 92 40` 对应 purple-a |
 | `record.sh` | 录测试会话: `record.sh out.mp4 秒数 [帧率] [宽度]` |
 | `jumps.py` | 在录屏里找跳帧: 列出与前后一秒中位数相比变化最突兀的帧 |
 | `grab.sh` | 从录屏抽帧: `grab.sh out.mp4 目录 9.5 12 20` |
 | `xres.c` | 查询 dwm 在 X 服务器上占用的资源 (直接发 X-Resource 请求, 不依赖 libXRes), 由 `start.sh` 编译 |
 | `xrbench.c` | 在当前显示上对 XRender 各合成路径计时 (离屏, 不显示任何东西)。正式桌面上运行: `DISPLAY=:0 ./xrbench` |
+
+## 测试用的环境变量
+
+启动测试 dwm 时带上 (例如 `stop.sh; GALAXY_VARIANT=A start.sh`), `reload.sh` 重启后仍然有效:
+
+- `GALAXY_VARIANT=A|B|C`: 固定开场 (A 桌面碎成星尘 / B 星门 / C 大爆炸), 不设时随机轮换且不连续重复。日志的 `galaxy variant:` 行记录本次用的是哪套
+- `GALAXY_FAKEHOUR=秒`: 驻留这么多秒后假装到了整点, 触发报时
+- `GALAXY_TRACE=1`: 每帧把镜头参数写进日志, 用 `camtrace.py` 分析
 
 ## 注意
 

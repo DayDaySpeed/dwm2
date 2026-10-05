@@ -111,6 +111,7 @@ static void
 galaxycleanup(void)
 {
     galaxyend(0);
+    galaxyspacefree();
 }
 
 static void
@@ -167,6 +168,8 @@ galaxyorbitstart(void)
     r->mode = GalaxyOrbit;
     r->warping = 0;
     r->lastinput = r->lastdpms = galaxynow();
+    if (r->fakehour > 0)
+        r->fakehour += r->lastinput;   /* 测试用的假整点: 从驻留开始计时 */
     if (!r->saver)
         galaxymousesleep("orbit start");
     galaxyrelease();
@@ -236,6 +239,8 @@ galaxyreturnstart(int tag, int star)
             s->back = s->shown;
         else
             s->back = (!s->hidden || i == star) && (s->global || (s->tags & r->ttags));
+        if (s->died)
+            s->back = 0;        /* 已经化作流星的窗口不再飞回 */
         s->rpos = s->pos;
         s->rorient = s->orient;
         s->rsize = s->size;
@@ -269,6 +274,7 @@ galaxyreturnstart(int tag, int star)
     r->rcluster = r->clusteralpha;
     r->rdust = r->dustfade;
     r->rbright = r->bright;
+    r->rspace = r->space;
     r->rvign = r->vign;
     r->rdesk = r->desk;
     r->mode = GalaxyReturn;
@@ -530,6 +536,236 @@ galaxykey(XEvent *e, KeySym sym)
     }
 }
 
+/* 窗口星的基本信息 (位置以视口中心为原点). cur: 没有 tag 的窗口 (全局窗口等) 归到当前 tag */
+static void
+galaxyinitstar(GalaxyStar *s, Client *c, Monitor *m, unsigned int cur)
+{
+    GalaxyScene *r = &galaxyscene;
+    int tag = c->isglobal || !(c->tags & TAGMASK) ? (int)cur : __builtin_ctz(c->tags & TAGMASK);
+
+    s->win = c->win;
+    s->c = c;
+    s->mon = m;
+    s->tags = c->tags & TAGMASK;
+    s->valid = 1;
+    snprintf(s->title, sizeof s->title, "%.63s", c->name);
+    s->galaxy = MIN(tag, r->ntags - 1);
+    s->hidden = HIDDEN(c);
+    s->global = c->isglobal;
+    s->shown = ISVISIBLE(c) && !s->hidden;
+    s->current = s->shown;   /* 任何显示器上正显示的窗口都从原位置起飞 (多显示器时不会在另一块屏上凭空消失) */
+    s->focused = c == selmon->sel;
+    s->w = MAX(1, c->w);
+    s->h = MAX(1, c->h);
+    s->kmatch = 1;
+    s->home = galaxyv(c->x + c->bw + c->w * .5 - r->vx - r->vw * .5, c->y + c->bw + c->h * .5 - r->vy - r->vh * .5, 0);
+}
+
+/* ---------- 天象: 桌面事件 (新窗口诞生新星 / 关窗化作流星 / 通知彗星 / 整点报时) ---------- */
+
+/* 新映射的托管窗口先排队, 0.6s 后 (窗口画好了) 再截图诞生 */
+static void
+galaxybirthqueue(Window w)
+{
+    GalaxyScene *r = &galaxyscene;
+    int i;
+
+    for (i = 0; i < r->nbirth; i++)
+        if (r->birthwin[i] == w)
+            return;
+    for (i = 0; i < r->nstars; i++)
+        if (r->stars[i].win == w && r->stars[i].valid)
+            return;
+    if (r->nbirth >= GALAXYSPARE)
+        return;
+    r->birthwin[r->nbirth] = w;
+    r->birthat[r->nbirth++] = galaxynow();
+}
+
+static void
+galaxybirthdrop(int i)
+{
+    GalaxyScene *r = &galaxyscene;
+
+    memmove(r->birthwin + i, r->birthwin + i + 1, (r->nbirth - i - 1) * sizeof *r->birthwin);
+    memmove(r->birthat + i, r->birthat + i + 1, (r->nbirth - i - 1) * sizeof *r->birthat);
+    r->nbirth--;
+}
+
+/* 在所在 tag 的星系里诞生一颗新星: 放在星最少的那条环上、当前最大的空隙中间 (同一条环上的星角速度相同, 空隙一直保持) */
+static void
+galaxyaddstar(Client *c)
+{
+    GalaxyScene *r = &galaxyscene;
+    GalaxyStar *s, *o;
+    GalaxyCore *g;
+    double ang[64], best = -1, mid, a, b, now = galaxynow();
+    int i, j, n, k, ring = 0, cnt[GALAXYRINGS] = {0};
+
+    if (r->nstars >= r->maxstars) {
+        if (r->log)
+            fprintf(r->log, "galaxy birth: no spare slot for 0x%lx\n", c->win), fflush(r->log);
+        return;
+    }
+    s = &r->stars[r->nstars];
+    memset(s, 0, sizeof *s);
+    galaxyinitstar(s, c, c->mon, r->savedtags ? (unsigned int)__builtin_ctz(r->savedtags) : 0);
+    s->focused = 0;
+    g = &r->galaxies[s->galaxy];
+    if (!g->nrings)
+        g->nrings = 1;      /* 空星系: 轨道环随 fill 从核心长出来 */
+    for (i = 0; i < r->nstars; i++)
+        if (r->stars[i].galaxy == s->galaxy && !r->stars[i].died)
+            cnt[r->stars[i].ring]++;
+    for (k = 1; k < g->nrings; k++)
+        if (cnt[k] < cnt[ring])
+            ring = k;
+    s->ring = ring;
+    s->radius = g->ringr[ring];
+    s->speed = g->speed / (1 + .3 * ring) * (ring == 1 ? -1 : 1);
+    for (i = n = 0; i < r->nstars && n < 64; i++) {
+        o = &r->stars[i];
+        if (o->galaxy == s->galaxy && o->ring == ring && !o->died)
+            ang[n++] = fmod(fmod(o->angle, 2 * GALAXYPI) + 2 * GALAXYPI, 2 * GALAXYPI);
+    }
+    for (i = 1; i < n; i++)
+        for (j = i; j > 0 && ang[j] < ang[j - 1]; j--) {
+            a = ang[j]; ang[j] = ang[j - 1]; ang[j - 1] = a;
+        }
+    mid = 2 * GALAXYPI * galaxyhash(r->nstars * 13 + 7);
+    for (i = 0; i < n; i++) {
+        a = ang[i];
+        b = i + 1 < n ? ang[i + 1] : ang[0] + 2 * GALAXYPI;
+        if (b - a > best) {
+            best = b - a;
+            mid = (a + b) * .5;
+        }
+    }
+    s->angle = mid;
+    s->rock = 2 * GALAXYPI * galaxyhash(r->nstars + 100);
+    s->delay = .12 * galaxyhash(r->nstars + 200);
+    s->detach = s->pos = s->home;
+    galaxycapture(s, c, 1);
+    s->born = now;
+    g->nstars++;
+    r->nstars++;
+    r->hushuntil = now + 3;
+    if (r->kqlen)
+        galaxykeyfilter();
+    if (r->log)
+        fprintf(r->log, "galaxy birth: tag %d ring %d win 0x%lx %s\n", s->galaxy + 1, ring, s->win, s->snap ? "captured" : "no snapshot"),
+            fflush(r->log);
+}
+
+/* 关闭的窗口: 卡片缩成光点, 沿轨道切线加速飞出, 拖着长尾消失 */
+static void
+galaxykillstar(int i)
+{
+    GalaxyScene *r = &galaxyscene;
+    GalaxyStar *s = &r->stars[i];
+    GalaxyVec out;
+    double F = r->cam.focal;
+
+    s->died = galaxynow();
+    s->dpos = s->pos;
+    s->dvel = s->vel;
+    if (galaxylen(s->dvel) < .12 * F) {
+        out = galaxysub(s->pos, r->galaxies[s->galaxy].pos);
+        out = galaxylen(out) > 1 ? galaxynormalize(out) : galaxyv(1, 0, 0);
+        s->dvel = galaxyadd(s->dvel, galaxyscale(out, .12 * F));
+    }
+    if (r->hover == i)
+        r->hover = -1;
+    if (r->ksel == i)
+        r->ksel = -1;
+    r->hushuntil = s->died + 3;
+    if (r->log)
+        fprintf(r->log, "galaxy death: star %d tag %d win 0x%lx\n", i, s->galaxy + 1, s->win), fflush(r->log);
+}
+
+/* bin/galaxynote.sh (dunst 规则) 设置 _DWM_GALAXY=note:<应用>: <摘要>; 去掉换行, 按 UTF-8 字符边界截断 */
+static void
+galaxynotequeue(const char *text)
+{
+    GalaxyScene *r = &galaxyscene;
+    char *t;
+    size_t n;
+
+    if (r->nnote >= GALAXYNOTES || !*text)
+        return;
+    t = r->note[r->nnote];
+    n = MIN(strlen(text), sizeof r->note[0] - 1);
+    while (n > 0 && (text[n] & 0xc0) == 0x80)  /* 不把多字节字符截断在中间 */
+        n--;
+    memcpy(t, text, n);
+    t[n] = 0;
+    for (; *t; t++)
+        if (*t == '\n' || *t == '\t' || *t == '\r')
+            *t = ' ';
+    r->noteat[r->nnote++] = 0;
+    if (r->log)
+        fprintf(r->log, "galaxy note: queued \"%s\"\n", r->note[r->nnote - 1]), fflush(r->log);
+}
+
+/* 每帧: 处理待诞生的窗口, 推进彗星队列, 检查整点, 天象发生后随机特效让位 3s */
+static void
+galaxyupdateevents(double now, double dt)
+{
+    GalaxyScene *r = &galaxyscene;
+    Client *c;
+    struct tm tm;
+    time_t tt;
+    int i, active = 0;
+    double last = -1e9;
+
+    if (r->mode != GalaxyOrbit)
+        return;
+    for (i = 0; i < r->nbirth; i++)
+        if (now - r->birthat[i] >= .6) {
+            c = wintoclient(r->birthwin[i]);
+            if (c && !c->isscratchpad)
+                galaxyaddstar(c);
+            galaxybirthdrop(i--);
+        }
+    /* 彗星: 6s 一颗, 同时最多 2 颗, 两颗之间至少隔 1.5s */
+    for (i = 0; i < r->nnote; i++)
+        if (r->noteat[i] > 0 && now - r->noteat[i] >= 6.5) {
+            memmove(r->note + i, r->note + i + 1, (r->nnote - i - 1) * sizeof r->note[0]);
+            memmove(r->noteat + i, r->noteat + i + 1, (r->nnote - i - 1) * sizeof *r->noteat);
+            r->nnote--;
+            i--;
+        }
+    for (i = 0; i < r->nnote; i++)
+        if (r->noteat[i] > 0) {
+            active++;
+            last = MAX(last, r->noteat[i]);
+        }
+    for (i = 0; i < r->nnote && active < 2 && now - last >= 1.5; i++)
+        if (r->noteat[i] == 0) {
+            r->noteat[i] = last = now;
+            active++;
+            r->hushuntil = now + 3;
+            if (r->log)
+                fprintf(r->log, "galaxy note: comet \"%s\"\n", r->note[i]), fflush(r->log);
+        }
+    /* 整点报时 (GALAXY_FAKEHOUR=秒: 驻留这么多秒后假装到了整点, 测试用) */
+    tt = time(NULL);
+    localtime_r(&tt, &tm);
+    if (r->fakehour > 0 && now >= r->fakehour) {
+        r->fakehour = 0;
+        r->lasthour = (tm.tm_hour + 23) % 24;
+    }
+    if (r->lasthour >= 0 && tm.tm_hour != r->lasthour) {
+        r->chimeat = now;
+        r->chimehour = tm.tm_hour;
+        r->hushuntil = now + 4;
+        if (r->log)
+            fprintf(r->log, "galaxy chime: %02d:00\n", tm.tm_hour), fflush(r->log);
+    }
+    r->lasthour = tm.tm_hour;
+    r->calm = galaxyfollow(r->calm, now < r->hushuntil ? .3 : 1, dt, .5);
+}
+
 static void
 galaxytick(void)
 {
@@ -639,9 +875,12 @@ galaxytick(void)
             galaxyupdatereturn(u);
         else
             galaxyupdatepick(u);
-    } else
+    } else {
+        galaxyupdateevents(now, dt);
         galaxyupdatescene(r->stage, r->motion, dt);
+    }
     r->phasecost[0] += galaxynow() - begin;
+    galaxyspacestep();
     galaxyrender();
     cost = galaxynow() - begin;
     if (r->mode == GalaxyOrbit && now - r->lastinput < GALAXYIDLE) {
@@ -880,12 +1119,18 @@ galaxyevent(XEvent *e)
         /* 窗口在动画中关闭: 星体标记失效, 缓存的截图继续显示到动画结束.
          * 经 root 的 SubstructureNotify 收到时 xany.window 是 root, 关闭的窗口在 xdestroywindow / xunmap.window */
         w = e->type == DestroyNotify ? e->xdestroywindow.window : e->xunmap.window;
+        for (i = 0; i < r->nbirth; i++)
+            if (r->birthwin[i] == w)
+                galaxybirthdrop(i--);
         for (i = 0; i < r->nstars; i++)
             if (r->stars[i].win == w && r->stars[i].valid) {
                 r->stars[i].valid = 0;
                 r->stars[i].c = NULL;
                 if (r->log)
                     fprintf(r->log, "star %d window 0x%lx gone during animation\n", i, r->stars[i].win), fflush(r->log);
+                /* 开场 / 驻留中关闭的窗口化作流星飞走 (坍缩 / 回程中照旧显示到动画结束) */
+                if ((r->mode == GalaxyIntro || r->mode == GalaxyOrbit) && !r->stars[i].died && r->stars[i].alpha > .05)
+                    galaxykillstar(i);
             }
         if (e->type == DestroyNotify && e->xdestroywindow.window == r->twin && r->mode == GalaxyReturn)
             r->twin = None;
@@ -916,6 +1161,8 @@ galaxypost(XEvent *e)
     case MapNotify:
         if (!e->xmap.override_redirect)
             XRaiseWindow(dpy, r->overlay);
+        if ((r->mode == GalaxyIntro || r->mode == GalaxyOrbit) && wintoclient(e->xmap.window))
+            galaxybirthqueue(e->xmap.window);     /* 星系运行中新开的窗口: 诞生一颗新星 */
         break;
     case MapRequest: case ConfigureRequest: case ClientMessage:
         XRaiseWindow(dpy, r->overlay);
@@ -1025,7 +1272,8 @@ galaxy(const Arg *arg)
     GalaxyStar *s;
     Window dw;
     struct timespec t0, t1, t2;
-    int i, count = 0, ev, er, tag, full, pass, dx, dy;
+    const char *env;
+    int i, count = 0, ev, er, full, pass, dx, dy;
     unsigned int cur, mask;
     long budget = 320L << 20, bytes;
 
@@ -1054,6 +1302,21 @@ galaxy(const Arg *arg)
     r->bridgek = r->bri = r->brj = -1;
     r->eclipsepair = -1;
     r->lastpointer = -1e9;
+    r->lasthour = r->pulsar = -1;
+    r->calm = 1;
+    /* 开场变体: 随机选一套, 不和上一次重复 */
+    {
+        static int lastvariant = -1;
+        if ((env = getenv("GALAXY_VARIANT")) && *env >= 'A' && *env < 'A' + GalaxyVariants)
+            r->variant = *env - 'A';
+        else if (lastvariant < 0)
+            r->variant = (int)(t0.tv_nsec / 1000 % GalaxyVariants);
+        else
+            r->variant = (lastvariant + 1 + (int)(t0.tv_nsec / 1000 % (GalaxyVariants - 1))) % GalaxyVariants;
+        lastvariant = r->variant;
+    }
+    if ((env = getenv("GALAXY_FAKEHOUR")))   /* 测试: 驻留这么多秒后假装到了整点 */
+        r->fakehour = atof(env);
     r->bglast[0] = -1;
     XQueryExtension(dpy, "RENDER", &r->rendermajor, &ev, &er);
     r->dpms = DPMSQueryExtension(dpy, &ev, &er) && DPMSCapable(dpy);
@@ -1066,6 +1329,7 @@ galaxy(const Arg *arg)
             if (!c->isscratchpad)
                 count++;
     r->nstars = count;
+    r->maxstars = count + GALAXYSPARE;
     r->tscale = count ? GALAXYINTRO : 1;   /* 没有窗口: 同样的视觉语言, 更短的开场 */
     r->starscale = MAX(.65, MIN(1.1, 1.15 - .012 * count));
     r->orbitscale = MAX(.7, MIN(1, 1.05 - .008 * count));
@@ -1080,12 +1344,12 @@ galaxy(const Arg *arg)
     r->cam.near = r->cam.focal * .12;
     r->cam.far = r->cam.focal * 14;
     r->galaxies = calloc(r->ntags, sizeof *r->galaxies);
-    r->stars = calloc(MAX(1, count), sizeof *r->stars);
+    r->stars = calloc(r->maxstars, sizeof *r->stars);
     r->dust = calloc(r->ndust, sizeof *r->dust);
-    r->items = calloc(r->ndust + r->ntags * (4 + GALAXYARCS * GALAXYRINGS) + count + GALAXYARCS * GALAXYLANES + 2, sizeof *r->items);
+    r->items = calloc(r->ndust + r->ntags * (4 + GALAXYARCS * GALAXYRINGS) + r->maxstars + GALAXYARCS * GALAXYLANES + 2, sizeof *r->items);
     r->tgpos = calloc(r->ntags, sizeof *r->tgpos);
     r->tgplane = calloc(r->ntags, sizeof *r->tgplane);
-    r->tpts = calloc((count + r->ntags) * (r->ntrail + 1), sizeof *r->tpts);
+    r->tpts = calloc((r->maxstars + r->ntags) * (r->ntrail + 1), sizeof *r->tpts);
     r->rpts = calloc(r->ntags * GALAXYRINGS * (GALAXYSEG + 1), sizeof *r->rpts);
     r->streakpts = calloc(r->ntags * (GALAXYSTREAK + 1), sizeof *r->streakpts);
     r->streakz = calloc(r->ntags * 3, sizeof *r->streakz);
@@ -1115,6 +1379,8 @@ galaxy(const Arg *arg)
     /* Xft 不会逐字回退到别的字体: 选一个同时含中文和拉丁字母的 (窗口标题常有中文) */
     r->titlefont = XftFontOpenName(dpy, screen, "sans:lang=zh-cn:size=11");
     r->queryfont = XftFontOpenName(dpy, screen, "sans:lang=zh-cn:size=16");
+    r->notefont = XftFontOpenName(dpy, screen, "sans:lang=zh-cn:size=15");
+    r->clockfont = XftFontOpenName(dpy, screen, "sans:lang=zh-cn:size=34:weight=light");
     if (r->titlefont)
         r->titledraw = XftDrawCreate(dpy, r->backpix, DefaultVisual(dpy, screen), DefaultColormap(dpy, screen));
     if (r->titledraw) {
@@ -1144,27 +1410,14 @@ galaxy(const Arg *arg)
             if (c->isscratchpad)
                 continue;
             s = &r->stars[i++];
-            s->win = c->win;
-            s->c = c;
-            s->mon = m;
-            s->tags = c->tags & TAGMASK;
-            s->valid = 1;
-            snprintf(s->title, sizeof s->title, "%.63s", c->name);
-            tag = c->isglobal || !(c->tags & TAGMASK) ? (int)cur : __builtin_ctz(c->tags & TAGMASK);
-            s->galaxy = MIN(tag, r->ntags - 1);
-            s->hidden = HIDDEN(c);
-            s->global = c->isglobal;
-            s->shown = ISVISIBLE(c) && !s->hidden;
-            s->current = s->shown;   /* 任何显示器上正显示的窗口都从原位置起飞 (多显示器时不会在另一块屏上凭空消失) */
-            s->focused = c == selmon->sel;
-            s->w = MAX(1, c->w);
-            s->h = MAX(1, c->h);
-            s->kmatch = 1;
-            s->home = galaxyv(c->x + c->bw + c->w * .5 - r->vx - r->vw * .5, c->y + c->bw + c->h * .5 - r->vy - r->vh * .5, 0);
+            galaxyinitstar(s, c, m, cur);
             r->galaxies[s->galaxy].nstars++;
         }
     XGrabServer(dpy);
     galaxycapturebackground();
+    galaxyspacebegin();
+    if (r->variant == GalaxyShatter)
+        galaxybuildshards();
     /* 每个窗口只截一次. 当前桌面的窗口优先截全尺寸, 其余窗口在预算内也截全尺寸 (回程 / 点击跳转时 1:1 显示), 超出的截半尺寸 */
     for (pass = 0; pass < 2; pass++)
         for (i = 0; i < r->nstars; i++) {
@@ -1184,6 +1437,9 @@ galaxy(const Arg *arg)
     galaxybuildcores();
     galaxybuildorbits();
     galaxybuilddust();
+    for (i = 0; i < r->nstars; i++)     /* 开场 C 的爆心: 焦点窗口的中心 (没有焦点时是视口中心) */
+        if (r->stars[i].focused)
+            r->bang = r->stars[i].home;
     if (XQueryPointer(dpy, root, &dw, &dw, &dx, &dy, &ev, &er, &mask)) {
         r->mx = dx;
         r->my = dy;
@@ -1214,14 +1470,29 @@ galaxy(const Arg *arg)
         goto fail;
     XMapRaised(dpy, r->overlay);
     r->mode = GalaxyIntro;
-    if (XGrabKeyboard(dpy, r->overlay, False, GrabModeAsync, GrabModeAsync, CurrentTime) != GrabSuccess)
+    /* 别的程序可能正短暂持有抓取 (菜单刚关闭等): 最多重试约 0.5s, 失败时把原因写进日志 */
+    for (i = 0; i < 50 && XGrabKeyboard(dpy, r->overlay, False, GrabModeAsync, GrabModeAsync, CurrentTime) != GrabSuccess; i++)
+        nanosleep(&(struct timespec){0, 10000000}, NULL);
+    if (i == 50) {
+        galaxylogstart();
+        if (r->log)
+            fprintf(r->log, "galaxy start failed: keyboard grab\n");
         goto fail;
+    }
     r->grabkbd = 1;
-    if (XGrabPointer(dpy, r->overlay, False, ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-                GrabModeAsync, GrabModeAsync, None, None, CurrentTime) != GrabSuccess)
+    for (i = 0; i < 50 && XGrabPointer(dpy, r->overlay, False, ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+                GrabModeAsync, GrabModeAsync, None, None, CurrentTime) != GrabSuccess; i++)
+        nanosleep(&(struct timespec){0, 10000000}, NULL);
+    if (i == 50) {
+        galaxylogstart();
+        if (r->log)
+            fprintf(r->log, "galaxy start failed: pointer grab\n");
         goto fail;
+    }
     r->grabptr = 1;
     galaxylogstart();
+    if (r->log)
+        fprintf(r->log, "galaxy variant: %s\n", galaxyvariantname[r->variant]);
     XSync(dpy, False);
     clock_gettime(CLOCK_MONOTONIC, &r->start);
     r->last = -1;
@@ -1243,13 +1514,14 @@ fail:
     galaxyend(1);
 }
 
-/* bin/galaxysaver.py 在 root 上设置 _DWM_GALAXY=saver: 无操作到时间, 以屏保模式进入星系 (星系已在运行时忽略) */
+/* bin/galaxysaver.py 在 root 上设置 _DWM_GALAXY=saver: 无操作到时间, 以屏保模式进入星系 (星系已在运行时忽略);
+ * bin/galaxynote.sh 设置 note:<文字>: 星系运行中的通知彗星 */
 static void
 galaxyproperty(XPropertyEvent *ev)
 {
     static Atom atom;
     GalaxyScene *r = &galaxyscene;
-    char value[32] = "";
+    char value[256] = "";
     XTextProperty tp;
 
     if (!atom)
@@ -1261,6 +1533,11 @@ galaxyproperty(XPropertyEvent *ev)
         XFree(tp.value);
     }
     XDeleteProperty(dpy, root, atom);
+    if (!strncmp(value, "note:", 5)) {     /* 通知: 星系运行中化作一颗带标题的彗星, 没运行时忽略 */
+        if (r->mode == GalaxyIntro || r->mode == GalaxyOrbit)
+            galaxynotequeue(value + 5);
+        return;
+    }
     if (strcmp(value, "saver") || galaxyactive())
         return;
     galaxy(&(Arg){0});

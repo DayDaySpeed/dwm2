@@ -60,6 +60,10 @@ galaxybuildsprites(void)
                         if (shape == GalaxyHalo)  /* 多层高斯叠加的柔光, 没有硬边 */
                             a = (.55 * exp(-d * d / .0288) + .3 * exp(-d * d / .1568) + .15 * exp(-d * d / .5))
                                 * (1 - galaxysmoothstep((d - .75) / .25));
+                        else if (shape == GalaxySpike)  /* 望远镜衍射芒: 横竖两条主芒 + 两条更弱的斜芒, 中间一个亮核 */
+                            a = MAX(MAX(exp(-y * y / .0006) * pow(1 - fabs(x), 3), exp(-x * x / .0006) * pow(1 - fabs(y), 3)),
+                                    .35 * MAX(exp(-(x - y) * (x - y) / .0008), exp(-(x + y) * (x + y) / .0008)) * pow(galaxyclamp(1 - d), 3))
+                                + .6 * exp(-d * d / .004);
                         else
                             a = 1 - galaxysmoothstep((d - .4) / .6);
                         a = galaxyclamp(a);
@@ -213,8 +217,12 @@ galaxyfreescene(void)
         XftFontClose(dpy, r->titlefont);
     if (r->queryfont)
         XftFontClose(dpy, r->queryfont);
+    if (r->notefont)
+        XftFontClose(dpy, r->notefont);
+    if (r->clockfont)
+        XftFontClose(dpy, r->clockfont);
     r->titledraw = NULL;
-    r->titlefont = r->queryfont = NULL;
+    r->titlefont = r->queryfont = r->notefont = r->clockfont = NULL;
     r->titlecolorok = 0;
     for (i = 0; i < GalaxyShapes; i++)
         for (j = 0; j < GalaxyTints; j++)
@@ -243,6 +251,22 @@ galaxyfreescene(void)
         XRenderFreePicture(dpy, r->spinpic);
     if (r->spinpix)
         XFreePixmap(dpy, r->spinpix);
+    for (i = 0; i < GALAXYSHARDA; i++) {
+        if (r->shardmask[i])
+            XRenderFreePicture(dpy, r->shardmask[i]);
+        if (r->shardmaskpix[i])
+            XFreePixmap(dpy, r->shardmaskpix[i]);
+        r->shardmask[i] = 0;
+        r->shardmaskpix[i] = 0;
+    }
+    if (r->shardsrc)
+        XRenderFreePicture(dpy, r->shardsrc);
+    if (r->shardflat)
+        XRenderFreePicture(dpy, r->shardflat);
+    if (r->shardpix)
+        XFreePixmap(dpy, r->shardpix);
+    r->shardsrc = r->shardflat = 0;
+    r->shardpix = 0;
     r->vignette = 0;
     r->vignettepix = 0;
     r->tilemask = 0;
@@ -448,6 +472,7 @@ galaxybuildcores(void)
         g->precess = .05 * (i % 2 ? 1 : -1);
         g->size = 34 * (1 + .08 * MIN(g->nstars, 6)) * (g->nstars ? 1 : .6);
         g->nrings = !g->nstars ? 0 : g->nstars <= 4 ? 1 : g->nstars <= 10 ? 2 : 3;
+        g->fill = g->nstars > 0;
         g->radius = rad * (.92 + .08 * (i % 3));
         /* 同一星系的几条轨道环互相倾斜 (原子模型式), 每条环有自己的平面 */
         for (k = 0; k < GALAXYRINGS; k++) {
@@ -527,6 +552,37 @@ galaxybuilddust(void)
             d->size = 1.8 + 1.2 * galaxyhash(i * 5 + 1004);
             d->light = .55 + .25 * galaxyhash(i * 5 + 1004);
         }
+    }
+}
+
+/* 开场 A 的碎块源图: 视口里的壁纸 + 状态栏 (窗口另有卡片, 不进碎块); 每级透明度一张带 1px 透明边的矩形蒙版 */
+static void
+galaxybuildshards(void)
+{
+    GalaxyScene *r = &galaxyscene;
+    XRenderColor clear = {0, 0, 0, 0}, solid = {0, 0, 0, 0};
+    Monitor *m;
+    int a;
+
+    r->shardw = (r->vw + GALAXYSHARDX - 1) / GALAXYSHARDX;
+    r->shardh = (r->vh + GALAXYSHARDY - 1) / GALAXYSHARDY;
+    if (!(r->shardsrc = galaxyopaque(r->vw, r->vh, &r->shardpix)))
+        return;
+    r->shardflat = XRenderCreatePicture(dpy, r->shardpix, XRenderFindVisualFormat(dpy, DefaultVisual(dpy, screen)), 0, NULL);
+    XRenderComposite(dpy, PictOpSrc, r->wallpaper, None, r->shardsrc, r->vx, r->vy, 0, 0, 0, 0, r->vw, r->vh);
+    for (m = mons; m; m = m->next)
+        if (m->showbar)     /* 状态栏窗口在 by + vp 处, 连同上方的间隙一起拷 */
+            XRenderComposite(dpy, PictOpSrc, r->desktop, None, r->shardsrc, m->mx, m->by, 0, 0,
+                    m->mx - r->vx, m->by - r->vy, m->mw, bh + 2 * vp);
+    XRenderSetPictureFilter(dpy, r->shardsrc, FilterBilinear, NULL, 0);
+    for (a = 0; a < GALAXYSHARDA; a++) {
+        r->shardmaskpix[a] = XCreatePixmap(dpy, root, r->shardw + 2, r->shardh + 2, 8);
+        if (!r->shardmaskpix[a] || !(r->shardmask[a] = XRenderCreatePicture(dpy, r->shardmaskpix[a], r->a8, 0, NULL)))
+            return;
+        solid.alpha = (unsigned short)(65535L * (a + 1) / GALAXYSHARDA);
+        XRenderFillRectangle(dpy, PictOpSrc, r->shardmask[a], &clear, 0, 0, r->shardw + 2, r->shardh + 2);
+        XRenderFillRectangle(dpy, PictOpSrc, r->shardmask[a], &solid, 1, 1, r->shardw, r->shardh);
+        XRenderSetPictureFilter(dpy, r->shardmask[a], FilterBilinear, NULL, 0);
     }
 }
 

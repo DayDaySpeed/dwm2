@@ -645,10 +645,21 @@ static void
 galaxyrendersun(void)
 {
     GalaxyScene *r = &galaxyscene;
-    double a = r->sunalpha * (1 + 1.2 * r->sunpulse);
+    double a = r->sunalpha * (1 + 1.2 * r->sunpulse), th = 2 * GALAXYPI * r->motion * r->tscale / 9, rad = .025 * r->vw, w;
+    GalaxyProj p;
+    int i;
 
-    galaxyrenderglow(GalaxyCool, r->sunp, 20 * r->starscale * (1 + .5 * r->sunpulse), MIN(1, .7 * a),
-            galaxydepthblur(r->sunp.z), 1.1, .5 * r->glowscale * (1 + r->sunpulse));
+    /* 双星: 一冷一暖两颗恒星绕共同质心 (群轨道的焦点) 互转, 光晕随相位轻微脉动, 各带衍射芒 */
+    for (i = 0; i < 2; i++) {
+        p = galaxyproject(galaxyapply(r->world, galaxyv((i ? -1 : 1) * rad * cos(th), 0, (i ? -1 : 1) * rad * sin(th))));
+        if (!p.ok)
+            continue;
+        w = 1 + .12 * sin(th * 2 + i * GALAXYPI);
+        galaxyrenderglow(i ? GalaxyWarm : GalaxyCool, p, (i ? 14 : 17) * r->starscale * w * (1 + .5 * r->sunpulse), MIN(1, .7 * a),
+                galaxydepthblur(p.z), 1.1, .45 * r->glowscale * (1 + r->sunpulse));
+        galaxysprite(GalaxySpike, i ? GalaxyWarm : GalaxyCool, p.x, p.y, MIN(220, (90 + 60 * r->sunpulse) * w * MAX(.5, p.scale)),
+                MIN(1, .55 * a) * galaxynearfade(p.z));
+    }
 }
 
 static void
@@ -667,7 +678,7 @@ galaxyrenderstar(GalaxyStar *s)
     rad = 8.5 * r->starscale * (s->focused ? 1.18 : 1) * (1 + .3 * s->hover);
     if (a > .002)
         galaxyrenderglow(GalaxyCool, s->p, rad, a, blur, .5 * r->glowscale * (1 + .5 * s->hover), 0);
-    if (!s->hit && (a > .05 || s->vis > .05)) {
+    if (!s->hit && !s->died && (a > .05 || s->vis > .05)) {
         rad = MAX(16, 3 * rad * s->p.scale);
         s->bx0 = s->p.x - rad; s->by0 = s->p.y - rad;
         s->bx1 = s->p.x + rad; s->by1 = s->p.y + rad;
@@ -739,6 +750,10 @@ galaxyrenderitems(void)
                     * (1 - .78 * g->eclipse),
                     galaxydepthblur(g->p.z), .55 * (1 + .4 * g->hover + a), .22 * r->glowscale * (1 + 1.5 * a)
                     * (r->mode == GalaxyOrbit ? 1 - galaxyclamp(r->qualityvisual - 2) : 1));
+            /* 衍射芒: 平时淡淡一层, 近点 / 交会 / 超新星 / 点名 / 悬停时变大变亮 */
+            galaxysprite(GalaxySpike, GalaxyWarm, g->p.x, g->p.y,
+                    MIN(260, g->size * MAX(.4, g->p.scale) * (3.2 + 2 * a + 1.5 * g->hover)),
+                    MIN(1, g->alpha * (.22 + .35 * a + .4 * g->hover)) * galaxynearfade(g->p.z) * (1 - .78 * g->eclipse));
             if (g->alpha > .2) {
                 g->hx = g->p.x;
                 g->hy = g->p.y;
@@ -787,6 +802,137 @@ galaxyringfx(GalaxyVec center, GalaxyMat plane, double rad, double a, double wid
         }
 }
 
+/* 屏幕空间光带的一个点 */
+static GalaxyProj
+galaxysp(double x, double y)
+{
+    return (GalaxyProj){x, y, 1, 1, 1};
+}
+
+/* 镜头空间的点 -> 世界坐标 (镜头前方 z 处; x 右, y 下) */
+static GalaxyVec
+galaxycampoint(double x, double y, double z)
+{
+    GalaxyScene *r = &galaxyscene;
+
+    return galaxyadd(r->cam.pos, galaxyapply(r->cam.rot, galaxyv(x, y, z)));
+}
+
+/* 开场 B: 星门. 一座正对镜头的光环从远处迎面而来, 环上 12 个光点跑动, 镜头从环中穿过, 穿过的一刻白光一闪 */
+static void
+galaxyrendergate(double f, double s)
+{
+    GalaxyScene *r = &galaxyscene;
+    GalaxyProj pts[49], lp;
+    XRenderColor flash = {0, 0, 0, 0};
+    double F = r->cam.focal, u = galaxyphase(s, .4, 1.3), z, R = .4 * r->vw, env, th, spin = 2 * GALAXYPI * .3 * s, a, w;
+    int j, k, ring;
+
+    if (u > 0 && u < 1) {
+        z = F * galaxymix(3.4, .12, galaxyeaseincubic(u));
+        /* 离得很近时淡掉 (光带会非常宽, 也已经出了画面) */
+        env = f * galaxysmoothstep(u / .2) * galaxysmoothstep((z / F - .2) / .5);
+        for (ring = 0; ring < 2 && env > .01; ring++) {
+            for (j = 0; j <= 48; j++) {
+                th = 2 * GALAXYPI * j / 48 + (ring ? -spin : spin) * .3;
+                pts[j] = galaxyproject(galaxycampoint(R * (ring ? .9 : 1) * cos(th), R * (ring ? .9 : 1) * sin(th), z));
+            }
+            for (j = 0; j < 48; j++)
+                if (pts[j].ok && pts[j + 1].ok) {
+                    w = MIN(6, pts[j].scale);
+                    galaxyband(&pts[j], &pts[j + 1], env * (ring ? .35 : .85), MAX(1, (ring ? 1.6 : 4) * w));
+                    if (!ring)
+                        galaxyband(&pts[j], &pts[j + 1], env * .16, MAX(4, 22 * w));
+                }
+        }
+        for (k = 0; k < 12 && env > .01; k++) {
+            th = spin * 1.6 + 2 * GALAXYPI * k / 12;
+            lp = galaxyproject(galaxycampoint(R * cos(th), R * sin(th), z));
+            if (!lp.ok)
+                continue;
+            a = env * (.7 + .3 * sin(spin * 3 + k));
+            galaxysprite(GalaxyHalo, k % 3 ? GalaxyCool : GalaxyWarm, lp.x, lp.y, MAX(6, 26 * MIN(6, lp.scale)), MIN(1, a));
+            if (k % 3 == 0)
+                galaxysprite(GalaxySpike, GalaxyCool, lp.x, lp.y, MIN(300, 110 * MIN(4, lp.scale)), .8 * a);
+        }
+        /* 外圈 9 个 V 形标记, 反向慢转 (星门的「锁定环」) */
+        for (k = 0; k < 9 && env > .01; k++) {
+            th = -spin * .5 + 2 * GALAXYPI * k / 9;
+            for (j = 0; j < 3; j++)
+                pts[j] = galaxyproject(galaxycampoint(R * (1.12 - .06 * (j == 1)) * cos(th + (j - 1) * .045),
+                            R * (1.12 - .06 * (j == 1)) * sin(th + (j - 1) * .045), z));
+            if (pts[0].ok && pts[1].ok && pts[2].ok) {
+                galaxyband(&pts[0], &pts[1], .6 * env, MAX(1, 2.4 * MIN(6, pts[1].scale)));
+                galaxyband(&pts[1], &pts[2], .6 * env, MAX(1, 2.4 * MIN(6, pts[1].scale)));
+            }
+        }
+        /* 环心: 一团淡淡的光, 越近越亮 */
+        lp = galaxyproject(galaxycampoint(0, 0, z));
+        if (lp.ok)
+            galaxysprite(GalaxyHalo, GalaxyCool, lp.x, lp.y, MIN(900, .55 * R * lp.scale), .25 * env);
+    }
+    galaxyflushbands();
+    a = f * galaxyflash(s - 1.18, .05, 6);
+    if (a > .01) {
+        flash.red = flash.green = flash.blue = flash.alpha = (unsigned short)(65535 * .3 * MIN(1, a));
+        XRenderFillRectangle(dpy, PictOpOver, r->back, &flash, r->vx, r->vy, r->vw, r->vh);
+    }
+}
+
+/* 开场 C: 大爆炸. 焦点窗口中心爆闪, 两圈冲击波, 粒子向四周喷射; 核心从爆心飞出 (galaxyupdatecores) 后再点火 */
+static void
+galaxyrenderbang(double f, double s)
+{
+    GalaxyScene *r = &galaxyscene;
+    GalaxyProj c = galaxyproject(r->bang), pts[65], a0, a1;
+    XRenderColor flash = {0, 0, 0, 0};
+    double t = s - .3, u, a, th, sp, d0, d1, R;
+    int i, j;
+
+    if (t < -.05 || t > 1.4 || !c.ok)
+        return;
+    /* 爆发前的一瞬: 光点向内收紧 */
+    if (t < 0) {
+        a = f * galaxysmoothstep((t + .05) / .05);
+        galaxysprite(GalaxyHalo, GalaxyWarm, c.x, c.y, 30, a);
+        return;
+    }
+    a = f * galaxyflash(t, .04, 2.2);
+    galaxysprite(GalaxyHalo, GalaxyWarm, c.x, c.y, 60 + 380 * galaxyeaseoutcubic(t / .5), MIN(1, a));
+    galaxysprite(GalaxySpike, GalaxyWarm, c.x, c.y, MIN(600, 520 * (.5 + .5 * a)), MIN(1, 1.2 * a));
+    if (f * galaxyflash(t, .03, 7) > .01) {
+        flash.red = flash.green = flash.blue = flash.alpha = (unsigned short)(65535 * .4 * MIN(1, f * galaxyflash(t, .03, 7)));
+        XRenderFillRectangle(dpy, PictOpOver, r->back, &flash, r->vx, r->vy, r->vw, r->vh);
+    }
+    for (i = 0; i < 2; i++) {
+        u = galaxyphase(t, .15 * i, .8 + .25 * i);
+        if (u <= 0 || u >= 1)
+            continue;
+        R = (i ? .55 : .95) * r->vw * galaxyeaseoutcubic(u);
+        for (j = 0; j <= 64; j++) {
+            th = 2 * GALAXYPI * j / 64;
+            pts[j] = galaxysp(c.x + cos(th) * R, c.y + sin(th) * R * .62);
+        }
+        for (j = 0; j < 64; j++) {
+            galaxyband(&pts[j], &pts[j + 1], f * (i ? .14 : .26) * pow(1 - u, 1.4), 2 + 2 * u);
+            galaxyband(&pts[j], &pts[j + 1], f * .06 * pow(1 - u, 1.4), 10 + 14 * u);
+        }
+    }
+    /* 喷射的粒子: 各自方向和速度, 减速飞散, 拉出短线 */
+    u = galaxyphase(t, 0, 1.3);
+    for (i = 0; i < GALAXYBANGN && u < 1; i++) {
+        th = 2 * GALAXYPI * galaxyhash(i * 3 + 7001);
+        sp = r->vw * (.15 + .7 * pow(galaxyhash(i * 3 + 7002), 1.5));
+        d1 = sp * galaxyeaseoutcubic(u);
+        d0 = sp * galaxyeaseoutcubic(MAX(0, u - .06));
+        a0 = galaxysp(c.x + cos(th) * d0, c.y + sin(th) * d0 * .7);
+        a1 = galaxysp(c.x + cos(th) * d1, c.y + sin(th) * d1 * .7);
+        a = f * pow(1 - u, 1.2) * (.5 + .5 * galaxyhash(i * 3 + 7003));
+        galaxyband(&a0, &a1, .5 * a, 1.1);
+        galaxysprite(GalaxyHalo, i % 4 ? GalaxyWarm : GalaxyCool, a1.x, a1.y, 4 + 5 * galaxyhash(i * 3 + 7003), a);
+    }
+}
+
 /* 开场的一次性光效: 起飞冲击波 / 核心点火冲击环 / 中心光源点火 / 转速峰值的盘面冲击环 */
 static void
 galaxyrenderfx(void)
@@ -800,9 +946,13 @@ galaxyrenderfx(void)
 
     if (f < .01)
         return;
-    /* 起飞: 以焦点窗口为圆心, 屏幕空间的一圈光环 */
+    if (r->variant == GalaxyGate)
+        galaxyrendergate(f, s);
+    else if (r->variant == GalaxyBang)
+        galaxyrenderbang(f, s);
+    /* 起飞: 以焦点窗口为圆心, 屏幕空间的一圈光环 (大爆炸有自己的冲击波) */
     u = galaxyphase(s, .08, .7);
-    if (u > 0 && u < 1) {
+    if (u > 0 && u < 1 && r->variant != GalaxyBang) {
         c.x = r->vx + r->vw * .5;
         c.y = r->vy + r->vh * .5;
         for (i = 0; i < r->nstars; i++)
@@ -820,7 +970,7 @@ galaxyrenderfx(void)
     /* 核心点火: 在各自轨道平面里扩散的冲击环 */
     for (i = 0; i < r->ntags; i++) {
         g = &r->galaxies[i];
-        t = .62 + .06 * g->rank;
+        t = galaxyignitet(g);
         u = galaxyphase(s, t, t + .5);
         if (u > 0 && u < 1 && g->p.ok)
             galaxyringfx(g->pos, g->plane, 2.4 * g->radius * galaxyeaseoutcubic(u), f * .24 * pow(1 - u, 1.3), 1.4);
@@ -836,11 +986,39 @@ galaxyrenderfx(void)
     galaxyflushbands();
 }
 
-/* 屏幕空间光带的一个点 */
-static GalaxyProj
-galaxysp(double x, double y)
+/* 星际尘埃流: 沿三条群轨道流动的细碎粒子, 按开普勒运动在近点加速, 各带一小段尾巴 */
+static void
+galaxyrenderriver(double f)
 {
-    return (GalaxyProj){x, y, 1, 1, 1};
+    GalaxyScene *r = &galaxyscene;
+    GalaxyProj a, b;
+    GalaxyVec v;
+    double t = r->motion * r->tscale, h1, h2, h3, M, sc, al;
+    int i, l, n = r->quiet ? GALAXYRIVER / 2 : GALAXYRIVER;
+
+    for (i = 0; i < n; i++) {
+        l = i % GALAXYLANES;
+        if (!(r->lanemask & 1 << l))
+            continue;
+        h1 = galaxyhash(i * 3 + 9001);
+        h2 = galaxyhash(i * 3 + 9002);
+        h3 = galaxyhash(i * 3 + 9003);
+        /* 比核心快一些 (周期的 1/1.3–1/1.9), 粒子从核心旁边流过 */
+        M = 2 * GALAXYPI * (h1 + galaxylanes[l].dir * t * (1.3 + .6 * h2) / galaxylanes[l].period);
+        sc = 1 + .09 * (h2 - .5);
+        v = galaxylanepoint(l, galaxykepler(M, galaxylanes[l].e));
+        a = galaxyproject(galaxyapply(r->world, galaxyv(v.x * sc, v.y + (h3 - .5) * .03 * r->vw, v.z * sc)));
+        v = galaxylanepoint(l, galaxykepler(M - galaxylanes[l].dir * .05, galaxylanes[l].e));
+        b = galaxyproject(galaxyapply(r->world, galaxyv(v.x * sc, v.y + (h3 - .5) * .03 * r->vw, v.z * sc)));
+        if (!a.ok)
+            continue;
+        al = f * (.25 + .3 * h3) * galaxynearfade(a.z) * (r->mode == GalaxyOrbit ? 1 - .5 * galaxyclamp(r->qualityvisual - 1) : 1);
+        if (al < .01)
+            continue;
+        if (b.ok)
+            galaxyband(&a, &b, .35 * al, MAX(.4, .9 * a.scale));
+        galaxysprite(GalaxyHalo, h3 < .3 ? GalaxyWarm : GalaxyCool, a.x, a.y, MAX(1.5, 4.5 * a.scale * r->starscale), al);
+    }
 }
 
 /* 驻留特效: 轨道光流 / 星座连线 / 核心光桥 / 超新星冲击环 / 彗星 / 流星. 都是 motion 的函数, 强度乘 holdw */
@@ -858,6 +1036,7 @@ galaxyrenderholdfx(void)
 
     if (f < .01 || (r->mode != GalaxyOrbit && r->mode != GalaxyCollapse))
         return;
+    galaxyrenderriver(f);
     /* 轨道光流: 每条群椭圆 6 个光点, 每条局部环 2 个, 沿轨道流动, 带短尾 (安静模式不画) */
     for (l = 0; l < GALAXYLANES && !r->quiet; l++) {
         if (!(r->lanemask & 1 << l))
@@ -900,12 +1079,13 @@ galaxyrenderholdfx(void)
             }
         }
     }
+    f *= r->calm;   /* 以下是随机特效: 天象 (诞生 / 流星 / 通知 / 报时) 发生时让位 */
     /* 星座连线: 按轨道角把这个星系的窗口卡片连起来, 首颗再连到核心 */
     if (r->npop && galaxycycle(r->motion, 2, 4, &k, &local)) {
         g = &r->galaxies[r->constg >= 0 ? r->constg : r->popord[k % r->npop]];
         env = f * galaxysmoothstep(local / .4) * (1 - galaxysmoothstep((local - 1.6) / 1));
         for (i = n = 0; i < r->nstars && n < 32; i++)
-            if (r->stars[i].galaxy == g->tag && r->stars[i].p.ok)
+            if (r->stars[i].galaxy == g->tag && r->stars[i].p.ok && !r->stars[i].died)
                 order[n++] = i;
         for (i = 1; i < n; i++)     /* 按轨道角插入排序 (每个星系的星不多) */
             for (j = i; j > 0 && fmod(galaxyorbitangle(&r->stars[order[j]], GALAXYHOLD, r->motion) + 100 * GALAXYPI, 2 * GALAXYPI)
@@ -988,6 +1168,192 @@ galaxyrenderholdfx(void)
         galaxysprite(GalaxyHalo, GalaxyCool, hp.x, hp.y, 12, .8 * env);
     }
     galaxyflushbands();
+}
+
+/* 带透明度的文字 (先画一层暗影保证在亮处也看得清). Xft 的颜色按预乘处理 */
+static void
+galaxytext(XftFont *font, double x, double y, const char *text, double a, int center)
+{
+    GalaxyScene *r = &galaxyscene;
+    XRenderColor rc;
+    XftColor col;
+    XGlyphInfo ext;
+    int len = strlen(text), k;
+
+    if (!r->titledraw || !font || a < .02 || !len)
+        return;
+    if (center) {
+        XftTextExtentsUtf8(dpy, font, (XftChar8 *)text, len, &ext);
+        x -= ext.xOff * .5;
+    }
+    for (k = 0; k < 2; k++) {
+        double v = k ? 1 : 0, al = k ? a : .55 * a;
+        rc.red = (unsigned short)(0xe900 * v * al);
+        rc.green = (unsigned short)(0xf400 * v * al);
+        rc.blue = (unsigned short)(0xffff * v * al);
+        rc.alpha = (unsigned short)(0xffff * al);
+        if (!XftColorAllocValue(dpy, DefaultVisual(dpy, screen), DefaultColormap(dpy, screen), &rc, &col))
+            return;
+        XftDrawStringUtf8(r->titledraw, &col, font, (int)x + (k ? 0 : 1), (int)y + (k ? 0 : 2), (XftChar8 *)text, len);
+        XftColorFree(dpy, DefaultVisual(dpy, screen), DefaultColormap(dpy, screen), &col);
+    }
+}
+
+/* 脉冲星: 一个空 tag 的核心 (没有空的就选最外圈的) 发出两道相反的光柱, 绕倾斜的轴每 14s 扫一圈, 扫向镜头时变亮 */
+static void
+galaxyrenderpulsar(double f)
+{
+    GalaxyScene *r = &galaxyscene;
+    GalaxyCore *g;
+    GalaxyProj pts[5];
+    GalaxyVec axis, u, v, dir, tocam;
+    double t = r->motion * r->tscale, th, align, a, L = .32 * r->vw, w;
+    int i, j, side;
+
+    if (r->pulsar == -1) {
+        r->pulsar = -2;
+        for (i = 0; i < r->ntags && r->pulsar < 0; i++)
+            if (!r->galaxies[i].nstars)
+                r->pulsar = i;
+        for (i = 0; i < r->ntags && r->pulsar < 0; i++)
+            if (r->galaxies[i].lane == GALAXYLANES - 1)
+                r->pulsar = i;
+        if (r->log && r->pulsar >= 0)
+            fprintf(r->log, "galaxy pulsar: tag %d\n", r->pulsar + 1), fflush(r->log);
+    }
+    if (r->pulsar < 0 || r->quiet)
+        return;
+    g = &r->galaxies[r->pulsar];
+    f *= 1 - g->fill;           /* 这个 tag 诞生了窗口: 脉冲星平息, 变回普通星系 */
+    if (f < .01 || !g->p.ok || g->alpha < .05)
+        return;
+    axis = galaxyapply(g->plane, galaxyv(.34, .94, 0));
+    u = galaxynormalize(galaxycross(axis, galaxyv(0, 0, 1)));
+    v = galaxycross(axis, u);
+    th = 2 * GALAXYPI * t / 14;
+    dir = galaxyadd(galaxyscale(axis, .5), galaxyscale(galaxyadd(galaxyscale(u, cos(th)), galaxyscale(v, sin(th))), .866));
+    tocam = galaxynormalize(galaxysub(r->cam.pos, g->pos));
+    for (side = 0; side < 2; side++) {
+        align = MAX(0, galaxydot(dir, tocam) * (side ? -1 : 1));
+        a = f * g->alpha * (.10 + .5 * pow(align, 6)) * galaxynearfade(g->p.z);
+        for (j = 0; j < 5; j++)
+            pts[j] = galaxyproject(galaxyadd(g->pos, galaxyscale(dir, (side ? -1 : 1) * L * j / 4)));
+        for (j = 0; j < 4; j++)
+            if (pts[j].ok && pts[j + 1].ok) {
+                w = (1 + 1.6 * j) * pts[j].scale;
+                galaxyband(&pts[j], &pts[j + 1], a * (1 - j / 4.5), MAX(.6, 1.2 * w));
+                galaxyband(&pts[j], &pts[j + 1], .35 * a * (1 - j / 4.5), MAX(2, 4.5 * w));
+            }
+        if (align > .7)
+            galaxysprite(GalaxySpike, GalaxyCool, g->p.x, g->p.y, MIN(240, 160 * MAX(.5, g->p.scale) * align),
+                    MIN(1, f * pow(align, 8)) * galaxynearfade(g->p.z));
+    }
+    /* 核心本身按 0.9s 的周期脉动 */
+    galaxysprite(GalaxyHalo, GalaxyCool, g->p.x, g->p.y, MAX(6, 26 * g->p.scale * r->starscale),
+            f * g->alpha * .5 * pow(.5 + .5 * cos(2 * GALAXYPI * t / .9), 4) * galaxynearfade(g->p.z));
+}
+
+/* 天象: 新星诞生的闪光 / 关闭窗口的流星尾 / 通知彗星和标题 / 整点光波和时间 */
+static void
+galaxyrenderevents(void)
+{
+    GalaxyScene *r = &galaxyscene;
+    GalaxyStar *s;
+    GalaxyProj pts[11], c;
+    GalaxyVec head, tail, dir, A, B, C;
+    GalaxyMat disk;
+    double now = galaxynow(), f = r->holdw, t, u, env, a, L, z, sx, sy, h;
+    char clock[8];
+    int i, j, ntext = 0;
+    struct GalaxyText { double x, y, a; int note; } text[GALAXYNOTES + 1];
+
+    if (r->mode != GalaxyIntro && r->mode != GalaxyOrbit && r->mode != GalaxyCollapse)
+        return;
+    galaxyrenderpulsar(f);
+    for (i = 0; i < r->nstars; i++) {
+        s = &r->stars[i];
+        if (s->born > 0 && s->p.ok) {
+            t = now - s->born;
+            env = galaxyflash(t, .15, 2.4) * galaxynearfade(s->p.z);
+            galaxysprite(GalaxySpike, GalaxyCool, s->p.x, s->p.y, MIN(340, 300 * MAX(.5, s->p.scale) * (.6 + .4 * env)), MIN(1, 1.2 * env));
+            galaxysprite(GalaxyHalo, GalaxyCool, s->p.x, s->p.y, MAX(12, 110 * s->p.scale * galaxyeaseoutcubic(t / 1.2)),
+                    .6 * env);
+            u = galaxyphase(t, .1, 1.3);
+            if (u > 0 && u < 1)
+                galaxyringfx(s->pos, galaxymul(r->galaxies[s->galaxy].plane, r->galaxies[s->galaxy].ring[s->ring]),
+                        .11 * r->vw * galaxyeaseoutcubic(u), .45 * (1 - u), 1.8);
+        }
+        if (s->died > 0 && s->p.ok && (t = now - s->died) < 1.6) {
+            /* 流星尾: 沿速度反方向, 越飞越长 */
+            dir = galaxynormalize(s->vel);
+            L = r->cam.focal * (.05 + .5 * galaxyeaseoutcubic(galaxyphase(t, .2, 1.2)));
+            env = galaxysmoothstep(t / .25) * (1 - galaxysmoothstep(galaxyphase(t, 1.1, 1.6)));
+            for (j = 0; j <= 10; j++)
+                pts[j] = galaxyproject(galaxysub(s->pos, galaxyscale(dir, L * j / 10)));
+            for (j = 0; j < 10; j++)
+                if (pts[j].ok && pts[j + 1].ok) {
+                    a = env * pow(1 - j / 10.0, 1.4) * galaxynearfade(pts[j].z);
+                    galaxyband(&pts[j], &pts[j + 1], .7 * a, MAX(.8, (4 - 3.4 * j / 10.0) * pts[j].scale));
+                    galaxyband(&pts[j], &pts[j + 1], .16 * a, MAX(2.5, 11 * pts[j].scale));
+                }
+            galaxyrenderglow(GalaxyWarm, s->p, 14, MIN(1, env) * galaxynearfade(s->p.z), galaxydepthblur(s->p.z), 1, .3);
+            galaxysprite(GalaxySpike, GalaxyWarm, s->p.x, s->p.y, MIN(260, 200 * MAX(.5, s->p.scale)),
+                    galaxyflash(t, .12, 3) * galaxynearfade(s->p.z));
+        }
+    }
+    /* 通知彗星: 镜头空间里的一条弧 (不管镜头在哪都划过画面), 头部右侧跟着通知文字 */
+    for (i = 0; i < r->nnote; i++) {
+        if (r->noteat[i] <= 0 || (t = now - r->noteat[i]) >= 6)
+            continue;
+        u = t / 6;
+        h = galaxyhash((unsigned int)(r->noteat[i] * 1000));
+        z = 1.5 * r->cam.focal;
+        A = galaxyv(.62 + .1 * h, -.30 + .12 * h, 1);
+        C = galaxyv(.05, -.12 - .1 * h, .85);
+        B = galaxyv(-.62, .05 + .15 * h, 1.1);
+        head = galaxybezier(A, C, B, u);
+        sx = head.x * r->vw * z / r->cam.focal;
+        sy = head.y * r->vw * z / r->cam.focal;
+        head = galaxyadd(r->cam.pos, galaxyapply(r->cam.rot, galaxyv(sx, sy, z * head.z)));
+        tail = galaxyscale(galaxynormalize(galaxyadd(galaxynormalize(head), galaxyapply(r->cam.rot, galaxyv(.6, -.3, 0)))),
+                .22 * r->vw);
+        env = f * galaxysmoothstep(u / .08) * (1 - galaxysmoothstep((u - .85) / .15));
+        for (j = 0; j <= 10; j++)
+            pts[j] = galaxyproject(galaxyadd(head, galaxyscale(tail, j / 10.0)));
+        for (j = 0; j < 10; j++)
+            if (pts[j].ok && pts[j + 1].ok) {
+                a = env * pow(1 - j / 10.0, 1.3) * galaxynearfade(pts[j].z);
+                galaxyband(&pts[j], &pts[j + 1], .42 * a, MAX(.8, (4.2 - 3.6 * j / 10.0) * pts[j].scale));
+                galaxyband(&pts[j], &pts[j + 1], .12 * a, MAX(2.5, 12 * pts[j].scale));
+            }
+        if (pts[0].ok && env > .01) {
+            galaxyrenderglow(GalaxyCool, pts[0], 22, MIN(1, env), galaxydepthblur(pts[0].z), 1.2, .5);
+            galaxysprite(GalaxySpike, GalaxyCool, pts[0].x, pts[0].y, 160, .7 * env);
+            text[ntext++] = (struct GalaxyText){pts[0].x + 34, pts[0].y + 8, env * galaxysmoothstep((u - .04) / .1), i};
+        }
+    }
+    /* 整点: 盘面上一圈慢速大光波 (第二圈稍晚), 双星旁显示时间 */
+    if (r->chimeat > 0 && (t = now - r->chimeat) < 6) {
+        disk = galaxymul(r->world, galaxyrotx(GALAXYPI / 2));
+        for (j = 0; j < 2; j++) {
+            u = galaxyphase(t, .5 * j, 5 + .5 * j);
+            if (u > 0 && u < 1)
+                galaxyringfx(galaxyv(0, 0, 0), disk, .95 * r->vw * galaxyeaseoutcubic(u), f * (j ? .14 : .3) * pow(1 - u, 1.2),
+                        j ? 1.5 : 2.6);
+        }
+        c = galaxyproject(galaxyv(0, 0, 0));
+        env = f * galaxysmoothstep(t / .6) * (1 - galaxysmoothstep((t - 3.4) / .8));
+        if (c.ok && env > .02)
+            text[ntext++] = (struct GalaxyText){c.x, c.y + MAX(60, 90 * c.scale), env, -1};
+    }
+    galaxyflushbands();
+    for (i = 0; i < ntext; i++)
+        if (text[i].note < 0) {
+            snprintf(clock, sizeof clock, "%02d:00", r->chimehour);
+            galaxytext(r->clockfont, text[i].x, text[i].y + (r->clockfont ? r->clockfont->ascent : 0), clock, text[i].a, 1);
+        } else {
+            galaxytext(r->notefont, text[i].x, text[i].y, r->note[text[i].note], text[i].a, 0);
+        }
 }
 
 /* 键盘过滤词: 屏幕下方居中的半透明框, 「过滤: 词 · N 个匹配 · 操作提示」 */
@@ -1088,7 +1454,8 @@ galaxyrendertrails(void)
     for (i = 0; i < r->nstars + r->ntags; i++) {
         if (i < r->nstars) {
             speed = galaxylen(r->stars[i].vel) / r->cam.focal;
-            a = gain * r->stars[i].alpha * MIN(1, r->stars[i].brightness) * (.12 + .2 * galaxyclamp(3 * speed));
+            a = gain * r->stars[i].alpha * MIN(1, r->stars[i].brightness) * (.12 + .2 * galaxyclamp(3 * speed))
+                * !r->stars[i].died;    /* 流星有自己的长尾 */
         } else {
             a = .16 * gain * r->galaxies[i - r->nstars].alpha * (1 - r->streakalpha / .24);  /* 驻留时由长曝光星轨取代 */
         }
@@ -1105,6 +1472,98 @@ galaxyrendertrails(void)
     galaxyflushbands();
 }
 
+/* 开场 A: 桌面碎块. 由近及远依次开始, 绕灭点 (视口中心) 旋涡状收缩、自转、变小, 末端化成拖尾的光点.
+ * 每块: 源图和蒙版设同一个仿射变换 (蒙版带 1px 透明边, 双线性采样后边缘抗锯齿), 一次合成 */
+static int
+galaxyshardsactive(void)
+{
+    GalaxyScene *r = &galaxyscene;
+
+    return r->variant == GalaxyShatter && r->shardsrc && r->shardmask[GALAXYSHARDA - 1]
+        && (r->mode == GalaxyIntro || r->mode == GalaxyCollapse) && r->iclock < 1.6 && galaxybeatw() > .01;
+}
+
+static void
+galaxyshardat(int i, int j, double s, double *cx, double *cy, double *k, double *a, double *u)
+{
+    GalaxyScene *r = &galaxyscene;
+    double vx = r->vx + r->vw * .5, vy = r->vy + r->vh * .5, x0 = r->vx + (i + .5) * r->shardw, y0 = r->vy + (j + .5) * r->shardh;
+    double d = hypot(x0 - vx, y0 - vy) / hypot(r->vw * .5, r->vh * .5), t0, e, sw;
+
+    t0 = .2 + .42 * d + .1 * galaxyhash(i * 31 + j * 7 + 3);
+    *u = galaxyphase(s, t0, t0 + .75);
+    e = pow(*u, 2.2);
+    sw = (1.5 + .9 * galaxyhash(i * 31 + j * 7 + 4)) * e;
+    *cx = vx + (cos(sw) * (x0 - vx) - sin(sw) * (y0 - vy)) * (1 - e);
+    *cy = vy + (sin(sw) * (x0 - vx) + cos(sw) * (y0 - vy)) * (1 - e);
+    *k = pow(1 - e, 1.4);
+    *a = sw + (galaxyhash(i * 31 + j * 7 + 5) - .5) * 2.5 * e;
+}
+
+static void
+galaxyrendershards(void)
+{
+    GalaxyScene *r = &galaxyscene;
+    XTransform xf = {{{0}}};
+    GalaxyProj pa, pb;
+    double f = galaxybeatw(), s = r->iclock, cx, cy, k, a, u, px, py, pk, pa_, pu, c, sn, bx, by, ex, ey, al, hw = r->shardw * .5, hh = r->shardh * .5;
+    int i, j, lvl, x0, y0, x1, y1;
+
+    if (!galaxyshardsactive())
+        return;
+    for (j = 0; j < GALAXYSHARDY; j++)
+        for (i = 0; i < GALAXYSHARDX; i++) {
+            galaxyshardat(i, j, s, &cx, &cy, &k, &a, &u);
+            if (u >= 1 || k < .015)
+                continue;
+            al = f * (1 - galaxysmoothstep(galaxyphase(u, .7, 1)));
+            if (u <= 0 && f > .99) {   /* 还没开始动: 原样拷贝 */
+                XRenderComposite(dpy, PictOpSrc, r->shardflat, None, r->back, i * r->shardw, j * r->shardh, 0, 0,
+                        r->vx + i * r->shardw, r->vy + j * r->shardh, MIN(r->shardw, r->vw - i * r->shardw), MIN(r->shardh, r->vh - j * r->shardh));
+                continue;
+            }
+            lvl = (int)(al * GALAXYSHARDA + .5) - 1;
+            if (lvl < 0)
+                continue;
+            /* 目标 -> 源图: p = c0 + R(-a) (d - c) / k (源图坐标相对视口) */
+            c = cos(a) / k;
+            sn = sin(a) / k;
+            bx = (i + .5) * r->shardw - (c * cx + sn * cy);
+            by = (j + .5) * r->shardh - (-sn * cx + c * cy);
+            xf.matrix[0][0] = XDoubleToFixed(c);
+            xf.matrix[0][1] = XDoubleToFixed(sn);
+            xf.matrix[0][2] = XDoubleToFixed(bx);
+            xf.matrix[1][0] = XDoubleToFixed(-sn);
+            xf.matrix[1][1] = XDoubleToFixed(c);
+            xf.matrix[1][2] = XDoubleToFixed(by);
+            xf.matrix[2][2] = XDoubleToFixed(1);
+            XRenderSetPictureTransform(dpy, r->shardsrc, &xf);
+            xf.matrix[0][2] = XDoubleToFixed(bx - i * r->shardw + 1);
+            xf.matrix[1][2] = XDoubleToFixed(by - j * r->shardh + 1);
+            XRenderSetPictureTransform(dpy, r->shardmask[lvl], &xf);
+            ex = k * (fabs(cos(a)) * hw + fabs(sin(a)) * hh) + 2;
+            ey = k * (fabs(sin(a)) * hw + fabs(cos(a)) * hh) + 2;
+            x0 = (int)floor(cx - ex);
+            y0 = (int)floor(cy - ey);
+            x1 = (int)ceil(cx + ex);
+            y1 = (int)ceil(cy + ey);
+            XRenderComposite(dpy, PictOpOver, r->shardsrc, r->shardmask[lvl], r->back, x0, y0, x0, y0, x0, y0, x1 - x0, y1 - y0);
+            /* 碎块变小后: 光点 + 指向来路的短尾 */
+            if (u > .3) {
+                galaxyshardat(i, j, s - .07, &px, &py, &pk, &pa_, &pu);
+                pa = galaxysp(cx, cy);
+                pb = galaxysp(px, py);
+                galaxyband(&pa, &pb, .3 * al * galaxysmoothstep((u - .3) / .3), 1.2);
+                galaxysprite(GalaxyHalo, (i + j) % 3 ? GalaxyCool : GalaxyWarm, cx, cy, 5 + 10 * (1 - k), .7 * al * galaxysmoothstep((u - .3) / .4));
+            }
+        }
+    galaxyflushbands();
+    xf.matrix[0][0] = xf.matrix[1][1] = xf.matrix[2][2] = XDoubleToFixed(1);
+    xf.matrix[0][1] = xf.matrix[1][0] = xf.matrix[0][2] = xf.matrix[1][2] = 0;
+    for (lvl = 0; lvl < GALAXYSHARDA; lvl++)
+        XRenderSetPictureTransform(dpy, r->shardmask[lvl], &xf);
+}
+
 static void
 galaxyrenderbackground(void)
 {
@@ -1112,23 +1571,30 @@ galaxyrenderbackground(void)
     XRenderColor shade = {0, 0, 0, 0};
     double key[4] = {r->bright, r->vign, r->desk, r->live ? r->reveal : 0};
 
-    /* 参数与上一帧相同 (驻留态): 直接用缓存, 省掉全屏暗角缩放和填充 */
-    if (r->bg && r->bgok && !memcmp(key, r->bgkey, sizeof key)) {
+    /* 参数与上一帧相同 (驻留态): 直接用缓存, 省掉全屏暗角缩放和填充. 深空每帧随镜头平移, 不能用缓存 */
+    if (r->space < .004 && r->bg && r->bgok && !memcmp(key, r->bgkey, sizeof key) && !galaxyshardsactive()) {
         XRenderComposite(dpy, PictOpSrc, r->bg, None, r->back, 0, 0, 0, 0, 0, 0, r->w, r->h);
         return;
     }
     XRenderComposite(dpy, PictOpSrc, r->wallpaper, None, r->back, 0, 0, 0, 0, 0, 0, r->w, r->h);
     if (r->live && r->reveal > 0)
         XRenderComposite(dpy, PictOpOver, r->live, galaxywhite(r->reveal), r->back, 0, 0, 0, 0, 0, 0, r->w, r->h);
-    if (r->desktop && r->desk > 0)
+    if (r->desktop && r->desk > 0 && !galaxyshardsactive())
         XRenderComposite(dpy, PictOpOver, r->desktop, galaxywhite(r->desk), r->back, 0, 0, 0, 0, 0, 0, r->w, r->h);
     shade.alpha = (unsigned short)(65535 * galaxyclamp(1 - r->bright));
     if (shade.alpha)
         XRenderFillRectangle(dpy, PictOpOver, r->back, &shade, 0, 0, r->w, r->h);
+    galaxyrenderspace();
+    if (galaxyshardsactive()) {
+        /* 开场 A: 碎块盖在深空之上; 截下的整个桌面 (含窗口阴影 / 托盘等) 仍在最上面淡出, 首帧不变 */
+        galaxyrendershards();
+        if (r->desktop && r->desk > 0)
+            XRenderComposite(dpy, PictOpOver, r->desktop, galaxywhite(r->desk), r->back, 0, 0, 0, 0, 0, 0, r->w, r->h);
+    }
     if (r->vignette && r->vign > .004)
         XRenderComposite(dpy, PictOpOver, r->vignette, galaxywhite(r->vign), r->back, 0, 0, 0, 0, 0, 0, r->w, r->h);
     /* 连续两帧参数相同: 存下来, 之后直接复用 */
-    if (r->bg && !memcmp(key, r->bglast, sizeof key)) {
+    if (r->space < .004 && r->bg && !memcmp(key, r->bglast, sizeof key) && !galaxyshardsactive()) {
         XRenderComposite(dpy, PictOpSrc, r->back, None, r->bg, 0, 0, 0, 0, 0, 0, r->w, r->h);
         memcpy(r->bgkey, key, sizeof key);
         r->bgok = 1;
@@ -1195,6 +1661,7 @@ galaxyrender(void)
     next = galaxynow(); r->phasecost[2] += next - t; t = next;
     galaxyrenderitems();
     galaxyrenderholdfx();
+    galaxyrenderevents();
     galaxyrenderfx();
     galaxyrendertitle();
     galaxyrenderquery();
