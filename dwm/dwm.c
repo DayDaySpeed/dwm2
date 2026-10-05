@@ -387,13 +387,14 @@ static void focuspreviewwin(Client *focus_c, Monitor *m);
 static XImage *getwindowximage(Client *c);
 static XImage *capturehidden(Client *c);
 static XImage *scaledownimage(Client *c, unsigned int cw, unsigned int ch);
-static void relax(const Arg *arg);
-static int relaxevent(XEvent *e);
-static void relaxpost(XEvent *e);
-static void relaxtick(void);
-static long relaxtimeout(void);
-static void relaxcleanup(void);
-static int relaxactive(void);
+static void galaxy(const Arg *arg);
+static int galaxyevent(XEvent *e);
+static void galaxypost(XEvent *e);
+static void galaxytick(void);
+static long galaxytimeout(void);
+static void galaxycleanup(void);
+static int galaxyactive(void);
+static void galaxyproperty(XPropertyEvent *ev);
 
 /* variables */
 static Systray *systray =  NULL;
@@ -749,7 +750,7 @@ cleanup(void)
     Monitor *m;
     size_t i;
 
-    relaxcleanup();
+    galaxycleanup();
     view(&a);
     selmon->lt[selmon->sellt] = &foo;
     for (m = mons; m; m = m->next)
@@ -2166,6 +2167,8 @@ propertynotify(XEvent *e)
     }
     if ((ev->window == root) && (ev->atom == XA_WM_NAME))
         updatestatus();
+    else if (ev->window == root && ev->state == PropertyNewValue)
+        galaxyproperty(ev);     /* bin/galaxysaver.py 设置 _DWM_GALAXY: 无操作时进入星系屏保 */
     else if (ev->state == PropertyDelete)
         return; /* ignore */
     else if ((c = wintoclient(ev->window))) {
@@ -2550,25 +2553,25 @@ run(void)
     long wait;
     int fd = ConnectionNumber(dpy);
     XSync(dpy, False);
-    /* main event loop; Super+Z 动画期间不阻塞, 按帧时间驱动 relaxtick */
+    /* main event loop; Super+Z 动画期间不阻塞, 按帧时间驱动 galaxytick */
     while (running) {
-        if (relaxactive()) {
-            while (running && relaxactive() && XPending(dpy)) {
+        if (galaxyactive()) {
+            while (running && galaxyactive() && XPending(dpy)) {
                 XNextEvent(dpy, &ev);
-                if (!relaxevent(&ev)) {
+                if (!galaxyevent(&ev)) {
                     if (handler[ev.type])
                         handler[ev.type](&ev);
-                    relaxpost(&ev);
+                    galaxypost(&ev);
                 }
             }
-            if (!running || !relaxactive())
+            if (!running || !galaxyactive())
                 continue;
-            relaxtick();
-            if (QLength(dpy) || !relaxactive())
+            galaxytick();
+            if (QLength(dpy) || !galaxyactive())
                 continue;
             FD_ZERO(&fds);
             FD_SET(fd, &fds);
-            wait = relaxtimeout();
+            wait = galaxytimeout();
             timeout.tv_sec = wait / 1000000;
             timeout.tv_usec = wait % 1000000;
             select(fd + 1, &fds, NULL, NULL, wait < 0 ? NULL : &timeout);

@@ -24,7 +24,7 @@ options:
 	${CC} -c ${CFLAGS} $<
 
 ${OBJ}: config.h config.mk
-dwm.o: galaxy.c
+dwm.o: galaxy.c galaxy-scene.c galaxy-render.c galaxy-build.c galaxy-control.c
 
 dwm: ${OBJ}
 	${CC} -o $@ ${OBJ} ${LDFLAGS}

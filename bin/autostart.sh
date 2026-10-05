@@ -21,7 +21,8 @@ daemons() {
     [ $1 ] && sleep $1
     $DWM/bin/statusbar/statusbar.sh cron &    # 开启状态栏定时更新
     xss-lock -l -n $DWM/bin/dimscreen.sh -- $DWM/bin/blurlock.sh &  # 自动锁屏: 先调暗提醒, 睡眠前先锁好屏 (时间见 bin/dpms.sh)
-    $DWM/bin/dpms.sh &                        # 无操作 9.5 分钟调暗 / 10 分钟锁屏 / 12 分钟熄屏 (持续守护, 防止被改回默认)
+    $DWM/bin/dpms.sh &                        # 无操作 19.5 分钟调暗 / 20 分钟锁屏 / 22 分钟熄屏 (持续守护, 防止被改回默认)
+    $DWM/bin/galaxysaver.py &                 # 无操作 10 分钟进入 Super+Z 星系屏保 (动一下回到桌面)
     fcitx5 &                                  # 开启输入法
     flameshot &                               # 截图要跑一个程序在后台 不然无法将截图保存到剪贴板
     { has clipmenud && clipmenud || parcellite; } & # 剪贴板历史 (Super+X 调出; 未装 clipmenu 时退回 parcellite)

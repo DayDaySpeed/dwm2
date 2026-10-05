@@ -140,7 +140,7 @@ static Key keys[] = {
     { MODKEY|ShiftMask,    XK_Right,        tagtoright,       {0} },                     /* super shift right  |  将本窗口移动到右边tag */
 
     { MODKEY,              XK_a,            previewallwin,    {0} },                     /* super a            |  overview */
-    { MODKEY,              XK_z,            relax,            {0} },                     /* super z            |  3D 工作空间星系 (停在轨道态) / 回到桌面 */
+    { MODKEY,              XK_z,            galaxy,           {0} },                     /* super z            |  3D 工作空间星系 (停在轨道态) / 回到桌面 */
 
     { MODKEY,              XK_comma,        setmfact,         {.f = -0.05} },            /* super ,            |  缩小主工作区 */
     { MODKEY,              XK_period,       setmfact,         {.f = +0.05} },            /* super .            |  放大主工作区 */
@@ -274,3 +274,12 @@ static Button buttons[] = {
     { ClkStatusText,       MODKEY,          Button4,          viewtoleft,    {0} },                                   // super+滚轮上  |  Any          |  向前切换tag
     { ClkStatusText,       MODKEY,          Button5,          viewtoright,   {0} },                                   // super+滚轮下  |  Any          |  向后切换tag
 };
+
+/* Super+Z 星系 (dwm/galaxy*.c). 不写时用 galaxy.c 里的默认值; 改完按 Super+Shift+R 重新编译生效.
+ * 省电模式 (Super+P / 拔电自动) 打开时星系自动进入安静模式: 特效间隔 x2.5, 不显示流星 / 彗星 / 轨道光流, 帧率降低 */
+#define GALAXY_INTRO    1.35    /* 开场时间拉伸: 越大开场越慢 (1.35 约 7.7 秒) */
+#define GALAXY_FXGAP    1.0     /* 驻留特效间隔的倍数: 2 = 特效少一半 */
+#define GALAXY_DIAG     30.0    /* 驻留时镜头翻滚 (度), 轨道盘面沿屏幕对角线铺开; 0 = 水平 */
+#define GALAXY_TOURDIST .5      /* 巡游镜头离星系的距离: 越小越近 */
+#define GALAXY_SHOT     9.0     /* 每个机位停留的秒数 */
+#define GALAXY_QUIETFPS 30.0    /* 安静模式的驻留帧率 */
