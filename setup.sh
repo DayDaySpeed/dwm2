@@ -25,7 +25,8 @@ deps() {
         gammastep clipmenu autorandr playerctl brightnessctl flameshot xss-lock fcitx5 pamixer x11vnc \
         intel-media-driver libva-utils \
         pcmanfm \
-        ranger ueberzugpp ffmpegthumbnailer translate-shell
+        ranger ueberzugpp ffmpegthumbnailer translate-shell \
+        git-lfs
     yay -S --needed sunshine-bin    # 远程桌面串流 (Windows 端用 Moonlight)
     # 音乐播放器 SPlayer (Super + M): 网易云风格, 支持本地音乐; 官方 AppImage 自带 Electron, 无需编译
     if [ ! -x ~/.local/share/splayer/SPlayer.AppImage ]; then
@@ -42,6 +43,11 @@ link() {
     step "软链接"
     ln -sfn "$DWM/config/xinitrc" ~/.xinitrc
     ln -sfn "$DWM/config/Xresources" ~/.Xresources
+    # wallpaper/ 是私有子模块 dwm2-wallpaper (Git LFS)。没权限时跳过, 目录留空。
+    if [ -f .gitmodules ]; then
+        git submodule update --init -- wallpaper \
+            || printf '\033[33m壁纸子模块未拉取: 私有仓库, 需要 dwm2-wallpaper 的访问权限, 并已安装 git-lfs\033[0m\n'
+    fi
     if [ -d ~/Pictures/wallpaper ] && [ ! -L ~/Pictures/wallpaper ]; then
         mv -n ~/Pictures/wallpaper/* "$DWM/wallpaper/" 2>/dev/null || true
         rmdir ~/Pictures/wallpaper

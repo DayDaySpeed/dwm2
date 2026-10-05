@@ -5,7 +5,7 @@
 #   livewall.sh toggle   动态 / 静态 切换, 切过去后随机挑一个 (Super+P 菜单 switch wallpaper mode to live / static); 选择会记住, 下次开机沿用
 #   livewall.sh cron     定时换壁纸 (autostart 每 300 秒调用): 只换静态壁纸, 视频本身在循环, 不打断
 #   livewall.sh sync     把 Steam 上新订阅的 Wallpaper Engine 壁纸复制进 wallpaper/live (auto 时也会自动做)
-# 动态壁纸都在 $DWM/wallpaper/live (不提交到 git), 图片放 $DWM/wallpaper/static, 播放不依赖 Steam
+# 动态壁纸都在 $DWM/wallpaper/live, 图片放 $DWM/wallpaper/static。wallpaper/ 是私有 Git LFS 子模块, 播放不依赖 Steam
 #   live 下的视频文件: mpv 播放
 #   live 下的 Wallpaper Engine 场景目录 (含 project.json): linux-wallpaperengine 渲染 (未安装时跳过)
 #     开全屏窗口, 改成不受 dwm 管理的最底层窗口 (见 play_scene)
