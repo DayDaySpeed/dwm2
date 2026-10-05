@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -vE 'Qt:|CAP_SYS_ADMIN|drop_elevated|get info for|Color |Creating encoder|Streaming bitrate|Screencasting|Detected display|Info: $' ~/.config/sunshine/sunshine.log)"
+    ]
+  }
+}
