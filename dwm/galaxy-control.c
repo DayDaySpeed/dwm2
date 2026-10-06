@@ -135,7 +135,30 @@ galaxycancel(void)
     galaxyend(1);
 }
 
-/* 坍缩结束 (或坍缩中再按 Esc): 遮罩只显示壁纸, 释放全部星系资源, 等 Super+Z / 任意键恢复 */
+/* 壁纸进 picom 看到的前缓冲: 画进已绑定为 GL 底层纹理的 r->back (与正常帧画卡片同一张 pixmap),
+ * 清掉前景和光层, 泛光为 0, 再 galaxyglpresent. XRender 到遮罩窗口再 SwapBuffers 换上来的仍是上一张 GL 帧. */
+static void
+galaxypresentwall(void)
+{
+    GalaxyScene *r = &galaxyscene;
+    XRenderColor clear = {0, 0, 0, 0};
+
+    if (!galaxygl.ready || !galaxygl.win || !galaxygl.gback || !r->back || !r->wallpaper)
+        return;
+    if ((glXGetCurrentContext() != galaxygl.ctx || glXGetCurrentDrawable() != galaxygl.win)
+            && !glXMakeCurrent(dpy, galaxygl.win, galaxygl.ctx))
+        return;
+    if (r->live)
+        XRenderComposite(dpy, PictOpSrc, r->live, None, r->wallpaper, 0, 0, 0, 0, 0, 0, r->w, r->h);
+    XRenderComposite(dpy, PictOpSrc, r->wallpaper, None, r->back, 0, 0, 0, 0, 0, 0, r->w, r->h);
+    if (r->front)
+        XRenderFillRectangle(dpy, PictOpSrc, r->front, &clear, 0, 0, r->w, r->h);
+    galaxyglframe();
+    galaxyglpresent(0, 0, 1);
+}
+
+/* 坍缩结束 (或坍缩中再按 Esc): 遮罩只显示壁纸, 释放场景资源, 等 Super+Z / 任意键恢复.
+ * gback / backpix 留到真正退出: 壁纸走和正常帧一样的 GL 合成, 才能进前缓冲. */
 static void
 galaxyfinish(void)
 {
@@ -149,20 +172,17 @@ galaxyfinish(void)
             XRenderFreePicture(dpy, r->white[i]);
         r->white[i] = 0;
     }
+    /* 窗口背景可能是 desktoppix; 先拆掉引用再释放. 不释放 backpix, GLX pixmap 还绑着它. */
     XSetWindowBackgroundPixmap(dpy, r->overlay, None);
     if (r->desktop) XRenderFreePicture(dpy, r->desktop);
     if (r->desktoppix) XFreePixmap(dpy, r->desktoppix);
-    if (r->back) XRenderFreePicture(dpy, r->back);
-    if (r->backpix) XFreePixmap(dpy, r->backpix);
     if (r->bg) XRenderFreePicture(dpy, r->bg);
     if (r->bgpix) XFreePixmap(dpy, r->bgpix);
-    r->desktop = r->back = r->bg = 0;
-    r->desktoppix = r->backpix = r->bgpix = 0;
+    r->desktop = r->bg = 0;
+    r->desktoppix = r->bgpix = 0;
     r->mode = GalaxyRest;
     galaxysetcursor(0);
-    if (r->live)
-        XRenderComposite(dpy, PictOpSrc, r->live, None, r->wallpaper, 0, 0, 0, 0, 0, 0, r->w, r->h);
-    XRenderComposite(dpy, PictOpSrc, r->wallpaper, None, r->overlaypic, 0, 0, 0, 0, 0, 0, r->w, r->h);
+    galaxypresentwall();
     galaxyrelease();
     if (r->log)
         fprintf(r->log, "galaxy rest: wallpaper only, xerrors %lu\n", r->errors);
@@ -409,8 +429,7 @@ galaxyrest(void)
     int revert;
 
     if (r->mode == GalaxyRest && r->live) {
-        XRenderComposite(dpy, PictOpSrc, r->live, None, r->wallpaper, 0, 0, 0, 0, 0, 0, r->w, r->h);
-        XRenderComposite(dpy, PictOpSrc, r->wallpaper, None, r->overlaypic, 0, 0, 0, 0, 0, 0, r->w, r->h);
+        galaxypresentwall();
         XSync(dpy, False);
     }
     XGetInputFocus(dpy, &focused, &revert);
@@ -1243,10 +1262,8 @@ galaxyevent(XEvent *e)
                 galaxyreturnstart(-1, -1);
             else if (esc && (r->kqlen || (r->ksel >= 0 && galaxykeyactive())))
                 galaxykeyclear();       /* 先清空过滤词和选中 */
-            else if (esc && r->mouseawake)
-                galaxymousesleep("Esc");
             else if (esc)
-                galaxycollapsestart();
+                galaxycollapsestart();  /* 鼠标醒着也直接退出, 不再只休眠 */
             else
                 galaxykey(e, sym);
             break;
@@ -1405,7 +1422,7 @@ galaxyevent(XEvent *e)
         if (e->xexpose.window != r->overlay)
             return 0;
         if (r->mode == GalaxyRest)
-            XRenderComposite(dpy, PictOpSrc, r->wallpaper, None, r->overlaypic, 0, 0, 0, 0, 0, 0, r->w, r->h);
+            galaxypresentwall();
         return 1;
     case DestroyNotify:
     case UnmapNotify:

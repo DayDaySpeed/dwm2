@@ -261,7 +261,10 @@ galaxyfree(void)
     for (i = 0; i < GALAXYALPHAS; i++)
         if (r->white[i])
             XRenderFreePicture(dpy, r->white[i]);
-    galaxyglend();     /* 先解除 GL 与遮罩 / pixmap 的绑定 */
+    galaxyglend();     /* 先放开纹理并拆掉 GLX pixmap, 再动 X pixmap */
+    if (r->overlay)
+        XUnmapWindow(dpy, r->overlay); /* 合成器先放开遮罩, 再销毁 */
+    XSync(dpy, False);
     if (r->overlaypic) XRenderFreePicture(dpy, r->overlaypic);
     if (r->overlay) XDestroyWindow(dpy, r->overlay);
     if (r->front) XRenderFreePicture(dpy, r->front);

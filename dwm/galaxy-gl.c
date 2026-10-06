@@ -383,19 +383,18 @@ galaxyglpixmap(Pixmap pix, int rgba)
     return glXCreatePixmap(dpy, rgba ? galaxygl.fb32 : galaxygl.fb24, pix, attr);
 }
 
-/* 直接检查前景 pixmap 在 GL 纹理中的上下方向，避免搜索框随驱动配置倒置。
- * 探针只在进入星系时运行一次；下一帧开始前把标记清掉。 */
-static void
-galaxyglprobefront(int w, int h)
+/* 色块在 GL 里的上下: 1 直接采样 (红在上), 0 需要翻转, -1 看不出来 (沿用 FBConfig). */
+static int
+galaxyglprobedir(Picture pic, GLXPixmap gp, GLuint tex, int w, int h)
 {
-    GalaxyScene *r = &galaxyscene;
-    XRenderColor red = {0xffff, 0, 0, 0xffff}, blue = {0, 0, 0xffff, 0xffff}, clear = {0, 0, 0, 0};
+    XRenderColor red = {0xffff, 0, 0, 0xffff}, blue = {0, 0, 0xffff, 0xffff};
     unsigned char bottom[4], top[4];
+    int dir = -1;
 
-    if (!r->front || !galaxygl.gfront || w < 16 || h < 16)
-        return;
-    XRenderFillRectangle(dpy, PictOpSrc, r->front, &red, 0, 0, 8, 8);
-    XRenderFillRectangle(dpy, PictOpSrc, r->front, &blue, 0, h - 8, 8, 8);
+    if (!pic || !gp || w < 16 || h < 16)
+        return -1;
+    XRenderFillRectangle(dpy, PictOpSrc, pic, &red, 0, 0, 8, 8);
+    XRenderFillRectangle(dpy, PictOpSrc, pic, &blue, 0, h - 8, 8, 8);
     glXWaitX();
     glBindFramebuffer(GL_FRAMEBUFFER, galaxygl.fbo);
     glViewport(0, 0, w, h);
@@ -404,24 +403,40 @@ galaxyglprobefront(int w, int h)
     glUseProgram(galaxygl.progprobe);
     glBindVertexArray(galaxygl.fullvao);
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, galaxygl.texfront);
-    glXBindTexImageEXT(dpy, galaxygl.gfront, GLX_FRONT_LEFT_EXT, NULL);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glXBindTexImageEXT(dpy, gp, GLX_FRONT_LEFT_EXT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glUniform1i(glGetUniformLocation(galaxygl.progprobe, "src"), 0);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glReadPixels(4, 4, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, bottom);
     glReadPixels(4, h - 5, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, top);
-    glXReleaseTexImageEXT(dpy, galaxygl.gfront, GLX_FRONT_LEFT_EXT);
-    /* 直接采样时红色在上方，合成着色器就无需翻转前景纹理。 */
-    if (top[0] > 192 && top[2] < 64 && bottom[2] > 192 && bottom[0] < 64)
-        galaxygl.yinv32 = 1;
-    else if (bottom[0] > 192 && bottom[2] < 64 && top[2] > 192 && top[0] < 64)
-        galaxygl.yinv32 = 0;
-    if (r->log)
-        fprintf(r->log, "galaxy gl: front orientation %s\n", galaxygl.yinv32 ? "direct" : "flipped");
-    XRenderFillRectangle(dpy, PictOpSrc, r->front, &clear, 0, 0, w, h);
+    glXReleaseTexImageEXT(dpy, gp, GLX_FRONT_LEFT_EXT);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (top[0] > 192 && top[2] < 64 && bottom[2] > 192 && bottom[0] < 64)
+        dir = 1;
+    else if (bottom[0] > 192 && bottom[2] < 64 && top[2] > 192 && top[0] < 64)
+        dir = 0;
+    return dir;
+}
+
+/* 驱动报告的 Y_INVERTED 和绑上 pixmap 之后的实际方向可能不一致.
+ * 底层是桌面和窗口卡片, 前景是文字; 两层都用上下色块校准, 否则卡片会相对轨道整屏倒置. */
+static void
+galaxyglprobeorient(int w, int h)
+{
+    GalaxyScene *r = &galaxyscene;
+    XRenderColor clear = {0, 0, 0, 0};
+    int dir;
+
+    dir = galaxyglprobedir(r->front, galaxygl.gfront, galaxygl.texfront, w, h);
+    if (dir >= 0)
+        galaxygl.yinv32 = dir;
+    if (r->front)
+        XRenderFillRectangle(dpy, PictOpSrc, r->front, &clear, 0, 0, w, h);
+    dir = galaxyglprobedir(r->back, galaxygl.gback, galaxygl.texback, w, h);
+    if (dir >= 0)
+        galaxygl.yinv24 = dir;
 }
 
 /* 每次进入星系: 遮罩窗口建好之后绑定上下文和底层 / 前景层 pixmap. 失败返回 0 */
@@ -438,21 +453,39 @@ galaxyglbegin(Window win, Pixmap back, Pixmap front, int w, int h)
     galaxygl.gfront = galaxyglpixmap(front, 1);
     galaxygl.ninst = galaxygl.npart = 0;
     if (galaxygl.gback && galaxygl.gfront)
-        galaxyglprobefront(w, h);
+        galaxyglprobeorient(w, h);
     return galaxygl.gback && galaxygl.gfront;
 }
 
+/* 退出: 先放开纹理、结束绘制、卸下上下文, 再销毁 GLX pixmap.
+ * 上一帧通常已经 Release, 再放一次可能 BadMatch, 这段忽略 */
 static void
 galaxyglend(void)
 {
+    XErrorHandler old;
+
     if (!galaxygl.ready || !galaxygl.win)
         return;
+    if (glXMakeCurrent(dpy, galaxygl.win, galaxygl.ctx)) {
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        old = XSetErrorHandler(xerrordummy);
+        if (galaxygl.gfront)
+            glXReleaseTexImageEXT(dpy, galaxygl.gfront, GLX_FRONT_LEFT_EXT);
+        if (galaxygl.gback)
+            glXReleaseTexImageEXT(dpy, galaxygl.gback, GLX_FRONT_LEFT_EXT);
+        glFinish();
+        glXMakeCurrent(dpy, None, NULL);
+        XSync(dpy, False);
+        XSetErrorHandler(old);
+    }
     if (galaxygl.gback)
         glXDestroyPixmap(dpy, galaxygl.gback);
     if (galaxygl.gfront)
         glXDestroyPixmap(dpy, galaxygl.gfront);
     galaxygl.gback = galaxygl.gfront = 0;
-    glXMakeCurrent(dpy, None, NULL);
     galaxygl.win = None;
 }
 
