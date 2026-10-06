@@ -47,6 +47,7 @@
 #endif /* XINERAMA */
 #include <X11/Xft/Xft.h>
 #include <X11/extensions/Xrender.h>
+#include <X11/extensions/Xfixes.h>
 
 #include "drw.h"
 #include "util.h"
@@ -251,6 +252,10 @@ static void focusmon(const Arg *arg);
 static void focusstack(const Arg *arg);
 
 static void pointerclient(Client *c);
+static void clientmotion(int on);
+static void cursorhide(void);
+static void cursorshow(void);
+static void holdfloat(Client *c);
 
 static Atom getatomprop(Client *c, Atom prop);
 static int getrootptr(int *x, int *y);
@@ -328,7 +333,6 @@ static void tagtoright(const Arg *arg);
 static void togglebar(const Arg *arg);
 static void togglebarglobal(const Arg *arg);
 static void togglesystray();
-static void floating(Monitor *m);
 static void savefloat(Client *c);
 static void noanim(long ms);
 static int restorefloat(Client *c);
@@ -336,7 +340,7 @@ static void cyclelayout(const Arg *arg);
 static void savelayouts(void);
 static void restorelayouts(void);
 static void togglefloating(const Arg *arg);
-static void togglefloatlayout(const Arg *arg);
+static void tileall(const Arg *arg);
 static void togglescratch(const Arg *arg);
 static void toggleview(const Arg *arg);
 static void togglewin(const Arg *arg);
@@ -366,6 +370,7 @@ static void updatewmhints(Client *c);
 static void setgap(const Arg *arg);
 
 static void view(const Arg *arg);
+static void viewtag(const Arg *arg);
 static void viewtoleft(const Arg *arg);
 static void viewtoright(const Arg *arg);
 
@@ -385,12 +390,8 @@ static int xerrordummy(Display *dpy, XErrorEvent *ee);
 static int xerrorstart(Display *dpy, XErrorEvent *ee);
 static void xinitvisual();
 static void zoom(const Arg *arg);
-static void previewallwin();
-static void setpreviewwins(unsigned int n, Monitor *m, unsigned int gappo, unsigned int gappi);
-static void focuspreviewwin(Client *focus_c, Monitor *m);
 static XImage *getwindowximage(Client *c);
 static XImage *capturehidden(Client *c);
-static XImage *scaledownimage(Client *c, unsigned int cw, unsigned int ch);
 static void galaxy(const Arg *arg);
 static int galaxyevent(XEvent *e);
 static void galaxypost(XEvent *e);
@@ -441,6 +442,8 @@ static Visual *visual;
 static int depth;
 static Colormap cmap;
 static Monitor *mons, *selmon;
+static Client *keyfloat; /* 键盘聚焦的浮动窗口: 光标藏起, 鼠标一动再显示并跟随 */
+static int cursorhidden;
 static Window root, wmcheckwin;
 
 static unsigned long hideseq = 0;
@@ -625,9 +628,8 @@ arrangemon(Monitor *m)
     Client *c;
 
     strncpy(m->ltsymbol, m->lt[m->sellt]->symbol, sizeof m->ltsymbol);
-    /* 不在浮动布局: 之前因浮动布局才浮动的窗口回到平铺 (退出浮动布局、移到别的 tag、全局窗口切 tag 都走这里) */
-    /* 原地重启时 cleanup() 会切到全部 tag 再 arrange, 此时不能放回平铺, 否则浮动布局里的窗口位置在重启后丢失 */
-    if (m->lt[m->sellt]->arrange != floating && !restarting)
+    /* 旧的浮动布局留下的窗口回到平铺. 原地重启时 cleanup() 会切到全部 tag 再 arrange, 此时先不动, 否则位置在重启后丢失 */
+    if (!restarting)
         for (c = m->clients; c; c = c->next)
             if (c->layoutfloat && ISVISIBLE(c)) {
                 if (c->isfullscreen) /* 全屏中: 退出全屏后回到平铺 */
@@ -671,6 +673,12 @@ buttonpress(XEvent *e)
     Monitor *m;
     XButtonPressedEvent *ev = &e->xbutton;
     Client *c = wintoclient(ev->window);
+
+    /* 光标还藏着时, 按下就算碰了鼠标: 显示出来, 后面按点击的窗口聚焦 */
+    if (cursorhidden) {
+        cursorshow();
+        keyfloat = NULL;
+    }
 
     // 判断鼠标点击的位置
     click = ClkRootWin;
@@ -1372,16 +1380,24 @@ enternotify(XEvent *e)
     Monitor *m;
     XCrossingEvent *ev = &e->xcrossing;
 
-    if ((ev->mode != NotifyNormal || ev->detail == NotifyInferior) && ev->window != root)
+    /* 按住鼠标操作窗口时不因指针离开而换焦点。按下期间的穿越是 NotifyGrab;
+     * 松开后落到指针下的窗口是 NotifyUngrab (state 仍可能带着刚放开的键, 不能只看按键掩码)。 */
+    if (ev->mode == NotifyGrab
+            || (ev->mode == NotifyNormal && (ev->state & (Button1Mask|Button2Mask|Button3Mask|Button4Mask|Button5Mask))))
+        return;
+    /* 键盘正在操作上层浮动窗口时, 指针移出范围不换焦点 */
+    if (keyfloat && keyfloat == selmon->sel && keyfloat->isfloating)
+        return;
+    if (((ev->mode != NotifyNormal && ev->mode != NotifyUngrab) || ev->detail == NotifyInferior) && ev->window != root)
         return;
     c = wintoclient(ev->window);
     m = c ? c->mon : wintomon(ev->window);
     if (m != selmon) {
         unfocus(selmon->sel, 1);
         selmon = m;
-        focus(NULL);
-    }
-    /* 点击才换窗口焦点。鼠标滑过、或移动窗口后指针落在别的窗口上，都不改焦点 */
+    } else if (!c || c == selmon->sel)
+        return;
+    focus(c);
 }
 
 void
@@ -1492,6 +1508,59 @@ focusstack(const Arg *arg)
     }
 }
 
+/* 键盘拿住浮动窗口期间才听客户窗口上的移动, 平时不加, 避免每个像素都进事件 */
+void
+clientmotion(int on)
+{
+    Monitor *m;
+    Client *c;
+    long mask = EnterWindowMask|FocusChangeMask|PropertyChangeMask|StructureNotifyMask;
+
+    if (on)
+        mask |= PointerMotionMask;
+    for (m = mons; m; m = m->next)
+        for (c = m->clients; c; c = c->next)
+            XSelectInput(dpy, c->win, mask);
+}
+
+/* 藏起整屏光标。XFixes 按次数配对, 这里只藏一次。先丢掉指针跳动留下的移动事件 */
+void
+cursorhide(void)
+{
+    XEvent ev;
+
+    XSync(dpy, False);
+    while (XCheckMaskEvent(dpy, PointerMotionMask, &ev));
+    if (cursorhidden)
+        return;
+    XFixesHideCursor(dpy, root);
+    cursorhidden = 1;
+    clientmotion(1);
+}
+
+void
+cursorshow(void)
+{
+    if (!cursorhidden)
+        return;
+    clientmotion(0);
+    XFixesShowCursor(dpy, root);
+    cursorhidden = 0;
+}
+
+/* 键盘落到浮动窗口: 藏光标并保住焦点。落到平铺窗口或空: 光标回来 */
+void
+holdfloat(Client *c)
+{
+    if (c && c->isfloating && !c->isfullscreen) {
+        keyfloat = c;
+        cursorhide();
+    } else {
+        keyfloat = NULL;
+        cursorshow();
+    }
+}
+
 void
 pointerclient(Client *c)
 {
@@ -1504,8 +1573,13 @@ pointerclient(Client *c)
         if (!stay)
             XWarpPointer(dpy, None, root, 0, 0, 0, 0, c->x + c->w / 2, c->y + c->h / 2);
         focus(c);
-    } else if (!stay)
-        XWarpPointer(dpy, None, root, 0, 0, 0, 0, selmon->wx + selmon->ww / 3, selmon->wy + selmon->wh / 2);
+        holdfloat(c);
+    } else {
+        keyfloat = NULL;
+        cursorshow();
+        if (!stay)
+            XWarpPointer(dpy, None, root, 0, 0, 0, 0, selmon->wx + selmon->ww / 3, selmon->wy + selmon->wh / 2);
+    }
 }
 
 Atom
@@ -1823,14 +1897,6 @@ manage(Window w, XWindowAttributes *wa)
     c->y = MAX(c->y, ((c->mon->by == c->mon->my) && (c->x + (c->w / 2) >= c->mon->wx)
                 && (c->x + (c->w / 2) < c->mon->wx + c->mon->ww)) ? bh : c->mon->my);
 
-    /* 所在 tag 处于浮动布局: 新窗口也浮动 (没指定位置时居中) */
-    if (!c->isfloating && ISVISIBLE(c) && c->mon->lt[c->mon->sellt]->arrange == floating) {
-        c->isfloating = c->layoutfloat = 1;
-        if (!wa->x && !wa->y) { /* 上面已把 y 挪到状态栏下, 不能再用 c->x/c->y 是否为 0 判断 */
-            c->x = c->mon->wx + (c->mon->ww - WIDTH(c)) / 2;
-            c->y = c->mon->wy + (c->mon->wh - HEIGHT(c)) / 2;
-        }
-    }
     if (c->isfloating) {
         // if new client is floating, then manage it as floating
         if (c->x==0 && c->y==0) {
@@ -1850,7 +1916,8 @@ manage(Window w, XWindowAttributes *wa)
     updatewindowtype(c);
     updatesizehints(c);
     updatewmhints(c);
-    XSelectInput(dpy, w, EnterWindowMask|FocusChangeMask|PropertyChangeMask|StructureNotifyMask);
+    XSelectInput(dpy, w, EnterWindowMask|FocusChangeMask|PropertyChangeMask|StructureNotifyMask
+            | (cursorhidden ? PointerMotionMask : 0));
     grabbuttons(c, 0);
     if (!c->isfloating)
         c->isfloating = c->oldstate = trans != None || c->isfixed;
@@ -1916,9 +1983,26 @@ motionnotify(XEvent *e)
 {
     static Monitor *mon = NULL;
     Monitor *m;
+    Client *c;
     XMotionEvent *ev = &e->xmotion;
 
+    /* 键盘操作中藏着光标: 鼠标一动就显示, 并落到指针下面的窗口。缝隙上只显示, 不换焦点 */
+    if (cursorhidden) {
+        cursorshow();
+        keyfloat = NULL;
+        if ((c = wintoclient(ev->window)) && c != selmon->sel) {
+            if (c->mon != selmon) {
+                unfocus(selmon->sel, 1);
+                selmon = c->mon;
+            }
+            focus(c);
+        }
+        return;
+    }
     if (ev->window != root)
+        return;
+    /* 按住鼠标拖过缝隙时不切走当前显示器的焦点 */
+    if (ev->state & (Button1Mask|Button2Mask|Button3Mask|Button4Mask|Button5Mask))
         return;
     if ((m = recttomon(ev->x_root, ev->y_root, 1, 1)) != mon && mon) {
         unfocus(selmon->sel, 1);
@@ -2137,6 +2221,7 @@ resizewin(const Arg *arg)
     resize(c, c->x, c->y, nw, nh, 1);
     focus(c);
     restack(selmon);
+    holdfloat(c);
 }
 
 Client *
@@ -2277,8 +2362,8 @@ savelayouts(void)
     free(data);
 }
 
-/* 原地重启后 (须在 scan 之前, 否则窗口会先按平铺排一遍, 浮动布局里的位置就丢了): 读回并删除 _DWM_LAYOUTS;
- * 显示器数量、tag 数量变了或布局下标越界 (改过 layouts[]) 时整体放弃, 用默认值 */
+/* 原地重启后 (须在 scan 之前): 读回并删除 _DWM_LAYOUTS.
+ * 显示器数量或 tag 数量变了时整体放弃, 用默认值; 已删除的布局下标收回平铺 */
 void
 restorelayouts(void)
 {
@@ -2296,10 +2381,15 @@ restorelayouts(void)
         return;
     if (n != nm * (LENGTH(tags) + 1) * 5 || after)
         goto out;
-    for (d = (long *)p, i = 0; i < n; i += 5)
-        if (d[i] < 0 || d[i] > 1 || d[i + 1] < 0 || d[i + 1] >= LENGTH(layouts)
-                || d[i + 2] < 0 || d[i + 2] >= LENGTH(layouts) || d[i + 4] < 50 || d[i + 4] > 950)
+    for (d = (long *)p, i = 0; i < n; i += 5) {
+        if (d[i] < 0 || d[i] > 1 || d[i + 4] < 50 || d[i + 4] > 950)
             goto out;
+        /* 旧的浮动布局已去掉: 越界的布局下标收回平铺, 不因此丢掉其他 tag 的布局 */
+        if (d[i + 1] < 0 || d[i + 1] >= LENGTH(layouts))
+            d[i + 1] = 0;
+        if (d[i + 2] < 0 || d[i + 2] >= LENGTH(layouts))
+            d[i + 2] = 0;
+    }
     for (m = mons; m; m = m->next) {
         for (i = 0; i <= LENGTH(tags); i++, d += 5) {
             m->pertag->sellts[i] = d[0];
@@ -3064,12 +3154,6 @@ togglefloating(const Arg *arg)
 
     if (!c)
         return;
-    /* 浮动布局下所有窗口都浮动, 单独平铺没有意义: 提示先退出浮动布局 */
-    if (m->lt[m->sellt]->arrange == floating) {
-        spawn(&(Arg) { .v = (const char*[]){ "notify-send", "-r", "9540", "-t", "2500", "󰖲 浮动布局",
-            "浮动布局下 Super+T 无效, 先按 Super+Shift+T 退出浮动布局", NULL } });
-        return;
-    }
     if (c->isfullscreen) { /* 全屏窗口: 只退出全屏 */
         fullscreen(NULL);
         return;
@@ -3108,7 +3192,7 @@ restorefloat(Client *c)
     return 1;
 }
 
-/* 状态栏布局图标滚轮: 按 layouts[] 顺序 (平铺 → 网格 → 浮动) 轮换 */
+/* 状态栏布局图标滚轮: 按 layouts[] 顺序 (平铺 → 网格) 轮换 */
 void
 cyclelayout(const Arg *arg)
 {
@@ -3128,26 +3212,25 @@ savefloat(Client *c)
     c->fh = c->h;
 }
 
-/* Super+Shift+T: 当前 tag 在浮动布局和上一个布局 (平铺/网格) 之间切换, 按 tag 记忆 */
+/* Super+Shift+T: 当前 tag 上正在显示的窗口全部回到平铺.
+ * 记下浮动位置, 之后 Super+T 可以单独再浮起来. 固定大小和全屏窗口不动. */
 void
-togglefloatlayout(const Arg *arg)
+tileall(const Arg *arg)
 {
-    const Layout *fl = NULL, *prev;
-    unsigned int i;
+    Client *c;
+    Monitor *m = selmon;
 
-    for (i = 0; i < LENGTH(layouts) && !fl; i++)
-        if (layouts[i].arrange == floating)
-            fl = &layouts[i];
-    if (!fl)
-        return;
-    if (selmon->lt[selmon->sellt] != fl) {
-        setlayout(&(Arg) { .v = fl });
-    } else {
-        prev = selmon->lt[selmon->sellt ^ 1];
-        setlayout(&(Arg) { .v = prev == fl ? &layouts[0] : prev });
+    for (c = m->clients; c; c = c->next) {
+        if (!ISVISIBLE(c) || HIDDEN(c) || c->isfixed || c->isfullscreen || !c->isfloating)
+            continue;
+        savefloat(c);
+        c->snapped = 0;
+        c->isfloating = 0;
+        c->layoutfloat = 0;
     }
-    if (selmon->sel)
-        pointerclient(selmon->sel);
+    arrange(m);
+    if (m->sel)
+        pointerclient(m->sel);
 }
 
 void
@@ -3236,6 +3319,8 @@ toggleview(const Arg *arg)
 
 	if (newtagset) {
 		selmon->tagset[selmon->seltags] = newtagset;
+		keyfloat = NULL;
+		cursorshow();
 		focus(NULL);
 		arrange(selmon);
 	}
@@ -3395,6 +3480,10 @@ unmanage(Client *c, int destroyed)
     Monitor *m = c->mon;
     XWindowChanges wc;
 
+    if (c == keyfloat) {
+        keyfloat = NULL;
+        cursorshow();
+    }
     detach(c);
     detachstack(c);
     if (c->badge)
@@ -3804,6 +3893,16 @@ setgap(const Arg *arg)
     arrange(selmon);
 }
 
+/* 再按当前 tag 键: 回到上一页, 与 Super+` 同一条路. 直接走 view() 会把上一格覆盖成当前 tag */
+void
+viewtag(const Arg *arg)
+{
+    if ((arg->ui & TAGMASK) == (selmon->tagset[selmon->seltags] & TAGMASK))
+        view(&(Arg){0});
+    else
+        view(arg);
+}
+
 void
 view(const Arg *arg)
 {
@@ -3811,6 +3910,14 @@ view(const Arg *arg)
     unsigned int tmptag;
     Client *c;
     int n = 0;
+
+    /* 已经在目标 tag 上: 停住. 先翻转再写入会把上一格盖掉, 之后 Super+` 也回不去 */
+    if ((arg->ui & TAGMASK) && (arg->ui & TAGMASK) == (selmon->tagset[selmon->seltags] & TAGMASK))
+        return;
+
+    /* 换 tag 就结束键盘操作: 光标藏着时显示出来 */
+    keyfloat = NULL;
+    cursorshow();
 
     selmon->seltags ^= 1; /* toggle sel tagset */
     if (arg->ui & TAGMASK) {
@@ -3932,19 +4039,6 @@ void
 magicgrid(Monitor *m)
 {
     grid(m, gappo, gappi);
-}
-
-/* 浮动布局 (Super+Shift+T): 平铺窗口在原位浮起, 记为 layoutfloat, 离开浮动布局时由 arrangemon 放回平铺 */
-void
-floating(Monitor *m)
-{
-    Client *c;
-
-    for (c = m->clients; c; c = c->next)
-        if (ISVISIBLE(c) && !c->isfloating) {
-            c->isfloating = c->layoutfloat = 1;
-            restorefloat(c); /* 浮动过的窗口回到上次的位置, 没有记录的原地不动 */
-        }
 }
 
 void
@@ -4155,147 +4249,12 @@ zoom(const Arg *arg)
     pop(c);
 }
 
-void
-previewallwin() {
-    Monitor *m = selmon;
-    Client *c, *focus_c = NULL;
-
-    // 排布所有窗口的预览座标
-    unsigned int n;
-    for (n = 0, c = m->clients; c; c = c->next, n++);
-    if (n == 0) return;
-    setpreviewwins(n, m, 60, 15);
-
-    XEvent event;
-    while (1) {
-        XNextEvent(dpy, &event);
-        if (event.type == KeyPress) {
-            if (CLEANMASK(event.xkey.state) != MODKEY) continue;
-
-            KeySym keysym = XKeycodeToKeysym(dpy, event.xkey.keycode, 0);
-            if (keysym == XK_a) {
-                focuspreviewwin(focus_c, m);
-                break;
-            }
-            if (keysym == XK_Tab) {
-                // 移除当前预览窗口的边框
-                if (focus_c) XSetWindowBorder(dpy, focus_c->preview.win, scheme[SchemeNorm][ColBorder].pixel);
-                if (!focus_c) focus_c = m->clients;
-                else focus_c = focus_c->next ? focus_c->next : m->clients;
-                if (focus_c)
-                    XSetWindowBorder(dpy, focus_c->preview.win, scheme[SchemeSel][ColBorder].pixel);
-            }
-        }
-        if (event.type == ButtonPress && event.xbutton.button == Button1) {
-            focuspreviewwin(focus_c, m);
-            break;
-        }
-        if (event.type == EnterNotify) {
-            for (c = m->clients; c; c = c->next)
-                if (event.xcrossing.window == c->preview.win) {
-                    focus_c = c;
-                    XSetWindowBorder(dpy, c->preview.win, scheme[SchemeSel][ColBorder].pixel);
-                    break;
-                }
-        }
-        if (event.type == LeaveNotify) {
-            for (c = m->clients; c; c = c->next)
-                if (event.xcrossing.window == c->preview.win) {
-                    XSetWindowBorder(dpy, c->preview.win, scheme[SchemeNorm][ColBorder].pixel);
-                    break;
-                }
-        }
-    }
-
-    // 不移动鼠标: 先聚焦再 arrange, restack 会丢弃窗口重新映射时鼠标下产生的 EnterNotify
-    focus(focus_c);
-    arrange(m);
-}
-
-void
-focuspreviewwin(Client *focus_c, Monitor *m) {
-    Client *c;
-
-    /* 先切到选中窗口所在的 tag 并排好位置, 再映射窗口: 窗口没映射时移动, picom 不会做成"从屏幕外滑进来",
-     * 映射时 picom 播放打开动画, 窗口在各自位置放大出现。已在当前视图里 (含全局窗口) 就不切 tag */
-    if (focus_c && !ISVISIBLE(focus_c))
-        view(&(Arg) { .ui = focus_c->tags & TAGMASK });
-    for (c = m->clients; c; c = c->next) {
-        if (c->preview.win) {
-            XUnmapWindow(dpy, c->preview.win);
-            if (!HIDDEN(c)) XMapWindow(dpy, c->win); // 隐藏的窗口保持隐藏, 选中的由下面的 show() 恢复
-        }
-        if (c->preview.scaled_image) XDestroyImage(c->preview.scaled_image);
-    }
-
-    if (focus_c)
-        show(focus_c);
-}
-
 /* 通知 picom 接下来 ms 毫秒内的窗口变化不做动画 (picom 读 root 的 _DWM_NOANIM, 见 picom/src/event.c) */
 void
 noanim(long ms)
 {
     XChangeProperty(dpy, root, XInternAtom(dpy, "_DWM_NOANIM", False), XA_CARDINAL, 32,
             PropModeReplace, (unsigned char *)&ms, 1);
-}
-
-void
-setpreviewwins(unsigned int n, Monitor *m, unsigned int gappo, unsigned int gappi) {
-    unsigned int cx, cy, cw, ch, cmaxh;
-    unsigned int cols, rows;
-    Client *c = m->clients, *tmpc;
-
-    for (cols = 0; cols <= n / 2; cols++) if (cols * cols >= n) break;
-    rows = (cols && (cols - 1) * cols >= n) ? cols - 1 : cols;
-    ch = (m->wh - 2 * gappo) / rows;
-    cw = (m->ww - 2 * gappo) / cols;
-
-    cx = 0;
-    cy = 0;
-
-    unsigned int i, j;
-    c = m->clients;
-
-    for (i = 0; i < rows; i++) {
-        cx = 0;
-        cmaxh = 0;
-        tmpc = c;
-        for (int j = 0; j < cols; j++) {
-            if (!c) break;
-            c->preview.scaled_image = scaledownimage(c, cw, ch);
-            c->preview.x = cx;
-            cmaxh = c->preview.scaled_image->height > cmaxh ? c->preview.scaled_image->height : cmaxh;
-            cx += c->preview.scaled_image->width + gappi;
-            c = c->next;
-        }
-        c = tmpc;
-        cx = m->wx + (m->ww - cx) / 2;
-        for (j = 0; j < cols; j++) {
-            if (!c) break;
-            c->preview.x += cx;
-            c->preview.y = cy + (cmaxh - c->preview.scaled_image->height) / 2;
-            c = c->next;
-        }
-        cy += cmaxh + gappi;
-    }
-    cy = m->wy + (m->wh - cy) / 2;
-    for (c = m->clients; c; c = c->next)
-        c->preview.y += cy;
-
-
-    for (Client *c = m->clients; c; c = c->next) {
-        if (!c->preview.win) c->preview.win = XCreateSimpleWindow(dpy, root, c->preview.x, c->preview.y, c->preview.scaled_image->width, c->preview.scaled_image->height, 1, BlackPixel(dpy, screen), WhitePixel(dpy, screen));
-        else XMoveResizeWindow(dpy, c->preview.win, c->preview.x, c->preview.y, c->preview.scaled_image->width, c->preview.scaled_image->height);
-        XSetWindowBorder(dpy, c->preview.win, scheme[SchemeNorm][ColBorder].pixel);
-        XUnmapWindow(dpy, c->win);
-        if (c->preview.win) {
-            XSelectInput(dpy, c->preview.win, ButtonPress | EnterWindowMask | LeaveWindowMask);
-            XMapWindow(dpy, c->preview.win);
-            GC gc = XCreateGC(dpy, c->preview.win, 0, NULL);
-            XPutImage(dpy, c->preview.win, gc, c->preview.scaled_image, 0, 0, 0, 0, c->preview.scaled_image->width, c->preview.scaled_image->height);
-        }
-    }
 }
 
 XImage
@@ -4351,33 +4310,6 @@ XImage
     XSelectInput(dpy, root, ra.your_event_mask);
     XSelectInput(dpy, c->win, ca.your_event_mask);
     return img;
-}
-
-XImage
-*scaledownimage(Client *c, unsigned int cw, unsigned int ch) {
-    // 隐藏的窗口用隐藏前缓存的截图 (没有就临时映射截一张并缓存), 其余现截
-    if (HIDDEN(c) && !c->preview.hidden_image)
-        c->preview.hidden_image = capturehidden(c);
-    int cached = HIDDEN(c) && c->preview.hidden_image;
-    XImage *orig_image = cached ? c->preview.hidden_image : getwindowximage(c);
-    int factor_w = orig_image->width / cw + 1;
-    int factor_h = orig_image->height / ch + 1;
-    int scale_factor = factor_w > factor_h ? factor_w : factor_h;
-    int scaled_width = orig_image->width / scale_factor;
-    int scaled_height = orig_image->height / scale_factor;
-    XImage *scaled_image = XCreateImage(dpy, DefaultVisual(dpy, DefaultScreen(dpy)), orig_image->depth, ZPixmap, 0, NULL, scaled_width, scaled_height, 32, 0);
-    scaled_image->data = malloc(scaled_image->height * scaled_image->bytes_per_line);
-    for (int y = 0; y < scaled_height; y++) {
-        for (int x = 0; x < scaled_width; x++) {
-            int orig_x = x * scale_factor;
-            int orig_y = y * scale_factor;
-            unsigned long pixel = XGetPixel(orig_image, orig_x, orig_y);
-            XPutPixel(scaled_image, x, y, pixel);
-        }
-    }
-    scaled_image->depth = orig_image->depth;
-    if (!cached) XDestroyImage(orig_image);
-    return scaled_image;
 }
 
 int
@@ -4770,6 +4702,7 @@ floatcenter(const Arg *arg)
         0);
     focus(c);
     restack(selmon);
+    holdfloat(c);
 }
 
 /* 进入另一层。arg->i = 1 浮动层, 0 平铺层。

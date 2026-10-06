@@ -323,8 +323,8 @@ galaxyrenderwindow(GalaxyStar *s, double vis, double tint, double light)
 
     if (!s->snap || (vis < .004 && tint < .004))
         return;
-    hw = s->w * .5 * s->size;
-    hh = s->h * .5 * s->size;
+    hw = s->w * .5 * s->size * s->kw;
+    hh = s->h * .5 * s->size * s->kh;
     for (i = 0; i < 4; i++) {
         corner = galaxyadd(s->pos, galaxyapply(s->orient, galaxyv(sx[i] * hw, sy[i] * hh, 0)));
         p = galaxyproject(corner);
@@ -338,7 +338,7 @@ galaxyrenderwindow(GalaxyStar *s, double vis, double tint, double light)
     persp = hypot(q[0][0] - q[1][0] + q[2][0] - q[3][0], q[0][1] - q[1][1] + q[2][1] - q[3][1]);
     /* 驻留时卡片朝向镜头, 透视误差很小: 一律走仿射, 不随尺寸在两条路径之间切换 (切换那一帧卡片形状会跳一下) */
     if ((r->mode == GalaxyOrbit && (MAX(maxx - minx, maxy - miny) < 480 || persp < 6))
-            || (r->mode != GalaxyOrbit && r->iclock > 1 && persp < 4)) {
+            || (r->mode != GalaxyOrbit && (r->iclock > 1 || r->expose) && persp < 4)) {
         /* 小卡片, 或几乎平行于画面的卡片, 以仿射路径采样; 透视误差小于几像素, 合成开销低得多 (约 1/7). */
         q[2][0] = q[1][0] + q[3][0] - q[0][0];
         q[2][1] = q[1][1] + q[3][1] - q[0][1];
@@ -364,7 +364,7 @@ galaxyrenderwindow(GalaxyStar *s, double vis, double tint, double light)
     /* 选择 mip: 源像素 / 屏幕像素 不超过 2, 远处再降一级 (景深模糊) */
     edge = MAX(hypot(q[1][0] - q[0][0], q[1][1] - q[0][1]), hypot(q[3][0] - q[0][0], q[3][1] - q[0][1]) * s->w / MAX(1, s->h));
     for (lvl = s->base; lvl < GALAXYMIPS - 1 && s->mip[lvl + 1] && s->mipw[lvl] > 2 * edge; lvl++);
-    if (r->mode == GalaxyOrbit) {
+    if (r->mode == GalaxyOrbit && !r->expose) {  /* Super+A 的网格卡片大而清晰, 不降级 */
         int budget = edge < 150 ? 256 : 512;
         while (lvl < GALAXYMIPS - 1 && s->mip[lvl + 1] && s->mipw[lvl] > budget)
             lvl++;
@@ -1607,11 +1607,19 @@ static void
 galaxyrenderfront(void)
 {
     GalaxyScene *r = &galaxyscene;
+    int i;
 
     if (!r->desktop)
         return;
     if (r->deskover > .004)
         XRenderComposite(dpy, PictOpOver, r->desktop, galaxywhite(r->deskover), r->back, 0, 0, 0, 0, 0, 0, r->w, r->h);
+    if (r->mode == GalaxyReturn && r->rkind == GalaxyLand && !r->fulldesk) {
+        /* 进入别的 tag: 状态栏 / 托盘用切换后实时截取的样子 */
+        for (i = 0; i < r->nlandbar && r->bar > .004; i++)
+            XRenderComposite(dpy, PictOpOver, r->landbar[i], galaxywhite(r->bar), r->back, 0, 0, 0, 0,
+                    r->landbarx[i], r->landbary[i], r->landbarw[i], r->landbarh[i]);
+        return;
+    }
     if (r->bar > .004 && r->barw > 0 && r->barh > 0)
         XRenderComposite(dpy, PictOpOver, r->desktop, galaxywhite(r->bar), r->back,
                 r->barx, r->bary, 0, 0, r->barx, r->bary, r->barw, r->barh);
@@ -1637,7 +1645,10 @@ static void
 galaxypresent(void)
 {
     GalaxyScene *r = &galaxyscene;
-    XRenderComposite(dpy, PictOpSrc, r->back, None, r->overlaypic, 0, 0, 0, 0, 0, 0, r->w, r->h);
+    if (r->expose)     /* Super+A 的遮罩只盖视口 */
+        XRenderComposite(dpy, PictOpSrc, r->back, None, r->overlaypic, r->vx, r->vy, 0, 0, 0, 0, r->vw, r->vh);
+    else
+        XRenderComposite(dpy, PictOpSrc, r->back, None, r->overlaypic, 0, 0, 0, 0, 0, 0, r->w, r->h);
 }
 
 static double galaxynow(void);

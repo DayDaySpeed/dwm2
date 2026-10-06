@@ -338,6 +338,9 @@ galaxyfree(void)
     if (r->wallpaper) XRenderFreePicture(dpy, r->wallpaper);
     if (r->wallpix) XFreePixmap(dpy, r->wallpix);
     if (r->live) XRenderFreePicture(dpy, r->live);
+    if (r->exposebg) XFreePixmap(dpy, r->exposebg);
+    for (i = 0; i < r->nlandbar; i++)
+        XRenderFreePicture(dpy, r->landbar[i]);
     free(r->gaps);
     if (r->log)
         fclose(r->log);

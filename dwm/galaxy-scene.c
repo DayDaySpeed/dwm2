@@ -1098,6 +1098,15 @@ galaxyupdatereturn(double u)
             s->tint = s->rtint * (1 - v);
             s->glow = s->rglow * (1 - galaxysmoothstep(galaxyphase(u, 0, .6)));
             s->brightness = galaxymix(s->rbright, 1, v);
+        } else if (r->expose) {    /* Super+A: 不在当前桌面的窗口原地缩小淡出 */
+            away = galaxyeaseoutcubic(galaxyphase(u, 0, .6));
+            s->pos = s->rpos;
+            s->orient = s->rorient;
+            s->size = s->rsize * (1 - .12 * away);
+            s->alpha = 1 - away;
+            s->vis = s->rvis * s->alpha;
+            s->tint = s->glow = 0;
+            s->brightness = s->rbright;
         } else {
             away = galaxyeaseincubic(galaxyphase(u, 0, .6));
             s->pos = galaxyadd(s->rpos, galaxyscale(galaxynormalize(galaxysub(s->rpos, r->rcampos)), 2 * F * away));
@@ -1125,94 +1134,95 @@ galaxyupdatereturn(double u)
     galaxysortdepth();
 }
 
-/* 点击: 镜头停住. 窗口朝镜头拉近并正对镜头; 核心只变亮, 周围淡掉. 都不飞回桌面坐标. */
+/* 进入窗口 (点击窗口星 / 核心, Super+A 选中): 目标 tag 已在遮罩下切好, 落点就是真实窗口的位置和大小.
+ * 选中的卡片领先沿弧线飞过去 (起飞时亮一下), 同屏的其他窗口随后归位, 其余淡出; 镜头回正, 背景回到壁纸,
+ * 状态栏最后淡入. 结束时卡片与真实窗口逐像素重合, 去掉遮罩时看不出切换 */
 static void
-galaxyupdatepick(double u)
+galaxyupdateland(double u)
 {
     GalaxyScene *r = &galaxyscene;
-    GalaxyStar *s, *pick = NULL;
+    GalaxyStar *s;
     GalaxyCore *g;
-    GalaxyVec tocam;
-    GalaxyProj pj;
-    double ack = galaxysmoothstep(galaxyphase(u, 0, .12 / GALAXYPICK));
-    double push = galaxyeaseinoutcubic(galaxyphase(u, .12 / GALAXYPICK, .38 / GALAXYPICK));
-    double ck = galaxysmoothstep(galaxyphase(u, .38 / GALAXYPICK, 1));
-    double fade, dist, travel, endsize;
-    int i, samering;
+    GalaxyVec ctrl, d;
+    GalaxyMat id = {{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
+    double F = r->cam.focal, e = galaxyeaseinoutcubic(galaxyphase(u, 0, .8)), fade = 1 - galaxysmoothstep(galaxyphase(u, 0, .45));
+    double v, away, ack;
+    int i, lead;
 
-    if (r->rkind == GalaxyPickCore) {
-        ack = push = 0;
-        ck = galaxyeaseinoutcubic(u);
-    }
-    fade = r->rkind == GalaxyPickCore ? ck : push;
-    if (r->rkind == GalaxyPickStar && r->rstar >= 0 && r->rstar < r->nstars)
-        pick = &r->stars[r->rstar];
-    for (i = 0; i < r->nstars; i++) {
-        s = &r->stars[i];
-        s->pos = s->rpos;
-        s->orient = s->rorient;
-        s->size = s->rsize;
-        s->tint = s->hover = 0;
-        if (s == pick) {
-            s->brightness = s->rbright * (1 + .55 * MAX(ack, push));
-            s->glow = MIN(2.4, s->rglow + 1.35 * MAX(ack, push));
-            s->vis = s->rvis;
-            s->alpha = 1;
-            if (push > 0) {
-                tocam = galaxysub(r->cam.pos, s->rpos);
-                dist = galaxylen(tocam);
-                travel = MAX(0, dist - r->cam.near * 2.5);
-                s->pos = galaxyadd(s->rpos, galaxyscale(galaxynormalize(tocam), travel * push));
-                s->orient = galaxyblend(s->rorient, r->cam.rot, push);
-                pj = galaxyproject(s->pos);
-                if (pj.ok && pj.scale > 1e-6) {
-                    endsize = .75 * r->vw / (MAX(s->w, s->h) * pj.scale);
-                    endsize = MAX(.02, MIN(40, endsize));
-                    s->size = galaxymix(s->rsize, endsize, push);
-                }
-            }
-            if (!r->fulldesk)
-                s->vis *= 1 - ck;
-        } else {
-            samering = pick && s->galaxy == pick->galaxy && s->ring == pick->ring;
-            s->vis = s->rvis * (1 - MAX(samering ? ack * .75 : 0, fade));
-            s->alpha = 1 - fade;
-            s->glow = s->rglow * (1 - fade);
-            s->brightness = s->rbright;
-            if (fade > 0 && r->rkind == GalaxyPickStar) {
-                tocam = galaxysub(s->rpos, r->cam.pos);
-                s->pos = galaxyadd(s->rpos, galaxyscale(galaxynormalize(tocam), 1.4 * r->cam.focal * fade));
-            }
-        }
-        s->p = galaxyproject(s->pos);
-    }
+    galaxysetcameraat(galaxyscale(r->rctarget, 1 - e), galaxymix(r->rcdist, F, e), galaxymix(r->rcx, 0, e), galaxymix(r->rcy, 0, e), galaxymix(r->rcz, 0, e));
     for (i = 0; i < r->ntags; i++) {
         g = &r->galaxies[i];
         g->pos = g->rpos;
-        if (r->rkind == GalaxyPickCore && i == r->rcore) {
-            g->alpha = MIN(1, g->ralpha + .35 * ck);
-            g->size = r->rcoresize * (1 + .7 * ck);
-            g->hover = ck;
-        } else {
-            g->alpha = g->ralpha * (1 - fade);
-            g->hover = 0;
-        }
+        g->alpha = g->ralpha * (1 - galaxysmoothstep(galaxyphase(u, 0, .35)));
+        g->hover = 0;
         g->p = galaxyproject(g->pos);
     }
-    r->ringalpha = r->rring * (1 - fade);
+    r->ringalpha = r->rring * fade;
     galaxyupdaterings(0);
-    r->clusteralpha = r->rcluster * (1 - fade);
-    r->streakalpha = r->rstreak * (1 - fade);
-    r->sunalpha = r->rsun * (1 - fade);
+    r->clusteralpha = r->rcluster * fade;
+    r->streakalpha = r->rstreak * fade;
+    r->sunalpha = r->rsun * fade;
     r->rippleamp = r->sunpulse = 0;
     galaxyupdatecluster(0);
+    for (i = 0; i < r->nstars; i++) {
+        s = &r->stars[i];
+        lead = i == r->rstar;
+        s->hover = s->flipcard = 0;
+        if (s->land) {
+            /* 快起缓落: 选中的先走, 其余稍晚 (按各自的随机延迟错开一点) */
+            v = lead ? galaxyeaseoutcubic(galaxyphase(u, .04, .86))
+                : galaxyeaseinoutcubic(galaxyphase(u, .1 + .5 * s->delay, .9 + .5 * s->delay));
+            d = galaxysub(s->lpos, s->rpos);
+            /* 控制点: 中点向镜头拉近, 再沿 (行进方向 x 视线) 侧偏一点, 轨迹是一条弧线 */
+            ctrl = galaxyadd(galaxyscale(galaxyadd(s->rpos, s->lpos), .5),
+                    galaxyadd(galaxyscale(galaxycross(d, galaxyv(0, 0, 1)), lead ? -.12 : -.06),
+                        galaxyv(0, 0, (r->expose ? -.04 : -.12) * F)));
+            s->pos = galaxybezier(s->rpos, ctrl, s->lpos, v);
+            s->orient = galaxyblend(s->rorient, id, v);
+            s->size = galaxymix(s->rsize, 1, v);
+            s->kw = galaxymix(s->rkw, s->lw / s->w, v);
+            s->kh = galaxymix(s->rkh, s->lh / s->h, v);
+            s->alpha = 1;
+            s->vis = galaxymix(s->rvis, 1, galaxysmoothstep(galaxyphase(u, 0, .45)));
+            s->tint = s->rtint * (1 - v);
+            ack = lead ? galaxyflash(u * (r->expose ? GALAXYXLAND : GALAXYLAND), .06, 5) : 0;
+            s->glow = s->rglow * (1 - galaxysmoothstep(galaxyphase(u, 0, .6))) + (lead ? .9 * sin(GALAXYPI * v) + ack : 0);
+            s->brightness = galaxymix(s->rbright, 1, v) * (1 + .35 * ack);
+        } else if (r->expose) {
+            /* 平面网格: 原地缩小淡出 */
+            away = galaxyeaseoutcubic(galaxyphase(u, 0, .5));
+            s->pos = s->rpos;
+            s->orient = s->rorient;
+            s->size = s->rsize * (1 - .12 * away);
+            s->kw = s->rkw;
+            s->kh = s->rkh;
+            s->alpha = 1 - away;
+            s->vis = s->rvis * s->alpha;
+            s->tint = s->glow = 0;
+            s->brightness = s->rbright;
+        } else {
+            away = galaxyeaseincubic(galaxyphase(u, 0, .6));
+            s->pos = galaxyadd(s->rpos, galaxyscale(galaxynormalize(galaxysub(s->rpos, r->rcampos)), 2 * F * away));
+            s->orient = s->rorient;
+            s->size = s->rsize;
+            s->alpha = 1 - galaxysmoothstep(galaxyphase(u, 0, .55));
+            s->vis = s->rvis * s->alpha;
+            s->tint = s->rtint * s->alpha;
+            s->glow = s->rglow * s->alpha;
+            s->brightness = s->rbright;
+        }
+        s->p = galaxyproject(s->pos);
+    }
     for (i = 0; i < r->ndust; i++)
         r->dust[i].p = galaxyproject(galaxydustat(&r->dust[i], r->motion));
-    r->dustfade = r->rdust * (1 - fade);
-    r->bright = r->rbright * (r->rkind == GalaxyPickStar && r->fulldesk ? 1 : (1 - .85 * ck));
-    r->vign = r->rvign;
-    r->desk = r->rdesk;
-    r->deskover = r->rkind == GalaxyPickStar && r->fulldesk ? ck : 0;
-    r->bar = r->reveal = r->trailgain = r->central = r->pulse = 0;
+    r->dustfade = r->rdust * fade;
+    r->bright = galaxymix(r->rbright, 1, galaxyeaseinoutcubic(galaxyphase(u, .15, .9)));
+    r->space = r->rspace * (1 - galaxysmoothstep(galaxyphase(u, .05, .8)));
+    r->vign = r->rvign * (1 - galaxysmoothstep(galaxyphase(u, .1, .85)));
+    r->desk = r->rdesk * (1 - galaxysmoothstep(galaxyphase(u, 0, .3)));
+    /* 回到原 tag: 最后交叉淡入开始时截的桌面; 换了 tag: 淡入实时截取的状态栏 */
+    r->deskover = r->fulldesk ? galaxysmoothstep(galaxyphase(u, .82, 1)) : 0;
+    r->bar = galaxysmoothstep(galaxyphase(u, .65, 1));
+    r->reveal = r->trailgain = r->central = r->pulse = 0;
     galaxysortdepth();
 }

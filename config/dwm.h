@@ -116,13 +116,12 @@ static const Rule rules[] = {
 static const Layout layouts[] = {
     { "󰙀",  tile },         /* 主次栈 */
     { "󰕰",  magicgrid },    /* 网格 */
-    { "󰖲",  floating },     /* 浮动 (super shift t) */
 };
 
 #define SHCMD(cmd) { .v = (const char*[]){ "/bin/sh", "-c", cmd, NULL } }
 #define MODKEY Mod4Mask
 #define TAGKEYS(KEY, TAG, cmd) \
-    { MODKEY,              KEY, view,       {.ui = 1 << TAG, .v = cmd} }, \
+    { MODKEY,              KEY, viewtag,    {.ui = 1 << TAG, .v = cmd} }, \
     { MODKEY|ShiftMask,    KEY, tag,        {.ui = 1 << TAG} }, \
     { MODKEY|ControlMask,  KEY, toggleview, {.ui = 1 << TAG} }, \
 
@@ -140,7 +139,7 @@ static Key keys[] = {
     { MODKEY|ShiftMask,    XK_Left,         tagtoleft,        {0} },                     /* super shift left   |  将本窗口移动到左边tag */
     { MODKEY|ShiftMask,    XK_Right,        tagtoright,       {0} },                     /* super shift right  |  将本窗口移动到右边tag */
 
-    { MODKEY,              XK_a,            previewallwin,    {0} },                     /* super a            |  overview */
+    { MODKEY,              XK_a,            galaxy,           {.i = 1} },                /* super a            |  窗口总览 (点选进入) */
     { MODKEY,              XK_z,            galaxy,           {0} },                     /* super z            |  3D 工作空间星系 (停在轨道态) / 回到桌面 */
 
     { MODKEY,              XK_comma,        setmfact,         {.f = -0.05} },            /* super ,            |  缩小主工作区 */
@@ -152,7 +151,7 @@ static Key keys[] = {
     { MODKEY|ShiftMask,    XK_Return,       zoom,             {0} },                     /* super shift enter  |  将当前聚焦窗口置为主窗口 */
 
     { MODKEY,              XK_t,            togglefloating,   {0} },                     /* super t            |  聚焦窗口 浮动/平铺 (浮动时回到上次位置) */
-    { MODKEY|ShiftMask,    XK_t,            togglefloatlayout,{0} },                     /* super shift t      |  本tag 进入/退出浮动布局 */
+    { MODKEY|ShiftMask,    XK_t,            tileall,          {0} },                     /* super shift t      |  本tag 全部窗口回到平铺 */
     { MODKEY,              XK_space,        selectlayout,     {.v = &layouts[1]} },      /* super space        |  网格/平铺布局切换 */
     { MODKEY,              XK_f,            fullscreen,       {0} },                     /* super f            |  开启/关闭 全屏 */
     { MODKEY|ShiftMask,    XK_f,            togglebarglobal,  {0} },                     /* super shift f      |  开启/关闭 状态栏 (所有 tag 和显示器) */
@@ -219,7 +218,7 @@ static Key keys[] = {
     { 0,                   XF86XK_AudioNext,  spawn, SHCMD("playerctl next; $DWM/bin/statusbar/statusbar.sh update music") },       /* 下一首键        | 下一首                 */
     { 0,                   XF86XK_AudioPrev,  spawn, SHCMD("playerctl previous; $DWM/bin/statusbar/statusbar.sh update music") },   /* 上一首键        | 上一首                 */
 
-    /* super key : 跳转到对应tag (可附加一条命令 若目标目录无窗口，则执行该命令) */
+    /* super key : 跳转到对应tag; 已经在该 tag 上再按一次回到上一个 (与 super ` 相同). 目标没有窗口时执行命令 */
     /* super shift key : 将聚焦窗口移动到对应tag */
     /* key tag cmd */
     TAGKEYS(XK_1, 0, 0)
@@ -243,9 +242,9 @@ static Button buttons[] = {
     { ClkClientWin,        MODKEY,          Button3,          resizemouse,   {0} },                                   // super+右键  |  拖拽窗口     |  改变窗口大小
     /* 点击状态栏布局图标操作 */
     { ClkLtSymbol,         0,               Button1,          selectlayout,  {.v = &layouts[1]} },                    // 左键        |  点击布局图标 |  网格/平铺布局切换
-    { ClkLtSymbol,         0,               Button3,          togglefloatlayout, {0} },                               // 右键        |  点击布局图标 |  进入/退出浮动布局
-    { ClkLtSymbol,         0,               Button4,          cyclelayout,   {.i = -1} },                             // 鼠标滚轮上  |  布局图标     |  上一个布局 (平铺/网格/浮动)
-    { ClkLtSymbol,         0,               Button5,          cyclelayout,   {.i = +1} },                             // 鼠标滚轮下  |  布局图标     |  下一个布局 (平铺/网格/浮动)
+    { ClkLtSymbol,         0,               Button3,          tileall,       {0} },                                   // 右键        |  点击布局图标 |  本tag 全部窗口回到平铺
+    { ClkLtSymbol,         0,               Button4,          cyclelayout,   {.i = -1} },                             // 鼠标滚轮上  |  布局图标     |  上一个布局 (平铺/网格)
+    { ClkLtSymbol,         0,               Button5,          cyclelayout,   {.i = +1} },                             // 鼠标滚轮下  |  布局图标     |  下一个布局 (平铺/网格)
     /* 点击tag操作 */
     { ClkTagBar,           0,               Button1,          view,          {0} },                                   // 左键        |  点击tag      |  切换tag
 	{ ClkTagBar,           0,               Button3,          toggleview,    {0} },                                   // 右键        |  点击tag      |  切换是否显示tag

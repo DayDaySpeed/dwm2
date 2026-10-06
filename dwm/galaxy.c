@@ -3,7 +3,7 @@
  * 每个窗口在开始时截图一次 (XRender Picture + mipmap), 之后只在离屏 3D 场景里绘制:
  *   世界坐标 (x 右, y 下, z 远离镜头) -> 镜头变换 -> 透视投影 -> 按镜头空间 z 排序 -> XRender 合成 -> 全屏遮罩窗口
  * Tag = 星系核心, 窗口 = 沿 3D 轨道环绕核心运行的星体, 所有 tag 组成星系群.
- * 流程: 开场 (约 7.7s: 起飞 / 跃迁 / 点火 / 螺旋旋转 / 俯冲铺满全屏 / 点名 / 弧线回缩) -> 停在星系轨道态 (不限时, tag 核心沿开普勒椭圆群轨道公转, 导演镜头轮换机位; 鼠标默认休眠, 左键唤醒后才可视差 / 缩放 / 选窗口)
+ * 流程: 开场 (约 7.7s: 起飞 / 跃迁 / 点火 / 螺旋旋转 / 俯冲铺满全屏 / 点名 / 弧线回缩; 鼠标默认休眠, 左键唤醒后点击才快进) -> 停在星系轨道态 (不限时, tag 核心沿开普勒椭圆群轨道公转, 导演镜头轮换机位; 鼠标默认休眠, 左键唤醒后才可视差 / 缩放 / 选窗口)
  *       -> Esc: 星系群沿轨道划过一段弧线后坍缩成一个光点, 停在纯壁纸 (再按 Super+Z 恢复)
  *       -> Super+Z: 回程, 窗口星飞回原位置变回截图, 露出真实桌面
  *       -> 点击窗口星: 卡片朝镜头前推后跳到该窗口; 点击核心: 核心亮起后切到该 tag
@@ -52,10 +52,13 @@
 #define GALAXYIEND     5.7       /* 开场时钟走到这里进入驻留 (旋转后还有俯冲 / 点名 / 回缩, 真实约 7.7s) */
 #define GALAXYEXIT     4.75      /* Esc 坍缩从这里接着播放到 GALAXYEND (4.2~4.8 之间的曲线是平的) */
 #define GALAXYEND      6.0
-#define GALAXYWARP     .6        /* 开场中按键: 快进到驻留态的真实时长 */
+#define GALAXYWARP     .6        /* 开场中按键, 或唤醒鼠标后点击: 快进到驻留态的真实时长 */
 #define GALAXYRETURN   1.6       /* Super+Z 飞回原位的真实时长 */
-#define GALAXYPICK     .42       /* 点击窗口: 选中前推 */
-#define GALAXYCORE     .30       /* 点击星系核心: 亮起后淡出 */
+#define GALAXYLAND     .95       /* 进入窗口 (点击窗口星 / 核心): 卡片落到真实窗口位置的时长 */
+#define GALAXYXOPEN    .42       /* Super+A: 窗口飞进网格 */
+#define GALAXYXLAND    .55       /* Super+A: 选中后落到真实位置 */
+#define GALAXYXCLOSE   .38       /* Super+A: 不选, 飞回原位 */
+#define GALAXYBARS     8         /* 落位时实时截取的状态栏 / 托盘 */
 #define GALAXYSHOT     GALAXY_SHOT
 #define GALAXYSHOTMIX  6.0       /* 机位之间的过渡 (真实秒), 巡游之间是一次飞越; 慢一些, 镜头转角另有上限 */
 #define GALAXYDIAG     GALAXY_DIAG
@@ -75,7 +78,7 @@
 #define GALAXYPI       3.14159265358979323846
 
 enum { GalaxyOff, GalaxyIntro, GalaxyOrbit, GalaxyCollapse, GalaxyReturn, GalaxyRest };
-enum { GalaxyFlyHome, GalaxyPickStar, GalaxyPickCore };
+enum { GalaxyFlyHome, GalaxyLand };    /* 回程: 飞回原位 / 进入选中的窗口 (目标 tag 已在遮罩下切好) */
 enum { GalaxyDustItem, GalaxyCoreItem, GalaxyStarItem, GalaxyRingItem, GalaxyClusterItem, GalaxyStreakItem, GalaxySunItem };
 enum { GalaxyHalo, GalaxyDisc, GalaxySpike, GalaxyShapes };   /* 柔光 / 实心光点 / 衍射芒 */
 enum { GalaxyWarm, GalaxyCool, GalaxyTints };
@@ -148,6 +151,12 @@ typedef struct {
     /* 天象: 星系运行中新开的窗口诞生 / 关闭的窗口化作流星 (galaxynow 时刻, 0 表示没有) */
     double born, died;
     GalaxyVec dpos, dvel;        /* 关闭时的位置和速度: 流星沿轨道切线飞出 */
+    /* 卡片宽高相对截图的拉伸 (落位时窗口大小可能已变); 落点: 目标 tag 里真实窗口的中心和大小 */
+    double kw, kh, rkw, rkh, lw, lh;
+    int land;
+    GalaxyVec lpos;
+    /* Super+A 网格里的位置 (视口中心为原点) 和缩放 */
+    double ex, ey, es;
     GalaxyProj p;
 } GalaxyStar;
 
@@ -165,12 +174,17 @@ typedef struct {
     int mode, grabkbd, grabptr, w, h, ntags, nstars, ndust, nitems, ntrail, rendermajor;
     int vx, vy, vw, vh;         /* 视口: 发起星系的那块显示器. 投影中心和画面尺度都按它算, 遮罩和画布仍覆盖整个 root */
     int warping, dpms, dpmsoff, hover, hovercore, handon, fulldesk;
-    int mouseawake, mousevalid; /* 驻留态: 首次左键只唤醒, 移动后才开始悬停 */
+    int mouseawake, mousevalid; /* 开场 / 驻留: 首次左键只唤醒, 移动后才开始悬停 */
     double lastmouse;
     int dragging;
     double dragx, dragy, dragtime, dragyaw, dragpitch, dragtyaw, dragtpitch, dragvyaw, dragvpitch;
-    int rkind, rstar, rcore;    /* 回程种类: 飞回原位 / 点中的窗口 / 点中的核心 */
-    double rcoresize;
+    int rkind, rstar, rcore;    /* 回程种类: 飞回原位 / 进入窗口; 点中的窗口 / 点中的核心 */
+    /* Super+A (expose): 同一套遮罩和卡片渲染的平面网格; 遮罩只盖发起的那块屏 */
+    int expose;
+    Pixmap exposebg;
+    /* 落位时实时截取的状态栏 / 托盘 (切 tag 之后的样子), 最后淡入 */
+    Picture landbar[GALAXYBARS];
+    int landbarx[GALAXYBARS], landbary[GALAXYBARS], landbarw[GALAXYBARS], landbarh[GALAXYBARS], nlandbar;
     double tscale, starscale, orbitscale, glowscale;
     /* 时钟: scene 是场景时间, stage 驱动关键帧曲线 (驻留时停住), motion 驱动轨道运动 (一直走) */
     double last, scene, stage, motion, holdw;
@@ -667,4 +681,5 @@ galaxysetcameraat(GalaxyVec target, double dist, double pitch, double yaw, doubl
 #include "galaxy-space.c"
 #include "galaxy-render.c"
 #include "galaxy-build.c"
+#include "galaxy-expose.c"
 #include "galaxy-control.c"
