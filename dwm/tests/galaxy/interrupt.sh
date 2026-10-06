@@ -1,6 +1,7 @@
 #!/bin/bash
 # 中断 / 跳过 / 各状态下的按键: 每个用例前后窗口状态一致, 遮罩已销毁, 日志里的结束路径正确 (共 16 个)
 . "$(dirname "$0")/lib.sh"
+cstate >/dev/null || exit 1
 pass=0; fail=0
 case_() {
     local name=$1 expect=$2 bad= res a n warped0 warped1; shift 2
