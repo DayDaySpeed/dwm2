@@ -15,7 +15,13 @@ pause() { python3 -c "import time; time.sleep($1)"; }    # 部分环境禁止前
 
 # 每个客户端窗口的位置 / 大小 / 映射状态 / WM_STATE, 加上焦点: 动作前后各记一次再比较
 cstate() {
-    for w in $(xprop -root _NET_CLIENT_LIST | sed 's/.*# //; s/,//g' | tr ' ' '\n' | sort); do
+    local clients w
+    clients=$(xprop -root _NET_CLIENT_LIST) || return 1
+    if [[ "$clients" != *'window id # 0x'* ]]; then
+        echo "测试会话 $DISPLAY 没有托管窗口: $clients" >&2
+        return 1
+    fi
+    for w in $(printf '%s\n' "$clients" | sed 's/.*# //; s/,//g' | tr ' ' '\n' | sort); do
         g=$(xwininfo -id $w 2>/dev/null | awk '/Absolute upper-left X/{x=$4}/Absolute upper-left Y/{y=$4}/Width/{w=$2}/Height/{h=$2}/Map State/{m=$3}END{print x","y","w","h","m}')
         s=$(xprop -id $w WM_STATE 2>/dev/null | awk '/window state/{print $3}')
         echo "$w $g $s"
