@@ -658,6 +658,43 @@ paint_preprocess(session_t *ps, bool *fade_running, bool *animation_running) {
 			ps->o.wintype_option[w->window_type].animation != 0 &&
 			win_is_mapped_in_x(w))
 		{
+			/* dwm 的 _DWM_NOANIM 期间把正在走的弹簧直接停在最终位置.
+			 * 只拦新动画的话, 总览揭开遮罩时窗口还会左右晃一下 */
+			if (ps->noanim_until_ms) {
+				struct timespec now_ts = get_time_timespec();
+				int64_t now_ms = (int64_t)now_ts.tv_sec * 1000 + now_ts.tv_nsec / 1000000;
+
+				if (now_ms < ps->noanim_until_ms) {
+					struct win_geometry old_g = w->g;
+					bool size_changed = w->pending_g.width != old_g.width ||
+					                    w->pending_g.height != old_g.height;
+					bool geometry_changed = size_changed || w->pending_g.x != old_g.x ||
+					                        w->pending_g.y != old_g.y;
+
+					if (was_painted && geometry_changed)
+						add_damage_from_win(ps, w);
+					w->g = w->pending_g;
+					w->animation_progress = 1;
+					w->animation_velocity_x = 0;
+					w->animation_velocity_y = 0;
+					w->animation_velocity_w = 0;
+					w->animation_velocity_h = 0;
+					if (size_changed) {
+						win_on_win_size_change(ps, w);
+						pixman_region32_clear(&w->bounding_shape);
+						pixman_region32_fini(&w->bounding_shape);
+						pixman_region32_init_rect(&w->bounding_shape, 0, 0,
+						                          (uint)w->widthb, (uint)w->heightb);
+						win_clear_flags(w, WIN_FLAGS_PIXMAP_STALE);
+						win_process_image_flags(ps, w);
+					}
+					if (was_painted && geometry_changed) {
+						add_damage_from_win(ps, w);
+						w->reg_ignore_valid = false;
+					}
+					goto skip_geometry_animation;
+				}
+			}
 			double neg_displacement_x =
 				w->animation_dest_center_x - w->animation_center_x;
 			double neg_displacement_y =
@@ -818,6 +855,7 @@ paint_preprocess(session_t *ps, bool *fade_running, bool *animation_running) {
 
 			*animation_running = true;
 		}
+	skip_geometry_animation:
 
 		if (win_should_dim(ps, w) != w->dim) {
 			w->dim = win_should_dim(ps, w);
