@@ -46,7 +46,7 @@ execute_menu() {
             coproc (sudo systemctl stop daed > /dev/null && $DWM/bin/statusbar/statusbar.sh updateall > /dev/null)
             ;;
         ' open picom')
-            coproc (picom --experimental-backends --config $DWM/config/picom.conf > /dev/null 2>&1)
+            coproc (picom --config $DWM/config/picom.conf > /dev/null 2>&1)
             ;;
         ' close picom')
             killall picom
