@@ -183,6 +183,7 @@ struct Monitor {
 	unsigned int tagset[2];
 	int showbar;
 	int topbar;
+	int tileontop;        /* 平铺层盖住浮动层; 焦点落到浮动窗口时清除 */
 	Client *clients;
 	Client *sel;
 	Client *stack;
@@ -332,7 +333,8 @@ static void tagtoright(const Arg *arg);
 
 static void togglebar(const Arg *arg);
 static void togglebarglobal(const Arg *arg);
-static void togglesystray();
+static void togglesystray(void) __attribute__((unused));
+static void toggletoplayer(const Arg *arg);
 static void savefloat(Client *c);
 static void noanim(long ms);
 static int restorefloat(Client *c);
@@ -370,7 +372,6 @@ static void updatewmhints(Client *c);
 static void setgap(const Arg *arg);
 
 static void view(const Arg *arg);
-static void viewtag(const Arg *arg);
 static void viewtoleft(const Arg *arg);
 static void viewtoright(const Arg *arg);
 
@@ -444,6 +445,7 @@ static Colormap cmap;
 static Monitor *mons, *selmon;
 static Client *keyfloat; /* 键盘聚焦的浮动窗口: 光标藏起, 鼠标一动再显示并跟随 */
 static int cursorhidden;
+static int xrenderreq; /* RENDER 扩展的主操作码, 失败时不能走默认错误处理 (会退出整个会话) */
 static Window root, wmcheckwin;
 
 static unsigned long hideseq = 0;
@@ -1438,8 +1440,8 @@ focus(Client *c)
     }
     selmon->sel = c;
     drawbars();
-    /* 焦点落到另一张平铺窗口时，被盖严的浮动窗口挪到旁边 */
-    if (c && c != prev && !c->isfloating && !c->isfullscreen)
+    /* 焦点落到另一张平铺窗口时，被盖严的浮动窗口挪到旁边。平铺层在最上面时不挪 */
+    if (c && c != prev && !c->isfloating && !c->isfullscreen && !selmon->tileontop)
         uncovertile(c);
 }
 
@@ -2522,6 +2524,11 @@ resizeclient(Client *c, int x, int y, int w, int h)
 {
     XWindowChanges wc;
 
+    /* 宽高为 0 时 XConfigureWindow 返回 BadValue, 默认错误处理会退出整个会话 */
+    if (w < 1)
+        w = 1;
+    if (h < 1)
+        h = 1;
     c->oldx = c->x; c->x = wc.x = x;
     c->oldy = c->y; c->y = wc.y = y;
     c->oldw = c->w; c->w = wc.width = w;
@@ -2611,27 +2618,59 @@ resizerequest(XEvent *e)
     }
 }
 
+/* 从栈底往上抬可见浮动窗口, 栈顶 (当前焦点) 最后抬, 留在最上面 */
+static void
+raisevisiblefloats(Client *c)
+{
+    if (!c)
+        return;
+    raisevisiblefloats(c->snext);
+    if (c->isfloating && ISVISIBLE(c) && !HIDDEN(c))
+        XRaiseWindow(dpy, c->win);
+}
+
 void
 restack(Monitor *m)
 {
     Client *c;
     XEvent ev;
     XWindowChanges wc;
+    int wasontop;
 
     drawbar(m);
     if (!m->sel) {
         updatebadges(m);
         return;
     }
+    /* 焦点在浮动窗口上: 取消平铺层置顶, 原先被压住的浮动窗口一起抬回来 */
+    wasontop = m->tileontop && m->sel->isfloating;
     if (m->sel->isfloating)
-        XRaiseWindow(dpy, m->sel->win);
+        m->tileontop = 0;
     wc.stack_mode = Below;
     wc.sibling = m->barwin;
-    for (c = m->stack; c; c = c->snext)
-        if (!c->isfloating && ISVISIBLE(c)) {
-            XConfigureWindow(dpy, c->win, CWSibling|CWStackMode, &wc);
-            wc.sibling = c->win;
-        }
+    if (m->tileontop) {
+        for (c = m->stack; c; c = c->snext)
+            if (c->isfloating && ISVISIBLE(c) && !HIDDEN(c)) {
+                XConfigureWindow(dpy, c->win, CWSibling|CWStackMode, &wc);
+                wc.sibling = c->win;
+            }
+        wc.sibling = m->barwin;
+        for (c = m->stack; c; c = c->snext)
+            if (!c->isfloating && ISVISIBLE(c)) {
+                XConfigureWindow(dpy, c->win, CWSibling|CWStackMode, &wc);
+                wc.sibling = c->win;
+            }
+    } else {
+        if (wasontop)
+            raisevisiblefloats(m->stack);
+        else if (m->sel->isfloating)
+            XRaiseWindow(dpy, m->sel->win);
+        for (c = m->stack; c; c = c->snext)
+            if (!c->isfloating && ISVISIBLE(c)) {
+                XConfigureWindow(dpy, c->win, CWSibling|CWStackMode, &wc);
+                wc.sibling = c->win;
+            }
+    }
     updatebadges(m); /* 在窗口层叠调整之后, 徽章才能叠在各自窗口之上 */
     XSync(dpy, False);
     while (XCheckMaskEvent(dpy, EnterWindowMask, &ev));
@@ -2890,6 +2929,10 @@ setup(void)
     sw = DisplayWidth(dpy, screen);
     sh = DisplayHeight(dpy, screen);
     root = RootWindow(dpy, screen);
+    {
+        int evb, erb;
+        XQueryExtension(dpy, "RENDER", &xrenderreq, &evb, &erb);
+    }
     xinitvisual();
     drw = drw_create(dpy, screen, root, sw, sh, visual, depth, cmap);
     if (!drw_fontset_create(drw, fonts, LENGTH(fonts)))
@@ -3893,14 +3936,48 @@ setgap(const Arg *arg)
     arrange(selmon);
 }
 
-/* 再按当前 tag 键: 回到上一页, 与 Super+` 同一条路. 直接走 view() 会把上一格覆盖成当前 tag */
-void
-viewtag(const Arg *arg)
+/* 该 tag 上没有可见窗口时: once (arg->i) 且有隐藏窗口则取消隐藏, 否则执行附加命令 */
+static void
+viewspawn(const Arg *arg)
 {
-    if ((arg->ui & TAGMASK) == (selmon->tagset[selmon->seltags] & TAGMASK))
-        view(&(Arg){0});
-    else
-        view(arg);
+    Client *c, *pick = NULL;
+    int visible = 0, hidden = 0;
+
+    if (!arg->v)
+        return;
+    for (c = selmon->clients; c; c = c->next) {
+        if (!(c->tags & arg->ui) || c->isglobal)
+            continue;
+        if (HIDDEN(c)) {
+            hidden++;
+            if (!pick || c->hideseq >= pick->hideseq)
+                pick = c;
+        } else
+            visible++;
+    }
+    if (visible)
+        return;
+    if (hidden && arg->i) {
+        /* 先全部映射再排一次. 逐个 show() 会在循环里 arrange/XSync,
+         * 中途有窗口消失或尺寸非法时, 错误处理会把整个会话退出 */
+        keyfloat = NULL;
+        cursorshow();
+        for (c = selmon->clients; c; c = c->next) {
+            if (!(c->tags & arg->ui) || c->isglobal || !HIDDEN(c))
+                continue;
+            if (c->preview.hidden_image) {
+                XDestroyImage(c->preview.hidden_image);
+                c->preview.hidden_image = NULL;
+            }
+            XMapWindow(dpy, c->win);
+            setclientstate(c, NormalState);
+        }
+        arrange(selmon);
+        focus(pick);
+        restack(selmon);
+        return;
+    }
+    spawn(&(Arg){ .v = (const char*[]){ "/bin/sh", "-c", arg->v, NULL } });
 }
 
 void
@@ -3908,12 +3985,12 @@ view(const Arg *arg)
 {
     int i;
     unsigned int tmptag;
-    Client *c;
-    int n = 0;
 
-    /* 已经在目标 tag 上: 停住. 先翻转再写入会把上一格盖掉, 之后 Super+` 也回不去 */
-    if ((arg->ui & TAGMASK) && (arg->ui & TAGMASK) == (selmon->tagset[selmon->seltags] & TAGMASK))
+    /* 已经在目标 tag 上: 不切页, 避免盖掉上一格. 没有可见窗口时取消隐藏或再开一个 */
+    if ((arg->ui & TAGMASK) && (arg->ui & TAGMASK) == (selmon->tagset[selmon->seltags] & TAGMASK)) {
+        viewspawn(arg);
         return;
+    }
 
     /* 换 tag 就结束键盘操作: 光标藏着时显示出来 */
     keyfloat = NULL;
@@ -3947,16 +4024,7 @@ view(const Arg *arg)
 
     focus(NULL);
     arrange(selmon);
-
-    // 若当前tag无窗口 且附加了v参数 则执行
-    if (arg->v) {
-        for (c = selmon->clients; c; c = c->next)
-            if (c->tags & arg->ui && !HIDDEN(c) && !c->isglobal)
-                n++;
-        if (n == 0) {
-            spawn(&(Arg){ .v = (const char*[]){ "/bin/sh", "-c", arg->v, NULL } });
-        }
-    }
+    viewspawn(arg);
 }
 
 void
@@ -4147,13 +4215,39 @@ wintomon(Window w)
     return selmon;
 }
 
+/* 记到文件里: 闪退时 stderr 在 tty 上, 会话一断就看不到了 */
+static void
+xerrorlog(XErrorEvent *ee, int fatal)
+{
+    char path[512];
+    const char *home = getenv("HOME");
+    FILE *f;
+    static int lastreq = -1, lasterr = -1;
+
+    fprintf(stderr, "dwm: %s: request code=%d, error code=%d\n",
+            fatal ? "fatal error" : "ignored error", ee->request_code, ee->error_code);
+    if (!fatal && lastreq == ee->request_code && lasterr == ee->error_code)
+        return;
+    lastreq = ee->request_code;
+    lasterr = ee->error_code;
+    if (!home)
+        return;
+    snprintf(path, sizeof path, "%s/.cache/dwm-error.log", home);
+    if ((f = fopen(path, "a"))) {
+        fprintf(f, "dwm: %s: request code=%d, error code=%d, resource=0x%lx\n",
+                fatal ? "fatal error" : "ignored error",
+                ee->request_code, ee->error_code, ee->resourceid);
+        fclose(f);
+    }
+}
+
 /* There's no way to check accesses to destroyed windows, thus those cases are
  * ignored (especially on UnmapNotify's). Other types of errors call Xlibs
  * default error handler, which may call exit. */
 int
 xerror(Display *dpy, XErrorEvent *ee)
 {
-    if (ee->error_code == BadWindow
+    int harmless = ee->error_code == BadWindow
             || (ee->request_code == X_SetInputFocus && ee->error_code == BadMatch)
             || (ee->request_code == X_PolyText8 && ee->error_code == BadDrawable)
             || (ee->request_code == X_PolyFillRectangle && ee->error_code == BadDrawable)
@@ -4161,10 +4255,21 @@ xerror(Display *dpy, XErrorEvent *ee)
             || (ee->request_code == X_ConfigureWindow && ee->error_code == BadMatch)
             || (ee->request_code == X_GrabButton && ee->error_code == BadAccess)
             || (ee->request_code == X_GrabKey && ee->error_code == BadAccess)
-            || (ee->request_code == X_CopyArea && ee->error_code == BadDrawable))
+            || (ee->request_code == X_CopyArea && ee->error_code == BadDrawable)
+            /* 截图 / 徽章 / 把窗口改成 0 尺寸: 这些失败以前会直接退出, 桌面一起没了 */
+            || ee->error_code == BadDrawable || ee->error_code == BadPixmap
+            || ee->error_code == BadValue
+            || (xrenderreq && ee->request_code == xrenderreq)
+            || ee->request_code == X_CreatePixmap || ee->request_code == X_FreePixmap
+            || ee->request_code == X_GetImage || ee->request_code == X_PutImage
+            || ee->request_code == X_CreateGC;
+
+    if (harmless) {
+        if (ee->error_code != BadWindow)
+            xerrorlog(ee, 0);
         return 0;
-    fprintf(stderr, "dwm: fatal error: request code=%d, error code=%d\n",
-            ee->request_code, ee->error_code);
+    }
+    xerrorlog(ee, 1);
     return xerrorxlib(dpy, ee); /* may call exit */
 }
 
@@ -4260,27 +4365,39 @@ noanim(long ms)
 XImage
 *getwindowximage(Client *c) {
     XWindowAttributes attr;
-    XGetWindowAttributes(dpy, c->win, &attr);
-    XRenderPictFormat *format = XRenderFindVisualFormat(dpy, attr.visual);
-    int hasAlpha = (format->type == PictTypeDirect && format->direct.alphaMask);
-    XRenderPictureAttributes pa;
-    pa.subwindow_mode = IncludeInferiors;
-    Picture picture = XRenderCreatePicture(dpy, c->win, format, CPSubwindowMode, &pa);
-    Pixmap pixmap = XCreatePixmap(dpy, root, c->w, c->h, 32);
-    XRenderPictureAttributes pa2;
-    XRenderPictFormat *format2 = XRenderFindStandardFormat(dpy, PictStandardARGB32);
-    Picture pixmapPicture = XRenderCreatePicture(dpy, pixmap, format2, 0, &pa2);
+    XRenderPictFormat *format, *format2;
+    XRenderPictureAttributes pa, pa2;
+    Picture picture, pixmapPicture;
+    Pixmap pixmap;
     XRenderColor color;
-    color.red = 0x0000;
-    color.green = 0x0000;
-    color.blue = 0x0000;
-    color.alpha = 0x0000;
+    XImage *img;
+    int hasAlpha;
+
+    /* 宽高为 0 或窗口已销毁: 不要发 CreatePixmap / GetImage, 失败会退出整个会话 */
+    if (!c || c->w < 1 || c->h < 1 || !XGetWindowAttributes(dpy, c->win, &attr))
+        return NULL;
+    if (!(format = XRenderFindVisualFormat(dpy, attr.visual)))
+        return NULL;
+    hasAlpha = (format->type == PictTypeDirect && format->direct.alphaMask);
+    pa.subwindow_mode = IncludeInferiors;
+    memset(&pa2, 0, sizeof pa2);
+    picture = XRenderCreatePicture(dpy, c->win, format, CPSubwindowMode, &pa);
+    pixmap = XCreatePixmap(dpy, root, c->w, c->h, 32);
+    if (!(format2 = XRenderFindStandardFormat(dpy, PictStandardARGB32))) {
+        XRenderFreePicture(dpy, picture);
+        XFreePixmap(dpy, pixmap);
+        return NULL;
+    }
+    pixmapPicture = XRenderCreatePicture(dpy, pixmap, format2, 0, &pa2);
+    color.red = color.green = color.blue = color.alpha = 0x0000;
     XRenderFillRectangle(dpy, PictOpSrc, pixmapPicture, &color, 0, 0, c->w, c->h);
     XRenderComposite(dpy, hasAlpha ? PictOpOver : PictOpSrc, picture, 0, pixmapPicture, 0, 0, 0, 0, 0, 0, c->w, c->h);
-    XImage *img = XGetImage(dpy, pixmap, 0, 0, c->w, c->h, AllPlanes, ZPixmap);
+    img = XGetImage(dpy, pixmap, 0, 0, c->w, c->h, AllPlanes, ZPixmap);
     XRenderFreePicture(dpy, picture);
     XRenderFreePicture(dpy, pixmapPicture);
     XFreePixmap(dpy, pixmap);
+    if (!img)
+        return NULL;
     img->red_mask = format2->direct.redMask << format2->direct.red;
     img->green_mask = format2->direct.greenMask << format2->direct.green;
     img->blue_mask = format2->direct.blueMask << format2->direct.blue;
@@ -4703,6 +4820,35 @@ floatcenter(const Arg *arg)
     focus(c);
     restack(selmon);
     holdfloat(c);
+}
+
+/* 平铺层和浮动层交替放到最上面, 并聚焦该层最近用过的窗口 */
+void
+toggletoplayer(const Arg *arg)
+{
+    Client *c;
+    int hasfloat = 0, hastile = 0, wantfloat = selmon->tileontop;
+    Client *pick = NULL;
+
+    (void)arg;
+    if (selmon->sel && selmon->sel->isfullscreen)
+        return;
+    for (c = selmon->stack; c; c = c->snext) {
+        if (!ISVISIBLE(c) || HIDDEN(c) || c->isfullscreen)
+            continue;
+        if (c->isfloating)
+            hasfloat = 1;
+        else
+            hastile = 1;
+        if (!pick && !!c->isfloating == wantfloat)
+            pick = c;
+    }
+    if (!hasfloat || !hastile || !pick)
+        return;
+    if (!wantfloat)
+        selmon->tileontop = 1;
+    pointerclient(pick);
+    restack(selmon);
 }
 
 /* 进入另一层。arg->i = 1 浮动层, 0 平铺层。

@@ -120,14 +120,14 @@ static const Layout layouts[] = {
 
 #define SHCMD(cmd) { .v = (const char*[]){ "/bin/sh", "-c", cmd, NULL } }
 #define MODKEY Mod4Mask
-#define TAGKEYS(KEY, TAG, cmd) \
-    { MODKEY,              KEY, viewtag,    {.ui = 1 << TAG, .v = cmd} }, \
+#define TAGKEYS(KEY, TAG, cmd, once) \
+    { MODKEY,              KEY, view,       {.ui = 1 << TAG, .i = once, .v = cmd} }, \
     { MODKEY|ShiftMask,    KEY, tag,        {.ui = 1 << TAG} }, \
     { MODKEY|ControlMask,  KEY, toggleview, {.ui = 1 << TAG} }, \
 
 static Key keys[] = {
     /* modifier            key              function          argument */
-    { MODKEY,              XK_equal,        togglesystray,    {0} },                     /* super +            |  切换 托盘栏显示状态 */
+    { MODKEY,              XK_equal,        toggletoplayer,   {0} },                     /* super +            |  平铺层/浮动层交替放到最上层 */
 
     { MODKEY,              XK_Tab,          focuslast,        {0} },                     /* super tab          |  切到上一个用过的窗口 (连按来回切) */
     { MODKEY,              XK_Up,           focusstack,       {.i = -1} },               /* super up           |  本tag内切换聚焦窗口 */
@@ -195,7 +195,7 @@ static Key keys[] = {
     /* spawn + SHCMD 执行对应命令(已下部分建议完全自己重新定义) */
     { MODKEY,              XK_s,      togglescratch, SHCMD("tabbed -n scratchpad -c -r 2 st -w ''") },          /* super s          | 打开st scratchpad      */
     { MODKEY,              XK_Return, spawn, SHCMD("tabbed -n st -C tabbed -c -r 2 st -w ''") },                /* super enter      | 打开st                 */
-    { MODKEY,              XK_minus,  spawn, SHCMD("tabbed -n st -C FG -c -r 2 st -w ''") },                    /* super -          | 打开全局st终端         */
+    { MODKEY,              XK_minus,  spawn, SHCMD("tabbed -n st -C float -c -r 2 st -w ''") },                 /* super -          | 打开浮动st终端         */
     { MODKEY,              XK_r,      spawn, SHCMD("killall pcmanfm || pcmanfm") },                             /* super r          | 打开/关闭pcmanfm       */
     { MODKEY,              XK_d,      spawn, SHCMD("rofi -show drun") },                                        /* super d          | rofi: 启动应用 (带图标) */
     { MODKEY|ShiftMask,    XK_d,      spawn, SHCMD("rofi -show run") },                                         /* super shift d    | rofi: 执行命令         */
@@ -218,18 +218,19 @@ static Key keys[] = {
     { 0,                   XF86XK_AudioNext,  spawn, SHCMD("playerctl next; $DWM/bin/statusbar/statusbar.sh update music") },       /* 下一首键        | 下一首                 */
     { 0,                   XF86XK_AudioPrev,  spawn, SHCMD("playerctl previous; $DWM/bin/statusbar/statusbar.sh update music") },   /* 上一首键        | 上一首                 */
 
-    /* super key : 跳转到对应tag; 已经在该 tag 上再按一次回到上一个 (与 super ` 相同). 目标没有窗口时执行命令 */
+    /* super key : 跳转到对应tag. 没有窗口时执行命令; 已在该 tag 且还有可见窗口时再按无反应.
+     * once=1: 窗口都隐藏了则取消隐藏, 不多开. once=0: 窗口都隐藏了仍执行命令, 再开一个. */
     /* super shift key : 将聚焦窗口移动到对应tag */
     /* key tag cmd */
-    TAGKEYS(XK_1, 0, 0)
-    TAGKEYS(XK_2, 1, 0)
-    TAGKEYS(XK_3, 2, 0)
-    TAGKEYS(XK_9, 3, "obs")
-    TAGKEYS(XK_c, 4, "google-chrome-stable https://www.youtube.com")
-    TAGKEYS(XK_m, 5, "~/.local/share/splayer/SPlayer.AppImage --no-sandbox")
-    TAGKEYS(XK_0, 6, "~/.local/bin/steam")
-    TAGKEYS(XK_w, 7, "microsoft-edge-stable https://www.github.com")
-    TAGKEYS(XK_v, 8, "code")
+    TAGKEYS(XK_1, 0, 0, 0)
+    TAGKEYS(XK_2, 1, 0, 0)
+    TAGKEYS(XK_3, 2, 0, 0)
+    TAGKEYS(XK_9, 3, "obs", 1)
+    TAGKEYS(XK_c, 4, "google-chrome-stable --new-window https://www.youtube.com", 0)
+    TAGKEYS(XK_m, 5, "~/.local/share/splayer/SPlayer.AppImage --no-sandbox", 1)
+    TAGKEYS(XK_0, 6, "~/.local/bin/steam", 1)
+    TAGKEYS(XK_w, 7, "microsoft-edge-stable --new-window https://www.github.com", 0)
+    TAGKEYS(XK_v, 8, "code", 0)
 };
 
 static Button buttons[] = {
