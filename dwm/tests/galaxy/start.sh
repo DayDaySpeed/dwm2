@@ -33,4 +33,10 @@ for i in 1 2 3 4 5; do
     pause .5
 done
 "$T/setup.sh"
-echo "测试会话 $DISPLAY 就绪: $(xprop -root _NET_CLIENT_LIST | tr ',' '\n' | wc -l) 个窗口"
+clients=$(xprop -root _NET_CLIENT_LIST)
+count=$(printf '%s\n' "$clients" | grep -oE '0x[[:xdigit:]]+' | wc -l)
+if [ "$count" -lt 8 ]; then
+    echo "测试会话 $DISPLAY 启动失败: 预期至少 8 个测试窗口, 实际 $count 个 ($clients)" >&2
+    exit 1
+fi
+echo "测试会话 $DISPLAY 就绪: $count 个窗口"
