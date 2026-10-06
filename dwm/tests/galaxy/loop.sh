@@ -12,8 +12,8 @@ echo "before: rss $(rss) kB | $(res)" > "$OUT"
 for i in $(seq 1 $N); do
     case $((i % 4)) in
     0) xdotool key super+z; pause 1.2; xdotool click 1; pause .15; xdotool click 1; pause 1.2; xdotool key super+z; pause 2 ;;
-    1) xdotool key super+z; pause 1.2; xdotool click 1; pause .15; xdotool click 1; pause 1.2; xdotool key Escape; pause 2.8; xdotool key super+z; pause .5 ;;
-    2) xdotool key super+z; pause 0.$((i % 9 + 1)); xdotool key Escape; pause 3; xdotool key super+z; pause .5 ;;
+    1) xdotool key super+z; pause 1.2; xdotool click 1; pause .15; xdotool click 1; pause 1.2; xdotool key Escape; pause 3.4; xdotool key super+z; pause .5 ;;
+    2) xdotool key super+z; pause 0.$((i % 9 + 1)); xdotool key Escape; pause 3.6; xdotool key super+z; pause .5 ;;
     3) xdotool key super+z; pause 9; xdotool key super+z; pause 2 ;;
     esac
     pause .3

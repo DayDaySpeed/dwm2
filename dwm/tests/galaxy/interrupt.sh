@@ -28,7 +28,7 @@ case_() {
 }
 xdotool mousemove 1280 720
 for t in 0.4 1.2 2.5 3.5 4.8; do
-    case_ "Esc in intro @${t}s -> collapse -> rest" "end: from rest restore 1" "key super+z" "sleep $t" "key Escape" "sleep 3" "check-overlay 1" "key super+z"
+    case_ "Esc in intro @${t}s -> collapse -> rest" "end: from rest restore 1" "key super+z" "sleep $t" "key Escape" "sleep 3.6" "check-overlay 1" "key super+z"
 done
 for k in Return space a; do
     case_ "key '$k' in intro -> keep playing" "end: from return restore 1" "key super+z" "sleep 2" "key $k" "sleep 1.2" "check-overlay 1" "check-no-warp" "key super+z"
@@ -40,7 +40,7 @@ case_ "orbit: typing 'a', then Super+Z -> return" "end: from return restore 1" "
 case_ "orbit: Esc -> collapse; Esc again -> rest" "end: from rest restore 1" "key super+z" "sleep 9.5" "key Escape" "sleep 0.5" "key Escape" "sleep 0.5" "check-overlay 1" "key super+z"
 case_ "orbit: Esc -> collapse; Super+Z -> cancel" "end: from collapse restore 1" "key super+z" "sleep 9.5" "key Escape" "sleep 0.6" "key super+z"
 case_ "orbit: Super+Z -> return; Esc -> end now" "end: from return restore 1" "key super+z" "sleep 9.5" "key super+z" "sleep 0.5" "key Escape"
-case_ "rest: click -> restore" "end: from rest restore 1" "key super+z" "sleep 9.5" "key Escape" "sleep 2.5" "check-overlay 1" "click 1"
-case_ "rest: other key -> restore" "end: from rest restore 1" "key super+z" "sleep 9.5" "key Escape" "sleep 2.5" "key Return"
+case_ "rest: click -> restore" "end: from rest restore 1" "key super+z" "sleep 9.5" "key Escape" "sleep 3.2" "check-overlay 1" "click 1"
+case_ "rest: other key -> restore" "end: from rest restore 1" "key super+z" "sleep 9.5" "key Escape" "sleep 3.2" "key Return"
 echo "passed $pass failed $fail"
 [ $fail = 0 ]

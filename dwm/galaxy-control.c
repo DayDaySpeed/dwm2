@@ -1132,7 +1132,7 @@ galaxytick(void)
         r->motion = r->scene;
         r->exitspin = galaxyexitangle(u);
         r->beatfade = MIN(r->beatfade, 1 - galaxysmoothstep(u));   /* 开场节拍 (iclock 已冻结) 用 1s 平滑淡出 */
-        if (u >= GALAXYCOLLAPSE) {
+        if (u >= MAX(GALAXYCOLLAPSE, galaxygl.gwall ? GALAXYSHOCK + GALAXYSHOCKT + GALAXYAFTER : 0)) {
             galaxyfinish();
             return;
         }
@@ -1825,7 +1825,7 @@ galaxy(const Arg *arg)
     if (!r->overlaypic)
         goto fail;
     XMapRaised(dpy, r->overlay);
-    if (!galaxyglbegin(r->overlay, r->backpix, r->frontpix, r->w, r->h)) {
+    if (!galaxyglbegin(r->overlay, r->backpix, r->frontpix, r->wallpix, r->w, r->h)) {
         galaxylogstart();
         if (r->log)
             fprintf(r->log, "galaxy start failed: opengl\n");

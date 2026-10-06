@@ -1033,6 +1033,7 @@ galaxyupdatescene(double stage, double motion, double dt)
 {
     GalaxyScene *r = &galaxyscene;
     int orbit = r->mode == GalaxyOrbit, i;
+    double fs;
 
     r->holdw = galaxysmoothstep(galaxyphase(motion, GALAXYIEND - .5, GALAXYIEND + 2.5))
         * (1 - galaxysmoothstep(galaxyphase(stage, GALAXYEXIT, GALAXYEXIT + .5)));
@@ -1079,14 +1080,16 @@ galaxyupdatescene(double stage, double motion, double dt)
     galaxyupdatestars(stage, motion, dt);
     for (i = 0; i < r->ndust; i++)
         r->dust[i].p = galaxyproject(galaxydustat(&r->dust[i], motion));
-    r->bright = GALAXYCURVE(galaxybright, stage);
-    r->space = GALAXYCURVE(galaxyspacekeys, stage);
+    /* 坍缩: 整体淡回壁纸的部分停在冲击波之前, 改由冲击波圆形揭开 (见 galaxypresent); 没有 GL 壁纸纹理时仍整体淡入 */
+    fs = r->mode == GalaxyCollapse && galaxygl.gwall ? MIN(stage, 5.0) : stage;
+    r->bright = GALAXYCURVE(galaxybright, fs);
+    r->space = GALAXYCURVE(galaxyspacekeys, fs);
     if (r->variant == GalaxyShatter && r->mode == GalaxyIntro)  /* 碎块后面直接是深空 */
         r->space = MAX(r->space, galaxysmoothstep(galaxyphase(stage, .12, .3)));
-    r->vign = GALAXYCURVE(galaxyvignettekeys, stage);
+    r->vign = GALAXYCURVE(galaxyvignettekeys, fs);
     r->desk = 1 - galaxysmoothstep(galaxyphase(stage, 0, .1));
     r->deskover = r->bar = 0;
-    r->reveal = galaxyeaseinoutcubic(galaxyphase(stage, 5.7, 6));
+    r->reveal = galaxyeaseinoutcubic(galaxyphase(fs, 5.7, 6));
     r->trailgain = MAX(GALAXYCURVE(galaxytrailgain, stage), .6 * r->warpfx);
     if (r->mode == GalaxyCollapse)
         r->trailgain *= 1 - galaxysmoothstep(galaxyphase(r->celapsed, 0, .35));

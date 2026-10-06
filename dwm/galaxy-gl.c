@@ -34,8 +34,9 @@ static struct {
     GLuint vao, vbo, fullvao;
     GLuint fbo, lighttex, depthtex, bloomfbo[GALAXYBLOOM], bloomtex[GALAXYBLOOM];
     int fw, fh, bw[GALAXYBLOOM], bh[GALAXYBLOOM];
-    GLuint texback, texfront;
-    GLXPixmap gback, gfront;
+    GLuint texback, texfront, texwall;
+    GLXPixmap gback, gfront, gwall;
+    float lens[4], shock[4], glow;    /* 收尾特效 (每帧 galaxyglframe 清零, 坍缩时 galaxyglexitfx 设置) */
     Window win;
     GalaxyGLInst *inst, *part;
     int ninst, npart;
@@ -182,8 +183,9 @@ static const char *galaxyglfsnebula =
 static const char *galaxyglfscomp =
     "#version 330 core\n"
     "in vec2 uv; out vec4 o;\n"
-    "uniform sampler2D tbase, tlight, tbloom, tfront;\n"
-    "uniform float ybase, yfront, bloomk, aberr, grain, seed; uniform vec2 screen;\n"
+    "uniform sampler2D tbase, tlight, tbloom, tfront, twall;\n"
+    "uniform float ybase, yfront, bloomk, aberr, grain, seed, glow; uniform vec2 screen;\n"
+    "uniform vec4 lens, shock;\n"
     "vec3 tolin(vec3 c) { return mix(c / 12.92, pow((c + .055) / 1.055, vec3(2.4)), step(.04045, c)); }\n"
     "vec3 tosrgb(vec3 c) { return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - .055, step(.0031308, c)); }\n"
     /* 保色相的软肩: 按最亮通道压缩, 各通道等比缩放 (不会像逐通道截断那样先变白); 极亮处才逐渐偏白 */
@@ -196,11 +198,29 @@ static const char *galaxyglfscomp =
     "float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233)) + seed) * 43758.5453); }\n"
     "void main() {\n"
     "  vec2 ub = vec2(uv.x, ybase > .5 ? uv.y : 1.0 - uv.y), uf = vec2(uv.x, yfront > .5 ? uv.y : 1.0 - uv.y);\n"
+    "  vec2 px = vec2(uv.x * screen.x, (1.0 - uv.y) * screen.y), d = px - lens.xy;\n"
+    "  float rd = length(d);\n"
+    /* 引力透镜: 越靠近核心, 采样点越往外 (背景被拽向中心), 再带一点旋涡; 到半径 lens.w 处衰减为 0, 采样不会出屏 */
+    "  if (lens.z > .001) {\n"
+    "    float f = lens.z * pow(max(1.0 - rd / lens.w, 0.0), 2.0), a = 1.2 * f;\n"
+    "    vec2 sp = lens.xy + mat2(cos(a), sin(a), -sin(a), cos(a)) * d * (1.0 + f);\n"
+    "    ub = vec2(sp.x / screen.x, ybase > .5 ? 1.0 - sp.y / screen.y : sp.y / screen.y);\n"
+    "  }\n"
     "  vec3 base = tolin(texture(tbase, ub).rgb);\n"
+    /* 冲击波揭开壁纸: 圆内是壁纸, 边界三个通道错开一点 (色差) */
+    "  if (shock.w > .5) {\n"
+    "    vec2 uw = vec2(uv.x, ybase > .5 ? uv.y : 1.0 - uv.y);\n"
+    "    vec3 wall = tolin(texture(twall, uw).rgb), in3;\n"
+    "    in3 = 1.0 - smoothstep(shock.x - shock.y * vec3(1.15, 1.0, .85), shock.x + shock.y * vec3(.25, .15, .05), vec3(rd));\n"
+    "    base = mix(base, wall, in3);\n"
+    "  }\n"
     "  vec2 off = (uv - .5) * aberr / screen;\n"
     "  vec3 L = vec3(texture(tlight, uv + off).r, texture(tlight, uv).g, texture(tlight, uv - off).b)\n"
     "         + bloomk * texture(tbloom, uv).rgb;\n"
     /* 光按显示空间的强度画出 (调好的观感不变), 换到线性空间后再压缩、滤色; 光为 0 时输出与底层完全相同 */
+    /* 冲击波的光环 (外沿偏暖) 和收尾的余晖 */
+    "  if (shock.z > .001) L += vec3(1.0, .9, .78) * shock.z * exp(-pow((rd - shock.x) / (.6 * shock.y), 2.0));\n"
+    "  if (glow > .001) L += vec3(1.0, .86, .7) * glow * exp(-rd * rd / (.025 * screen.x * screen.x));\n"
     "  L = tone(pow(max(L * 1.15, 0.0), vec3(2.2)));\n"
     "  vec3 c = tosrgb(1.0 - (1.0 - base) * (1.0 - L));\n"
     "  vec4 f = texture(tfront, uf);\n"
@@ -378,6 +398,7 @@ galaxyglobjects(void)
     glGenVertexArrays(1, &galaxygl.fullvao);   /* 全屏三角形不读顶点属性 */
     glGenTextures(1, &galaxygl.texback);
     glGenTextures(1, &galaxygl.texfront);
+    glGenTextures(1, &galaxygl.texwall);
     return 1;
 }
 
@@ -499,7 +520,7 @@ galaxyglprobeorient(int w, int h)
 
 /* 每次进入星系: 遮罩窗口建好之后绑定上下文和底层 / 前景层 pixmap. 失败返回 0 */
 static int
-galaxyglbegin(Window win, Pixmap back, Pixmap front, int w, int h)
+galaxyglbegin(Window win, Pixmap back, Pixmap front, Pixmap wall, int w, int h)
 {
     if (!galaxyglinit() || !glXMakeCurrent(dpy, win, galaxygl.ctx) || !galaxyglobjects())
         return 0;
@@ -509,6 +530,7 @@ galaxyglbegin(Window win, Pixmap back, Pixmap front, int w, int h)
     galaxygl.win = win;
     galaxygl.gback = galaxyglpixmap(back, 0);
     galaxygl.gfront = galaxyglpixmap(front, 1);
+    galaxygl.gwall = wall ? galaxyglpixmap(wall, 0) : 0;   /* 收尾时冲击波揭开的壁纸 (没有也能运行, 只是没有揭开效果) */
     galaxygl.ninst = galaxygl.npart = 0;
     if (galaxygl.gback && galaxygl.gfront)
         galaxyglprobeorient(w, h);
@@ -534,6 +556,8 @@ galaxyglend(void)
             glXReleaseTexImageEXT(dpy, galaxygl.gfront, GLX_FRONT_LEFT_EXT);
         if (galaxygl.gback)
             glXReleaseTexImageEXT(dpy, galaxygl.gback, GLX_FRONT_LEFT_EXT);
+        if (galaxygl.gwall)
+            glXReleaseTexImageEXT(dpy, galaxygl.gwall, GLX_FRONT_LEFT_EXT);
         glFinish();
         glXMakeCurrent(dpy, None, NULL);
         XSync(dpy, False);
@@ -543,7 +567,9 @@ galaxyglend(void)
         glXDestroyPixmap(dpy, galaxygl.gback);
     if (galaxygl.gfront)
         glXDestroyPixmap(dpy, galaxygl.gfront);
-    galaxygl.gback = galaxygl.gfront = 0;
+    if (galaxygl.gwall)
+        glXDestroyPixmap(dpy, galaxygl.gwall);
+    galaxygl.gback = galaxygl.gfront = galaxygl.gwall = 0;
     galaxygl.win = None;
 }
 
@@ -560,6 +586,9 @@ galaxyglframe(void)
     glDepthMask(GL_TRUE);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     galaxygl.ninst = galaxygl.npart = 0;
+    memset(galaxygl.lens, 0, sizeof galaxygl.lens);
+    memset(galaxygl.shock, 0, sizeof galaxygl.shock);
+    galaxygl.glow = 0;
 }
 
 static void
@@ -763,6 +792,21 @@ galaxyglfull(GLuint prog, GLuint src, int w, int h, int sw, int sh)
     glDrawArrays(GL_TRIANGLES, 0, 3);
 }
 
+/* 收尾特效 (这一帧): 透镜中心 / 强度 / 半径, 冲击波半径 / 宽度 / 光环亮度, 是否揭开壁纸, 余晖亮度 (像素, 左上原点) */
+static void
+galaxyglexitfx(double cx, double cy, double lens, double lensr, double sr, double sw, double sk, int reveal, double glow)
+{
+    galaxygl.lens[0] = (float)cx;
+    galaxygl.lens[1] = (float)cy;
+    galaxygl.lens[2] = (float)lens;
+    galaxygl.lens[3] = (float)MAX(1, lensr);
+    galaxygl.shock[0] = (float)sr;
+    galaxygl.shock[1] = (float)MAX(1, sw);
+    galaxygl.shock[2] = (float)sk;
+    galaxygl.shock[3] = reveal ? 1 : 0;
+    galaxygl.glow = (float)glow;
+}
+
 /* 每帧最后: 画完剩下的光和粒子, 泛光, 与底层 / 前景层合成, 交换缓冲.
  * bloom: 泛光强度; fx: 色差和颗粒的强度 (开场第一帧 / 回程最后为 0, 保证与真实桌面一致) */
 static void
@@ -771,7 +815,7 @@ galaxyglpresent(double bloom, double fx, int levels)
     GalaxyScene *r = &galaxyscene;
     struct timespec t0, t1;
     GLuint p = galaxygl.progcomp;
-    int i;
+    int i, wall;
 
     if (!galaxygl.win)
         return;
@@ -806,8 +850,17 @@ galaxyglpresent(double bloom, double fx, int levels)
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, galaxygl.texback);
     glXBindTexImageEXT(dpy, galaxygl.gback, GLX_FRONT_LEFT_EXT, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    /* 平时逐像素对齐采样 (首帧与桌面一致); 透镜扭曲时要插值, 否则有锯齿 */
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, galaxygl.lens[2] > .001 ? GL_LINEAR : GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, galaxygl.lens[2] > .001 ? GL_LINEAR : GL_NEAREST);
+    wall = galaxygl.gwall && galaxygl.shock[3] > .5;
+    if (wall) {
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, galaxygl.texwall);
+        glXBindTexImageEXT(dpy, galaxygl.gwall, GLX_FRONT_LEFT_EXT, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    }
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, galaxygl.lighttex);
     glActiveTexture(GL_TEXTURE2);
@@ -821,6 +874,10 @@ galaxyglpresent(double bloom, double fx, int levels)
     glUniform1i(glGetUniformLocation(p, "tlight"), 1);
     glUniform1i(glGetUniformLocation(p, "tbloom"), 2);
     glUniform1i(glGetUniformLocation(p, "tfront"), 3);
+    glUniform1i(glGetUniformLocation(p, "twall"), 4);
+    glUniform4fv(glGetUniformLocation(p, "lens"), 1, galaxygl.lens);
+    glUniform4f(glGetUniformLocation(p, "shock"), galaxygl.shock[0], galaxygl.shock[1], galaxygl.shock[2], wall ? 1 : 0);
+    glUniform1f(glGetUniformLocation(p, "glow"), galaxygl.glow);
     glUniform1f(glGetUniformLocation(p, "ybase"), galaxygl.yinv24);
     glUniform1f(glGetUniformLocation(p, "yfront"), galaxygl.yinv32);
     glUniform1f(glGetUniformLocation(p, "bloomk"), bloom > .001 ? bloom * GALAXYBLOOMK : 0);
@@ -831,6 +888,10 @@ galaxyglpresent(double bloom, double fx, int levels)
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glActiveTexture(GL_TEXTURE3);
     glXReleaseTexImageEXT(dpy, galaxygl.gfront, GLX_FRONT_LEFT_EXT);
+    if (wall) {
+        glActiveTexture(GL_TEXTURE4);
+        glXReleaseTexImageEXT(dpy, galaxygl.gwall, GLX_FRONT_LEFT_EXT);
+    }
     glActiveTexture(GL_TEXTURE0);
     glXReleaseTexImageEXT(dpy, galaxygl.gback, GLX_FRONT_LEFT_EXT);
     glXSwapBuffers(dpy, galaxygl.win);

@@ -1972,8 +1972,31 @@ static void
 galaxypresent(void)
 {
     GalaxyScene *r = &galaxyscene;
-    double q = r->mode == GalaxyOrbit ? r->qualityvisual : 0;
+    double q = r->mode == GalaxyOrbit ? r->qualityvisual : 0, u, cx, cy, far, sp, lens, sr = 0, sw = 1, sk = 0, glow;
+    GalaxyProj p;
 
+    /* Esc 收尾: 收束时引力透镜把背景拽向中心; 然后中心爆出冲击波, 圆内露出壁纸, 余晖慢慢散去 */
+    if (r->mode == GalaxyCollapse && galaxygl.gwall) {
+        u = r->celapsed;
+        p = galaxyproject(galaxyv(0, 0, 0));
+        cx = p.ok ? p.x : r->vx + r->vw * .5;
+        cy = p.ok ? p.y : r->vy + r->vh * .5;
+        lens = .35 * galaxysmoothstep(galaxyphase(u, GALAXYEXITSTART, GALAXYSHOCK))
+            * (1 - galaxysmoothstep(galaxyphase(u, GALAXYSHOCK, GALAXYSHOCK + .25)));
+        glow = .6 * galaxysmoothstep(galaxyphase(u, GALAXYSHOCK - .08, GALAXYSHOCK))
+            * pow(1 - galaxyphase(u, GALAXYSHOCK, GALAXYSHOCK + GALAXYSHOCKT + GALAXYAFTER), 2);
+        if (u >= GALAXYSHOCK) {
+            sp = galaxyphase(u, GALAXYSHOCK, GALAXYSHOCK + GALAXYSHOCKT);
+            far = hypot(MAX(cx - r->vx, r->vx + r->vw - cx), MAX(cy - r->vy, r->vy + r->vh - cy)) + 160;
+            sr = far * galaxyeaseoutcubic(sp);
+            sw = 30 + 90 * sp;
+            sk = 1.1 * pow(1 - sp, 1.5);
+            if (r->live)    /* 动态壁纸: 揭开的是正在播放的画面 */
+                XRenderComposite(dpy, PictOpSrc, r->live, None, r->wallpaper, 0, 0, 0, 0, 0, 0, r->w, r->h);
+        }
+        galaxyglexitfx(cx, cy, lens, .95 * MAX(1, MIN(MIN(cx - r->vx, r->vx + r->vw - cx), MIN(cy - r->vy, r->vy + r->vh - cy))),
+                sr, sw, sk, u >= GALAXYSHOCK, glow);
+    }
     galaxyglpresent(.6, 1 - galaxyclamp(q - 1), GALAXYBLOOM - (int)lround(galaxyclamp(q / 3) * 3));
 }
 

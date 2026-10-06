@@ -64,6 +64,9 @@
 #define GALAXYSTREAKM  1.5       /* 星轨覆盖的平近点角 (rad): 近点处自然拉长, 远点处变短 */
 #define GALAXYCOLLAPSE 2.35      /* Esc 后完整的环绕 / 坍缩演出 (真实秒) */
 #define GALAXYEXITSTART 1.25     /* 退场从环绕切换到向中心收束的时刻 */
+#define GALAXYSHOCK    2.05      /* Esc 后多久从中心爆出冲击波, 圆形揭开壁纸 (真实秒; 之前透镜把背景拽向中心) */
+#define GALAXYSHOCKT   .5        /* 冲击波扩到屏幕四角的时长 */
+#define GALAXYAFTER    .3        /* 揭开后中心余晖再散去的时长, 之后才停在壁纸 */
 #define GALAXYPREP     .45       /* 开场按 Esc 时平滑进入星系群形态 */
 #define GALAXYLANES    3
 #define GALAXYSPARE    8         /* 星系运行中新开的窗口最多再诞生几颗星 */
