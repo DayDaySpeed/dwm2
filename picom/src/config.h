@@ -2,59 +2,32 @@
 // Copyright (c) 2011-2013, Christopher Jeffrey
 // Copyright (c) 2013 Richard Grenville <pyxlcy@gmail.com>
 // Copyright (c) 2018 Yuxuan Shui <yshuiv7@gmail.com>
+
 #pragma once
 
 /// Common functions and definitions for configuration parsing
 /// Used for command line arguments and config files
 
-#include <ctype.h>
+#include <stdalign.h>
 #include <stdbool.h>
-#include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
+#include <uthash.h>
 #include <xcb/render.h>        // for xcb_render_fixed_t, XXX
 #include <xcb/xcb.h>
 #include <xcb/xfixes.h>
 
-#ifdef CONFIG_LIBCONFIG
 #include <libconfig.h>
-#endif
+#include <picom/types.h>
 
 #include "compiler.h"
-#include "kernel.h"
 #include "log.h"
-#include "region.h"
-#include "types.h"
-#include "win_defs.h"
+#include "utils/kernel.h"
+#include "utils/list.h"
+#include "utils/misc.h"
+#include "wm/defs.h"
 
 typedef struct session session_t;
-
-/// @brief Possible backends
-enum backend {
-	BKEND_XRENDER,
-	BKEND_GLX,
-	BKEND_XR_GLX_HYBRID,
-	BKEND_DUMMY,
-	NUM_BKEND,
-};
-
-enum open_window_animation {
-	OPEN_WINDOW_ANIMATION_NONE = 0,
-	OPEN_WINDOW_ANIMATION_FLYIN,
-	OPEN_WINDOW_ANIMATION_SLIDE_UP,
-	OPEN_WINDOW_ANIMATION_SLIDE_DOWN,
-	OPEN_WINDOW_ANIMATION_SLIDE_LEFT,
-	OPEN_WINDOW_ANIMATION_SLIDE_RIGHT,
-	OPEN_WINDOW_ANIMATION_SLIDE_IN,
-	OPEN_WINDOW_ANIMATION_SLIDE_OUT,
-	OPEN_WINDOW_ANIMATION_SLIDE_IN_CENTER,
-	OPEN_WINDOW_ANIMATION_SLIDE_OUT_CENTER,
-	OPEN_WINDOW_ANIMATION_ZOOM,
-	OPEN_WINDOW_ANIMATION_MINIMIZE,
-	OPEN_WINDOW_ANIMATION_MAXIMIZE,
-	OPEN_WINDOW_ANIMATION_SQUEEZE,
-	OPEN_WINDOW_ANIMATION_SQUEEZE_BOTTOM,
-	OPEN_WINDOW_ANIMATION_INVALID,
-};
 
 typedef struct win_option_mask {
 	bool shadow : 1;
@@ -65,7 +38,6 @@ typedef struct win_option_mask {
 	bool redir_ignore : 1;
 	bool opacity : 1;
 	bool clip_shadow_above : 1;
-	enum open_window_animation animation;
 } win_option_mask_t;
 
 typedef struct win_option {
@@ -77,34 +49,275 @@ typedef struct win_option {
 	bool redir_ignore;
 	double opacity;
 	bool clip_shadow_above;
-	enum open_window_animation animation;
 } win_option_t;
 
-enum blur_method {
-	BLUR_METHOD_NONE = 0,
-	BLUR_METHOD_KERNEL,
-	BLUR_METHOD_BOX,
-	BLUR_METHOD_GAUSSIAN,
-	BLUR_METHOD_DUAL_KAWASE,
-	BLUR_METHOD_INVALID,
+enum vblank_scheduler_type {
+	/// X Present extension based vblank events
+	VBLANK_SCHEDULER_PRESENT,
+	/// GLX_SGI_video_sync based vblank events
+	VBLANK_SCHEDULER_SGI_VIDEO_SYNC,
+	/// An invalid scheduler, served as a scheduler count, and
+	/// as a sentinel value.
+	LAST_VBLANK_SCHEDULER,
 };
 
-typedef struct _c2_lptr c2_lptr_t;
+enum animation_trigger {
+	/// When a hidden window is shown
+	ANIMATION_TRIGGER_SHOW = 0,
+	/// When a window is hidden
+	ANIMATION_TRIGGER_HIDE,
+	/// When window opacity is increased
+	ANIMATION_TRIGGER_INCREASE_OPACITY,
+	/// When window opacity is decreased
+	ANIMATION_TRIGGER_DECREASE_OPACITY,
+	/// When a new window opens
+	ANIMATION_TRIGGER_OPEN,
+	/// When a window is closed
+	ANIMATION_TRIGGER_CLOSE,
+	/// When a window's size changes
+	ANIMATION_TRIGGER_SIZE,
+	/// When a window's position changes
+	ANIMATION_TRIGGER_POSITION,
+	/// When one of a window's color properties changes,
+	/// This includes: shadow-color
+	ANIMATION_TRIGGER_COLOR,
+
+	ANIMATION_TRIGGER_INVALID,
+	ANIMATION_TRIGGER_COUNT = ANIMATION_TRIGGER_INVALID,
+
+	// Aliases are not included in the count
+
+	/// Alias of size + position
+	ANIMATION_TRIGGER_ALIAS_GEOMETRY,
+};
+
+static const char *animation_trigger_names[] attr_unused = {
+    [ANIMATION_TRIGGER_SHOW] = "show",
+    [ANIMATION_TRIGGER_HIDE] = "hide",
+    [ANIMATION_TRIGGER_INCREASE_OPACITY] = "increase-opacity",
+    [ANIMATION_TRIGGER_DECREASE_OPACITY] = "decrease-opacity",
+    [ANIMATION_TRIGGER_OPEN] = "open",
+    [ANIMATION_TRIGGER_CLOSE] = "close",
+    [ANIMATION_TRIGGER_SIZE] = "size",
+    [ANIMATION_TRIGGER_POSITION] = "position",
+    [ANIMATION_TRIGGER_COLOR] = "color",
+    [ANIMATION_TRIGGER_ALIAS_GEOMETRY] = "geometry",
+};
+
+struct shader_specification {
+	size_t size;
+	char data[];
+};
+
+struct shader_defines_iter {
+	const char *name;
+	const char *value;
+};
+
+static inline struct shader_specification *shader_spec_from_path(const char *path) {
+	auto len = strlen(path) + 1;
+	struct shader_specification *ret =
+	    calloc(1, offsetof(struct shader_specification, data[len]));
+	BUG_ON(ret == NULL);
+	ret->size = len;
+	strcpy(ret->data, path);
+	return ret;
+}
+
+static inline const char *shader_spec_get_path(const struct shader_specification *spec) {
+	return spec->data;
+}
+
+static inline bool shader_spec_get_defines(const struct shader_specification *spec,
+                                           struct shader_defines_iter *iter) {
+	const char *end = &spec->data[spec->size];
+	const char *first = spec->data + strlen(spec->data) + 1;
+	if (first >= end) {
+		return false;
+	}
+	iter->name = first;
+	iter->value = first + strlen(first) + 1;
+	assert(iter->value < end);
+	return true;
+}
+
+static inline bool shader_spec_defines_iter_next(const struct shader_specification *spec,
+                                                 struct shader_defines_iter *iter) {
+	const char *end = &spec->data[spec->size];
+	const char *next = iter->value + strlen(iter->value) + 1;
+	if (next >= end) {
+		return false;
+	}
+	iter->name = next;
+	iter->value = next + strlen(next) + 1;
+	assert(iter->value < end);
+	return true;
+}
+
+struct script;
+struct win_script {
+	/// A running animation can be configured to prevent other animations from
+	/// starting.
+	uint64_t suppressions;
+	struct script *script;
+	/// true if this script is generated by us, false if this is a user choice.
+	int output_indices[NUM_OF_WIN_SCRIPT_OUTPUTS];
+	bool is_generated;
+};
+
+extern const char *vblank_scheduler_str[];
+
+/// Internal, private options for debugging and development use.
+struct debug_options {
+	/// Try to reduce frame latency by using vblank interval and render time
+	/// estimates. Right now it's not working well across drivers.
+	int smart_frame_pacing;
+	/// Override the vblank scheduler chosen by the compositor.
+	int force_vblank_scheduler;
+	/// Release then immediately rebind every window pixmap each frame.
+	/// Useful when being traced under apitrace, to force it to pick up
+	/// updated contents. WARNING, extremely slow.
+	int always_rebind_pixmap;
+	/// When using damage, replaying an apitrace becomes non-deterministic, because
+	/// the buffer age we got when we rendered will be different from the buffer age
+	/// apitrace gets when it replays. When this option is enabled, we saves the
+	/// contents of each rendered frame, and at the beginning of each render, we
+	/// restore the content of the back buffer based on the buffer age we get,
+	/// ensuring no matter what buffer age apitrace gets during replay, the result
+	/// will be the same.
+	int consistent_buffer_age;
+};
+
+extern struct debug_options global_debug_options;
+
+struct included_config_file {
+	char *path;
+	struct list_node siblings;
+};
+
+enum window_unredir_option {
+	/// This window should trigger unredirection if it meets certain conditions, and
+	/// it should terminate unredirection otherwise. Termination of unredir is always
+	/// suppressed if there is another window triggering unredirection, this is the
+	/// same for `WINDOW_UNREDIR_TERMINATE` as well.
+	///
+	/// This is the default choice for windows.
+	WINDOW_UNREDIR_WHEN_POSSIBLE_ELSE_TERMINATE,
+	/// This window should trigger unredirection if it meets certain conditions.
+	/// Otherwise it should have no effect on the compositor's redirection status.
+	WINDOW_UNREDIR_WHEN_POSSIBLE,
+	/// This window should always take the compositor out of unredirection, and never
+	/// trigger unredirection.
+	WINDOW_UNREDIR_TERMINATE,
+	/// This window should not cause either redirection or unredirection.
+	WINDOW_UNREDIR_PASSIVE,
+	/// This window always trigger unredirection
+	WINDOW_UNREDIR_FORCED,
+
+	/// Sentinel value
+	WINDOW_UNREDIR_INVALID,
+};
+
+struct shader_specification;
+
+struct window_maybe_options {
+	/// Shadow color
+	struct color shadow_color;
+
+	/// Window opacity, NaN means not set.
+	double opacity;
+
+	/// Opacity of the blurred background, NaN means not set, ignored if
+	/// blur_background is disabled.
+	double blur_opacity;
+
+	/// Window dim level, NaN means not set.
+	double dim;
+
+	/// The name of the custom fragment shader for this window. NULL means not set.
+	const struct shader_specification *shader;
+
+	/// Radius of rounded window corners, -1 means not set.
+	int corner_radius;
+
+	/// Whether transparent clipping is excluded by the rules.
+	enum tristate transparent_clipping;
+	/// Whether a window has shadow.
+	enum tristate shadow;
+	/// Whether to invert window color.
+	enum tristate invert_color;
+	/// Whether to blur window background.
+	enum tristate blur_background;
+	/// Whether this window should fade.
+	enum tristate fade;
+	/// Do not paint shadow over this window.
+	enum tristate clip_shadow_above;
+	/// Whether the window is painted.
+	enum tristate paint;
+	/// Whether this window should be considered for unredirect-if-possible.
+	enum window_unredir_option unredir;
+	/// Whether shadow should be rendered beneath this window.
+	enum tristate full_shadow;
+	/// Whether shadow color is set
+	bool is_shadow_color_set;
+
+	/// Window specific animations
+	struct win_script animations[ANIMATION_TRIGGER_COUNT];
+};
+
+/// Like `window_maybe_options`, but all fields are guaranteed to be set.
+struct window_options {
+	struct color shadow_color;
+	double opacity;
+	double blur_opacity;
+	double dim;
+	const struct shader_specification *shader;
+	unsigned int corner_radius;
+	enum window_unredir_option unredir;
+	bool transparent_clipping;
+	bool shadow;
+	bool invert_color;
+	bool blur_background;
+	bool fade;
+	bool clip_shadow_above;
+	bool paint;
+	bool full_shadow;
+
+	struct win_script animations[ANIMATION_TRIGGER_COUNT];
+};
+
+struct option_name {
+	UT_hash_handle hh;
+	const char *name;
+};
 
 /// Structure representing all options.
 typedef struct options {
+	// === Deprecation ===
+	struct option_name *problematic_options;
+
+	// === Config ===
+	/// Path to the config file
+	char *config_file_path;
+	/// List of config files included by the main config file
+	struct list_node included_config_files;
 	// === Debugging ===
 	bool monitor_repaint;
 	bool print_diagnostics;
 	/// Render to a separate window instead of taking over the screen
 	bool debug_mode;
+	/// For picom-inspect only, dump windows in a loop
+	bool inspect_monitor;
+	xcb_window_t inspect_win;
 	// === General ===
-	/// Use the experimental new backends?
-	bool experimental_backends;
+	/// Use the legacy backends?
+	bool use_legacy_backends;
 	/// Path to write PID to.
 	char *write_pid_path;
-	/// The backend in use.
-	enum backend backend;
+	/// Name of the backend
+	struct backend_info *backend;
+	/// Log level.
+	int log_level;
 	/// Whether to sync X drawing with X Sync fence to avoid certain delay
 	/// issues with GLX backend.
 	bool xrender_sync_fence;
@@ -113,8 +326,6 @@ typedef struct options {
 	bool glx_no_stencil;
 	/// Whether to avoid rebinding pixmap on window damage.
 	bool glx_no_rebind_pixmap;
-	/// Custom fragment shader for painting windows, as a string.
-	char *glx_fshader_win_str;
 	/// Whether to detect rounded corners.
 	bool detect_rounded_corners;
 	/// Force painting of window content with blending.
@@ -126,9 +337,9 @@ typedef struct options {
 	bool unredir_if_possible;
 	/// List of conditions of windows to ignore as a full-screen window
 	/// when determining if a window could be unredirected.
-	c2_lptr_t *unredir_if_possible_blacklist;
+	struct list_node unredir_if_possible_blacklist;
 	/// Delay before unredirecting screen, in milliseconds.
-	long unredir_if_possible_delay;
+	int unredir_if_possible_delay;
 	/// Forced redirection setting through D-Bus.
 	switch_t redirected_force;
 	/// Whether to stop painting. Controlled through D-Bus.
@@ -142,13 +353,16 @@ typedef struct options {
 	/// Window to constantly repaint in benchmark mode. 0 for full-screen.
 	xcb_window_t benchmark_wid;
 	/// A list of conditions of windows not to paint.
-	c2_lptr_t *paint_blacklist;
+	struct list_node paint_blacklist;
 	/// Whether to show all X errors.
 	bool show_all_xerrors;
 	/// Whether to avoid acquiring X Selection.
 	bool no_x_selection;
 	/// Window type option override.
 	win_option_t wintype_option[NUM_WINTYPES];
+	struct win_option_mask wintype_option_mask[NUM_WINTYPES];
+	/// Whether to set realtime scheduling policy for the compositor process.
+	bool use_realtime_scheduling;
 
 	// === VSync & software optimization ===
 	/// VSync method to use;
@@ -158,6 +372,8 @@ typedef struct options {
 	bool vsync_use_glfinish;
 	/// Whether use damage information to help limit the area to paint
 	bool use_damage;
+	/// Disable frame pacing
+	bool frame_pacing;
 
 	// === Shadow ===
 	/// Red, green and blue tone of the shadow.
@@ -165,16 +381,15 @@ typedef struct options {
 	int shadow_radius;
 	int shadow_offset_x, shadow_offset_y;
 	double shadow_opacity;
-	/// argument string to shadow-exclude-reg option
-	char *shadow_exclude_reg_str;
 	/// Shadow blacklist. A linked list of conditions.
-	c2_lptr_t *shadow_blacklist;
+	struct list_node shadow_blacklist;
 	/// Whether bounding-shaped window should be ignored.
 	bool shadow_ignore_shaped;
-	/// Whether to crop shadow to the very Xinerama screen.
-	bool xinerama_shadow_crop;
+	/// Whether to crop shadow to the very X RandR monitor.
+	bool crop_shadow_to_monitor;
 	/// Don't draw shadow over these windows. A linked list of conditions.
-	c2_lptr_t *shadow_clip_list;
+	struct list_node shadow_clip_list;
+	bool shadow_enable;
 
 	// === Fading ===
 	/// How much to fade in in a single fading step.
@@ -188,34 +403,8 @@ typedef struct options {
 	/// Whether to disable fading on ARGB managed destroyed windows.
 	bool no_fading_destroyed_argb;
 	/// Fading blacklist. A linked list of conditions.
-	c2_lptr_t *fade_blacklist;
-
-	// === Animations ===
-	/// Whether to do window animations
-	bool animations;
-	/// Which animation to run when opening a window
-	enum open_window_animation animation_for_open_window;
-	/// Which animation to run when opening a transient window
-	enum open_window_animation animation_for_transient_window;
-	/// Which animation to run when unmapping a window
-	enum open_window_animation animation_for_unmap_window;
-	/// Which animation to run when swapping to new tag
-	enum open_window_animation animation_for_next_tag;
-	/// Which animation to run for old tag
-	enum open_window_animation animation_for_prev_tag;
-	/// Spring stiffness for animation
-	double animation_stiffness;
-	/// Spring stiffness for current tag animation
-	double animation_stiffness_tag_change;
-	/// Window mass for animation
-	double animation_window_mass;
-	/// Animation dampening
-	double animation_dampening;
-	/// Whether to clamp animations
-	bool animation_clamping;
-	/// Animation blacklist. A linked list of conditions.
-	c2_lptr_t *animation_blacklist;
-	/// TODO: open/close animations
+	struct list_node fade_blacklist;
+	bool fading_enable;
 
 	// === Opacity ===
 	/// Default opacity for inactive windows.
@@ -249,26 +438,34 @@ typedef struct options {
 	/// to window opacity.
 	bool blur_background_fixed;
 	/// Background blur blacklist. A linked list of conditions.
-	c2_lptr_t *blur_background_blacklist;
+	struct list_node blur_background_blacklist;
 	/// Blur convolution kernel.
 	struct conv **blur_kerns;
 	/// Number of convolution kernels
 	int blur_kernel_count;
+	/// Custom fragment shader for painting the root window pixmap
+	struct shader_specification *root_pixmap_shader;
+	/// Custom fragment shader for painting windows
+	struct shader_specification *window_shader_fg;
+	/// Rules to change custom fragment shader for painting windows.
+	struct list_node window_shader_fg_rules;
 	/// How much to dim an inactive window. 0.0 - 1.0, 0 to disable.
 	double inactive_dim;
 	/// Whether to use fixed inactive dim opacity, instead of deciding
 	/// based on window opacity.
 	bool inactive_dim_fixed;
 	/// Conditions of windows to have inverted colors.
-	c2_lptr_t *invert_color_list;
+	struct list_node invert_color_list;
 	/// Rules to change window opacity.
-	c2_lptr_t *opacity_rules;
+	struct list_node opacity_rules;
 	/// Limit window brightness
 	double max_brightness;
 	// Radius of rounded window corners
 	int corner_radius;
 	/// Rounded corners blacklist. A linked list of conditions.
-	c2_lptr_t *rounded_corners_blacklist;
+	struct list_node rounded_corners_blacklist;
+	/// Rounded corner rules. A linked list of conditions.
+	struct list_node corner_radius_rules;
 
 	// === Focus related ===
 	/// Whether to try to detect WM windows and mark them as focused.
@@ -278,7 +475,7 @@ typedef struct options {
 	/// Whether to use EWMH _NET_ACTIVE_WINDOW to find active window.
 	bool use_ewmh_active_win;
 	/// A list of windows always to be considered focused.
-	c2_lptr_t *focus_blacklist;
+	struct list_node focus_blacklist;
 	/// Whether to do window grouping with <code>WM_TRANSIENT_FOR</code>.
 	bool detect_transient;
 	/// Whether to do window grouping with <code>WM_CLIENT_LEADER</code>.
@@ -294,76 +491,70 @@ typedef struct options {
 	// Make transparent windows clip other windows, instead of blending on top of
 	// them
 	bool transparent_clipping;
+	/// A list of conditions of windows to which transparent clipping
+	/// should not apply
+	struct list_node transparent_clipping_blacklist;
 
-	// Enable fading for next tag
-	bool enable_fading_next_tag;
+	bool dithered_present;
+	// === Animation ===
+	struct win_script animations[ANIMATION_TRIGGER_COUNT];
+	/// Array of all the scripts used in `animations`. This is a dynarr.
+	struct script **all_scripts;
 
-	// Enable fading for prev tag
-	bool enable_fading_prev_tag;
+	struct list_node rules;
+	bool has_both_style_of_rules;
 } options_t;
 
-extern const char *const BACKEND_STRS[NUM_BKEND + 1];
+bool load_plugin(const char *name, const char *include_dir);
+static inline void record_problematic_option(struct options *opt, const char *name) {
+	struct option_name *record = calloc(1, sizeof(*record));
+	record->name = name;
+	HASH_ADD_STR(opt->problematic_options, name, record);
+}
+
+static inline void
+report_deprecated_option(struct options *opt, const char *name, bool error) {
+	struct option_name *record = NULL;
+	HASH_FIND_STR(opt->problematic_options, name, record);
+	if (record != NULL) {
+		return;
+	}
+	enum log_level level = error ? LOG_LEVEL_ERROR : LOG_LEVEL_WARN;
+	LOG_(level,
+	     "Option \"%s\" is deprecated, please remove it from your config file and/or "
+	     "command line options.",
+	     name);
+	record_problematic_option(opt, name);
+}
 
 bool must_use parse_long(const char *, long *);
 bool must_use parse_int(const char *, int *);
-struct conv **must_use parse_blur_kern_lst(const char *, bool *hasneg, int *count);
-bool must_use parse_geometry(session_t *, const char *, region_t *);
-bool must_use parse_rule_opacity(c2_lptr_t **, const char *);
-enum blur_method must_use parse_blur_method(const char *src);
-enum open_window_animation must_use parse_open_window_animation(const char *src);
+struct conv **must_use parse_blur_kern_lst(const char *, int *count);
+/// Parse the path prefix of a c2 rule. Then look for the specified file in the
+/// given include directories. The include directories are passed via `user_data`.
+void *parse_window_shader_prefix(const char *src, const char **end, void *user_data);
+/// Same as `parse_window_shader_prefix`, but the path is relative to the current
+/// working directory. `user_data` is ignored.
+void *parse_window_shader_prefix_with_cwd(const char *src, const char **end, void *);
+void *parse_numeric_prefix(const char *src, const char **end, void *user_data);
+char *must_use locate_auxiliary_file(const char *scope, const char *path,
+                                     const char *include_dir);
+int must_use parse_blur_method(const char *src);
+void parse_debug_options(struct debug_options *);
 
-/**
- * Add a pattern to a condition linked list.
- */
-bool condlst_add(c2_lptr_t **, const char *);
+const char *xdg_config_home(void);
+char **xdg_config_dirs(void);
 
-#ifdef CONFIG_LIBCONFIG
-/// Parse a configuration file
-/// Returns the actually config_file name used, allocated on heap
-/// Outputs:
-///   shadow_enable = whether shaodw is enabled globally
-///   fading_enable = whether fading is enabled globally
-///   win_option_mask = whether option overrides for specific window type is set for given
-///                     options
-///   hasneg = whether the convolution kernel has negative values
-char *
-parse_config_libconfig(options_t *, const char *config_file, bool *shadow_enable,
-                       bool *fading_enable, bool *hasneg, win_option_mask_t *winopt_mask);
-#endif
+/// Parse a configuration file from default location.
+///
+/// @return if config is successfully parsed.
+bool parse_config_libconfig(options_t *, const char *config_file);
 
-void set_default_winopts(options_t *, win_option_mask_t *, bool shadow_enable,
-                         bool fading_enable, bool blur_enable);
 /// Parse a configuration file is that is enabled, also initialize the winopt_mask with
 /// default values
 /// Outputs and returns:
 ///   same as parse_config_libconfig
-char *parse_config(options_t *, const char *config_file, bool *shadow_enable,
-                   bool *fading_enable, bool *hasneg, win_option_mask_t *winopt_mask);
-
-/**
- * Parse a backend option argument.
- */
-static inline attr_pure enum backend parse_backend(const char *str) {
-	for (enum backend i = 0; BACKEND_STRS[i]; ++i) {
-		if (!strcasecmp(str, BACKEND_STRS[i])) {
-			return i;
-		}
-	}
-	// Keep compatibility with an old revision containing a spelling mistake...
-	if (!strcasecmp(str, "xr_glx_hybird")) {
-		log_warn("backend xr_glx_hybird should be xr_glx_hybrid, the misspelt "
-		         "version will be removed soon.");
-		return BKEND_XR_GLX_HYBRID;
-	}
-	// cju wants to use dashes
-	if (!strcasecmp(str, "xr-glx-hybrid")) {
-		log_warn("backend xr-glx-hybrid should be xr_glx_hybrid, the alternative "
-		         "version will be removed soon.");
-		return BKEND_XR_GLX_HYBRID;
-	}
-	log_error("Invalid backend argument: %s", str);
-	return NUM_BKEND;
-}
+bool parse_config(options_t *, const char *config_file);
 
 /**
  * Parse a VSync option argument.
@@ -375,5 +566,17 @@ static inline bool parse_vsync(const char *str) {
 	}
 	return true;
 }
+
+/// Generate animation script for legacy fading options
+void generate_fading_config(struct options *opt);
+
+static inline void log_warn_both_style_of_rules(struct options *opt, const char *option_name) {
+	log_warn("Option \"%s\" is set along with \"rules\". \"rules\" will take "
+	         "precedence, and \"%s\" will have no effect.",
+	         option_name, option_name);
+	opt->has_both_style_of_rules = true;
+	record_problematic_option(opt, option_name);
+}
+enum animation_trigger parse_animation_trigger(const char *trigger);
 
 // vim: set noet sw=8 ts=8 :

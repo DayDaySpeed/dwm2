@@ -3,17 +3,26 @@
 
 #pragma once
 #include <assert.h>
+#include <errno.h>
 #include <stdio.h>
 
 #include "compiler.h"
 
 enum log_level {
 	LOG_LEVEL_INVALID = -1,
+	/// Very noisy debug messages, many lines per frame.
 	LOG_LEVEL_TRACE = 0,
+	/// Frequent debug messages, a few lines per frame.
+	LOG_LEVEL_VERBOSE,
+	/// Less frequent debug messages.
 	LOG_LEVEL_DEBUG,
+	/// Informational messages.
 	LOG_LEVEL_INFO,
+	/// Warnings.
 	LOG_LEVEL_WARN,
+	/// Errors.
 	LOG_LEVEL_ERROR,
+	/// Fatal errors.
 	LOG_LEVEL_FATAL,
 };
 
@@ -24,13 +33,15 @@ enum log_level {
 		}                                                                              \
 	} while (0)
 
-#define LOG(level, x, ...)                                                                     \
-	do {                                                                                   \
-		if (LOG_LEVEL_##level >= log_get_level_tls()) {                                \
-			log_printf(tls_logger, LOG_LEVEL_##level, __func__, x, ##__VA_ARGS__); \
-		}                                                                              \
+#define LOG_(level, x, ...)                                                              \
+	do {                                                                             \
+		if (level >= log_get_level_tls()) {                                      \
+			log_printf(tls_logger, level, __func__, x, ##__VA_ARGS__);       \
+		}                                                                        \
 	} while (0)
+#define LOG(level, x, ...) LOG_(LOG_LEVEL_##level, x, ##__VA_ARGS__)
 #define log_trace(x, ...) LOG_UNLIKELY(TRACE, x, ##__VA_ARGS__)
+#define log_verbose(x, ...) LOG_UNLIKELY(VERBOSE, x, ##__VA_ARGS__)
 #define log_debug(x, ...) LOG_UNLIKELY(DEBUG, x, ##__VA_ARGS__)
 #define log_info(x, ...) LOG(INFO, x, ##__VA_ARGS__)
 #define log_warn(x, ...) LOG(WARN, x, ##__VA_ARGS__)
@@ -51,7 +62,7 @@ attr_nonnull_all void log_destroy(struct log *);
 attr_nonnull(1) void log_set_level(struct log *l, int level);
 attr_pure enum log_level log_get_level(const struct log *l);
 attr_nonnull_all void log_add_target(struct log *, struct log_target *);
-attr_pure enum log_level string_to_log_level(const char *);
+attr_pure int string_to_log_level(const char *);
 /// Remove a previously added log target for a log struct, and destroy it. If the log
 /// target was never added, nothing happens.
 void log_remove_target(struct log *l, struct log_target *tgt);
