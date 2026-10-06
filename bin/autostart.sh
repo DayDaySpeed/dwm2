@@ -28,7 +28,7 @@ daemons() {
     { has clipmenud && clipmenud || parcellite; } & # 剪贴板历史 (Super+X 调出; 未装 clipmenu 时退回 parcellite)
     has lemonade && lemonade server &         # 开启lemonade 远程剪切板支持
     dunst -conf $DWM/config/dunst.conf &      # 开启通知server
-    picom --experimental-backends --config $DWM/config/picom.conf >> /dev/null 2>&1 & # 开启picom
+    picom --config $DWM/config/picom.conf >> /dev/null 2>&1 & # 开启picom
 }
 
 cron() {
