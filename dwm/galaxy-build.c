@@ -156,6 +156,7 @@ galaxyfreestar(GalaxyStar *s)
 {
     int l;
 
+    galaxyglfreetex(&s->gltex);
     for (l = 0; l < GALAXYMIPS; l++)
         galaxyfreemip(s, l);
 }
@@ -285,8 +286,11 @@ galaxyfree(void)
     for (i = 0; i < r->nlandbar; i++)
         XRenderFreePicture(dpy, r->landbar[i]);
     free(r->gaps);
-    if (r->log)
+    if (r->log) {
+        fprintf(r->log, "galaxy gl: card textures made %d freed %d\n", galaxygl.texmade, galaxygl.texfreed);
         fclose(r->log);
+    }
+    galaxygl.texmade = galaxygl.texfreed = 0;
     memset(r, 0, sizeof *r);
 }
 

@@ -151,6 +151,8 @@ typedef struct {
     Pixmap mippix[GALAXYMIPS];
     Picture mip[GALAXYMIPS];
     int mipw[GALAXYMIPS], miph[GALAXYMIPS];
+    unsigned int gltex;         /* 截图的 GL 纹理 (带 mip 链), 第一次画时建; glfail: 建不了, 走 XRender */
+    int glfail;
     GalaxyVec home, detach;      /* 桌面平面 z=0 上的起点 / 脱离桌面后的位置 */
     double drx, dry, drz;       /* 脱离桌面时的卡片旋转 */
     double radius, angle, speed, rock, delay;

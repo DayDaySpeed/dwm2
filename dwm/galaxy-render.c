@@ -304,13 +304,64 @@ galaxyrendertiled(GalaxyStar *s, int lvl, double vis)
     return used;
 }
 
+/* GPU 画卡片 (截图纹理带 mip 链, 透视校正, 边缘光 / 高光): 画了返回 1; 纹理建不了返回 0, 由调用方走 XRender.
+ * 与真实窗口逐像素对齐的原尺寸卡片 (开场第一帧 / 落定) 逐像素采样, 与桌面完全一致 */
+static int
+galaxyrendercardgl(GalaxyStar *s, double q[4][2], double qz[4], double vis, double tint, double light, int aligned,
+        double left, double top, double rw, double rh, double snap)
+{
+    GalaxyScene *r = &galaxyscene;
+    double rimc[3], qe[4][2], spec = 0, specat = 0, rim = 0, d;
+    int orbit = r->mode == GalaxyOrbit, exact, i;
+    GalaxyVec normal, lightdir = galaxyv(-.35, -.55, -.76);
+
+    if (!galaxygl.win || s->glfail || !s->mippix[s->base])
+        return 0;
+    /* 纹理第一次画时才建, 每帧最多 1 张 (驻留 2 张); 还没轮到的这一帧先走 XRender */
+    if (!s->gltex) {
+        if (galaxygl.cardups >= (r->mode == GalaxyOrbit ? 2 : 1))
+            return 0;
+        galaxygl.cardups++;
+        if (!(s->gltex = galaxyglcardtex(s->mippix[s->base], s->mipw[s->base], s->miph[s->base]))) {
+            s->glfail = 1;
+            return 0;
+        }
+    }
+    exact = aligned && s->base == 0 && fabs(rw - s->mipw[0]) < snap && fabs(rh - s->miph[0]) < snap
+        && (r->mode != GalaxyReturn || (fabs(left - lround(left)) < snap && fabs(top - lround(top)) < snap));
+    if (exact) {
+        qe[0][0] = qe[3][0] = lround(left);
+        qe[0][1] = qe[1][1] = lround(top);
+        qe[1][0] = qe[2][0] = lround(left) + s->mipw[0];
+        qe[2][1] = qe[3][1] = lround(top) + s->miph[0];
+        q = qe;
+    }
+    galaxyglcutout(q, qz, vis);
+    galaxytintcolor(GALAXYTAGTINT(s->galaxy), -1, rimc);
+    if (orbit) {
+        /* 驻留: 卡片边缘一圈 tag 色的光, 转动时一道高光从卡面扫过 */
+        rim = .3 * vis * (1 + 1.5 * s->hover);
+        normal = galaxyapply(s->orient, galaxyv(0, 0, -1));
+        d = galaxydot(normal, lightdir);
+        specat = .5 + 1.4 * d;
+        spec = .1 * vis;
+    }
+    for (i = 0; i < 4 && !exact; i++)
+        if (qz[i] <= 0)
+            return 1;
+    galaxyglcard(s->gltex, q, qz, orbit ? vis * (.9 + .1 * MIN(1, light)) : vis, tint * MIN(1, light * 1.1),
+            orbit ? 0 : (1 - MIN(1, light)) * vis, rim, rimc, spec, specat, galaxydepthblur(s->p.z) > .55 ? 1 : 0,
+            (double)s->w / MAX(1, s->h), exact);
+    return 1;
+}
+
 static void
 galaxyrenderwindow(GalaxyStar *s, double vis, double tint, double light)
 {
     GalaxyScene *r = &galaxyscene;
     static const double sx[4] = {-1, 1, 1, -1}, sy[4] = {-1, -1, 1, 1};
     double q[4][2], minx = 1e9, miny = 1e9, maxx = -1e9, maxy = -1e9, edge, hw, hh, dark;
-    double left = 0, top = 0, rw = 0, rh = 0, persp, snap, qa[4][2], qz[4];
+    double left = 0, top = 0, rw = 0, rh = 0, persp, snap, qa[4][2], qz[4], qp[4][2];
     GalaxyVec corner, normal, tocam;
     GalaxyProj p;
     Picture mask;
@@ -331,6 +382,7 @@ galaxyrenderwindow(GalaxyStar *s, double vis, double tint, double light)
         minx = MIN(minx, p.x); maxx = MAX(maxx, p.x);
         miny = MIN(miny, p.y); maxy = MAX(maxy, p.y);
     }
+    memcpy(qp, q, sizeof qp);   /* 真实透视的四角 (GL 路径用; 下面的仿射近似只给 XRender) */
     persp = hypot(q[0][0] - q[1][0] + q[2][0] - q[3][0], q[0][1] - q[1][1] + q[2][1] - q[3][1]);
     /* 驻留时卡片朝向镜头, 透视误差很小: 一律走仿射, 不随尺寸在两条路径之间切换 (切换那一帧卡片形状会跳一下) */
     if ((r->mode == GalaxyOrbit && (MAX(maxx - minx, maxy - miny) < 480 || persp < 6))
@@ -382,6 +434,8 @@ galaxyrenderwindow(GalaxyStar *s, double vis, double tint, double light)
     x1 = (int)ceil(maxx) + 1;
     y1 = (int)ceil(maxy) + 1;
     memcpy(qa, q, sizeof qa);
+    if (galaxyrendercardgl(s, qp, qz, vis, tint, light, aligned && opaque, left, top, rw, rh, snap))
+        return;
     /* 光层上按卡片形状挖洞: 它后面的光被挡住, 粒子按它的深度测试 */
     galaxyglcutout(qa, qz, vis);
     for (i = 0; i < 4; i++) {
