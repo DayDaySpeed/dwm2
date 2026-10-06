@@ -16,6 +16,8 @@
 #define GALAXYGLINST    16384     /* 光点 / 光带一批的上限, 满了就先画 */
 #define GALAXYGLPART    65536     /* 粒子上限 */
 #define GALAXYBLOOM     6         /* 泛光的降采样级数 */
+#define GALAXYBLOOMW    .75f      /* 泛光逐级权重: 第 i 级 (越往后越宽) 的权重是它的 i 次方 */
+#define GALAXYBLOOMK    1.8       /* 加权后总能量变小 (1+.75+.56+... 约 3.3, 原来等权是 6 级), 整体补偿 */
 
 enum { GalaxyGLHalo, GalaxyGLDisc, GalaxyGLSpike, GalaxyGLLine, GalaxyGLRect, GalaxyGLDust };
 
@@ -58,8 +60,8 @@ static const char *galaxyglvslight =
     "    pos = ia.xy + dir * along + n * across; vl = vec2(along, across); flen = vec2(L, ib.x); vt = clamp(along / L, 0.0, 1.0);\n"
     "  } else if (kind == 4) {\n"
     "    pos = ia.xy + (c * .5 + .5) * ia.zw; vl = c;\n"
-    "  } else {\n"
-    "    pos = ia.xy + c * ia.z; vl = c;\n"
+    "  } else {\n"   /* ia.w: 形状的旋转角 (衍射芒随镜头转; 其他光点为 0) */
+    "    pos = ia.xy + c * ia.z; vl = vec2(cos(ia.w) * c.x + sin(ia.w) * c.y, cos(ia.w) * c.y - sin(ia.w) * c.x);\n"
     "  }\n"
     "  gl_Position = vec4(pos.x / screen.x * 2.0 - 1.0, 1.0 - pos.y / screen.y * 2.0, ib.w, 1.0);\n"
     "  fb = ib; fc0 = ic0; fc1 = ic1;\n"
@@ -137,20 +139,30 @@ static const char *galaxyglfscomp =
     "in vec2 uv; out vec4 o;\n"
     "uniform sampler2D tbase, tlight, tbloom, tfront;\n"
     "uniform float ybase, yfront, bloomk, aberr, grain, seed; uniform vec2 screen;\n"
-    "vec3 knee(vec3 x) { return mix(x, 1.0 - .4 * exp(-(x - .6) / .4), step(.6, x)); }\n"
+    "vec3 tolin(vec3 c) { return mix(c / 12.92, pow((c + .055) / 1.055, vec3(2.4)), step(.04045, c)); }\n"
+    "vec3 tosrgb(vec3 c) { return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - .055, step(.0031308, c)); }\n"
+    /* 保色相的软肩: 按最亮通道压缩, 各通道等比缩放 (不会像逐通道截断那样先变白); 极亮处才逐渐偏白 */
+    "vec3 tone(vec3 L) {\n"
+    "  float m = max(max(L.r, L.g), L.b), a = .55, t;\n"
+    "  if (m < 1e-6) return vec3(0.0);\n"
+    "  t = m < a ? m : a + (1.0 - a) * (1.0 - exp(-(m - a) / (1.0 - a)));\n"
+    "  return mix(L * (t / m), vec3(t), smoothstep(1.2, 8.0, m) * .6);\n"
+    "}\n"
     "float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233)) + seed) * 43758.5453); }\n"
     "void main() {\n"
     "  vec2 ub = vec2(uv.x, ybase > .5 ? uv.y : 1.0 - uv.y), uf = vec2(uv.x, yfront > .5 ? uv.y : 1.0 - uv.y);\n"
-    "  vec3 base = texture(tbase, ub).rgb;\n"
+    "  vec3 base = tolin(texture(tbase, ub).rgb);\n"
     "  vec2 off = (uv - .5) * aberr / screen;\n"
     "  vec3 L = vec3(texture(tlight, uv + off).r, texture(tlight, uv).g, texture(tlight, uv - off).b)\n"
     "         + bloomk * texture(tbloom, uv).rgb;\n"
-    "  L = clamp(knee(max(L, 0.0)), 0.0, 1.0);\n"
-    "  float lum = dot(L, vec3(.3, .59, .11));\n"
-    "  L = clamp(L + (hash(uv * screen) - .5) * grain * lum, 0.0, 1.0);\n"
-    "  vec3 c = 1.0 - (1.0 - base) * (1.0 - L);\n"
+    /* 光按显示空间的强度画出 (调好的观感不变), 换到线性空间后再压缩、滤色; 光为 0 时输出与底层完全相同 */
+    "  L = tone(pow(max(L * 1.15, 0.0), vec3(2.2)));\n"
+    "  vec3 c = tosrgb(1.0 - (1.0 - base) * (1.0 - L));\n"
     "  vec4 f = texture(tfront, uf);\n"
-    "  o = vec4(c * (1.0 - f.a) + f.rgb, 1.0);\n"
+    "  c = c * (1.0 - f.a) + f.rgb;\n"
+    /* 全屏三角分布抖动 (约 1 个色阶, 消掉星云渐变的色带); 首帧 / 末帧 grain 为 0, 与桌面逐像素一致 */
+    "  c += (hash(uv * screen) + hash(uv * screen + 17.0) - 1.0) * (grain / .06) / 255.0;\n"
+    "  o = vec4(clamp(c, 0.0, 1.0), 1.0);\n"
     "}\n";
 
 /* 有些 GLX 驱动报告的 Y_INVERTED 与绑定后的 ARGB pixmap 方向不一致。
@@ -561,12 +573,18 @@ static void
 galaxyglglow(int shape, const double rgb[3], double core, double x, double y, double radius, double alpha)
 {
     GalaxyGLInst *g;
+    double angle = 0;
 
+    /* 衍射芒: 越亮越长, 方向随镜头慢慢转 (像真实镜头里的星芒, 不是贴在屏幕上的十字) */
+    if (shape == GalaxySpike) {
+        radius *= .75 + .4 * MIN(1, alpha);
+        angle = .5 * galaxyscene.cam.ry + .35 * galaxyscene.cam.rx;
+    }
     if (!galaxygl.win || alpha < 1.0 / 512 || radius < .25 || x + radius < 0 || y + radius < 0
             || x - radius > galaxygl.fw || y - radius > galaxygl.fh)
         return;
     g = galaxyglpush();
-    *g = (GalaxyGLInst){{x, y, radius, 0}, {0, alpha, shape == GalaxySpike ? GalaxyGLSpike : shape == GalaxyDisc ? GalaxyGLDisc : GalaxyGLHalo, -1},
+    *g = (GalaxyGLInst){{x, y, radius, angle}, {0, alpha, shape == GalaxySpike ? GalaxyGLSpike : shape == GalaxyDisc ? GalaxyGLDisc : GalaxyGLHalo, -1},
         {rgb[0], rgb[1], rgb[2], core}, {0}};
 }
 
@@ -685,8 +703,10 @@ galaxyglpresent(double bloom, double fx, int levels)
             galaxyglfull(galaxygl.progdown, i ? galaxygl.bloomtex[i - 1] : galaxygl.lighttex, galaxygl.bw[i], galaxygl.bh[i],
                     i ? galaxygl.bw[i - 1] : galaxygl.fw, i ? galaxygl.bh[i - 1] : galaxygl.fh);
         }
+        /* 升采样时每一级乘 GALAXYBLOOMW 再叠到上一级: 第 i 级的总权重是 GALAXYBLOOMW^i, 越宽的光晕越淡, 衰减连续不成圈 */
         glEnable(GL_BLEND);
-        glBlendFunc(GL_ONE, GL_ONE);
+        glBlendColor(GALAXYBLOOMW, GALAXYBLOOMW, GALAXYBLOOMW, GALAXYBLOOMW);
+        glBlendFunc(GL_CONSTANT_COLOR, GL_ONE);
         for (i = levels - 1; i > 0; i--) {
             glBindFramebuffer(GL_FRAMEBUFFER, galaxygl.bloomfbo[i - 1]);
             galaxyglfull(galaxygl.progup, galaxygl.bloomtex[i], galaxygl.bw[i - 1], galaxygl.bh[i - 1], galaxygl.bw[i], galaxygl.bh[i]);
@@ -718,7 +738,7 @@ galaxyglpresent(double bloom, double fx, int levels)
     glUniform1i(glGetUniformLocation(p, "tfront"), 3);
     glUniform1f(glGetUniformLocation(p, "ybase"), galaxygl.yinv24);
     glUniform1f(glGetUniformLocation(p, "yfront"), galaxygl.yinv32);
-    glUniform1f(glGetUniformLocation(p, "bloomk"), bloom > .001 ? bloom : 0);
+    glUniform1f(glGetUniformLocation(p, "bloomk"), bloom > .001 ? bloom * GALAXYBLOOMK : 0);
     glUniform1f(glGetUniformLocation(p, "aberr"), 3 * fx);
     glUniform1f(glGetUniformLocation(p, "grain"), .06 * fx);
     glUniform1f(glGetUniformLocation(p, "seed"), (float)fmod(galaxynow() * 7.31, 100));
