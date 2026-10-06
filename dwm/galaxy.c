@@ -191,6 +191,7 @@ typedef struct { int kind, index; double z; } GalaxyItem;
 typedef struct {
     GalaxyVec pos, vel;
     float age, life, size, alpha, drag;
+    float temp;                 /* 色温偏移: -1 偏蓝 .. 1 偏橙 */
     unsigned char tint, screen;
 } GalaxyParticle;
 #define GALAXYPARTICLES 24000

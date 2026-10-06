@@ -19,7 +19,7 @@
 #define GALAXYBLOOMW    .75f      /* 泛光逐级权重: 第 i 级 (越往后越宽) 的权重是它的 i 次方 */
 #define GALAXYBLOOMK    1.8       /* 加权后总能量变小 (1+.75+.56+... 约 3.3, 原来等权是 6 级), 整体补偿 */
 
-enum { GalaxyGLHalo, GalaxyGLDisc, GalaxyGLSpike, GalaxyGLLine, GalaxyGLRect, GalaxyGLDust };
+enum { GalaxyGLHalo, GalaxyGLDisc, GalaxyGLSpike, GalaxyGLLine, GalaxyGLRect, GalaxyGLDust, GalaxyGLBokeh };
 
 typedef struct { float a[4], b[4], c0[4], c1[4]; } GalaxyGLInst;
 
@@ -86,6 +86,8 @@ static const char *galaxyglfslight =
     "    else if (kind == 2) a = max(max(exp(-vl.y * vl.y / .0006) * pow(max(1.0 - abs(vl.x), 0.0), 3.0), exp(-vl.x * vl.x / .0006) * pow(max(1.0 - abs(vl.y), 0.0), 3.0)),\n"
     "                            .35 * max(exp(-(vl.x - vl.y) * (vl.x - vl.y) / .0008), exp(-(vl.x + vl.y) * (vl.x + vl.y) / .0008)) * pow(clamp(1.0 - d, 0.0, 1.0), 3.0)) + .6 * exp(-d * d / .004);\n"
     "    else if (kind == 5) a = exp(-d * d / .12) * (1.0 - smoothstep(.8, 1.0, d));\n"
+    /* 焦外光斑: 实心圆盘, 边缘略亮 (镜头的散景) */
+    "    else if (kind == 6) a = (1.0 - smoothstep(.86, 1.0, d)) * (.6 + .4 * smoothstep(.55, .92, d));\n"
     "    else a = 1.0 - smoothstep(.4, 1.0, d);\n"
     "    a = clamp(a, 0.0, 1.0);\n"
     "    col = mix(vec3(1.0), fc0.rgb, smoothstep(0.0, .45, d) * fc0.a);\n"
@@ -728,15 +730,26 @@ galaxyglrect(double x, double y, double w, double h, const double rgb[3], double
     *g = (GalaxyGLInst){{x, y, w, h}, {0, a, GalaxyGLRect, -1}, {rgb[0], rgb[1], rgb[2], 0}, {0}};
 }
 
-/* 粒子 (柔和的小光点), 最后统一画, 按镜头深度被卡片挡住 */
+/* 粒子 (柔和的小光点), 最后统一画, 按镜头深度被卡片挡住; bokeh: 焦外的大光斑 */
 static void
-galaxyglparticle(double x, double y, double z, double radius, const double rgb[3], double core, double alpha)
+galaxyglparticle(double x, double y, double z, double radius, const double rgb[3], double core, double alpha, int bokeh)
 {
     if (!galaxygl.win || galaxygl.npart >= GALAXYGLPART || alpha < 1.0 / 512 || radius < .3
             || x + radius < 0 || y + radius < 0 || x - radius > galaxygl.fw || y - radius > galaxygl.fh)
         return;
-    galaxygl.part[galaxygl.npart++] = (GalaxyGLInst){{x, y, radius, 0}, {0, alpha, GalaxyGLDust, galaxygldepth(z)},
+    galaxygl.part[galaxygl.npart++] = (GalaxyGLInst){{x, y, radius, 0}, {0, alpha, bokeh ? GalaxyGLBokeh : GalaxyGLDust, galaxygldepth(z)},
         {rgb[0], rgb[1], rgb[2], core}, {0}};
+}
+
+/* 快速粒子的运动拉丝: (x0, y0) 尾 -> (x1, y1) 头, 尾部按 tail 变暗; hw 半宽 */
+static void
+galaxyglpartline(double x0, double y0, double x1, double y1, double z, double hw, const double rgb[3], double tail, double alpha)
+{
+    if (!galaxygl.win || galaxygl.npart >= GALAXYGLPART || alpha < 1.0 / 512
+            || MAX(x0, x1) < 0 || MAX(y0, y1) < 0 || MIN(x0, x1) > galaxygl.fw || MIN(y0, y1) > galaxygl.fh)
+        return;
+    galaxygl.part[galaxygl.npart++] = (GalaxyGLInst){{x0, y0, x1, y1}, {hw, alpha, GalaxyGLLine, galaxygldepth(z)},
+        {rgb[0] * tail, rgb[1] * tail, rgb[2] * tail, 0}, {rgb[0], rgb[1], rgb[2], 0}};
 }
 
 /* 卡片挖洞: 先画掉已提交的光, 再按卡片形状把它后面的光擦掉, 并写入卡片深度 (粒子按它测试) */

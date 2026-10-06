@@ -1441,6 +1441,7 @@ galaxyemit(GalaxyVec pos, GalaxyVec vel, double life, double size, int tint, dou
 {
     GalaxyScene *r = &galaxyscene;
     GalaxyParticle *p;
+    double k;
 
     if (!r->parts || life <= 0)
         return;
@@ -1448,7 +1449,10 @@ galaxyemit(GalaxyVec pos, GalaxyVec vel, double life, double size, int tint, dou
     r->partnext = (r->partnext + 1) % GALAXYPARTICLES;
     if (r->nparts < GALAXYPARTICLES)
         r->nparts++;
-    *p = (GalaxyParticle){pos, vel, 0, life, size, alpha, drag, tint, screen};
+    /* 长尾分布: 多数又小又暗, 少数大而亮 (k 约 .6, 极少数到 2.6); 色温在 tag 色上随机偏蓝或偏橙 */
+    k = .6 + 2 * pow(galaxyprand(), 7);
+    *p = (GalaxyParticle){pos, vel, 0, life, size * k, alpha * MIN(1.6, .7 + .45 * k), drag,
+        galaxyprand() * 2 - 1, tint, screen};
 }
 
 /* 按速率发射: 返回这一帧要发几个 (小数部分按概率) */
@@ -1498,11 +1502,12 @@ galaxyrenderparticles(void)
 {
     GalaxyScene *r = &galaxyscene;
     static double rgb[GalaxyTints][3];
+    static const double cool[3] = {.68, .8, 1}, warm[3] = {1, .76, .5};
     static int ready;
     GalaxyParticle *p;
-    GalaxyProj pr;
-    double dt = r->pdt, u, a, rad;
-    int i;
+    GalaxyProj pr, pp;
+    double dt = r->pdt, u, a, rad, col[3], w, len, coc, rad2, F = r->cam.focal, flow, ff = 5 / F, t = r->motion;
+    int i, k;
 
     if (!ready) {
         for (i = 0; i < GalaxyTints; i++)
@@ -1510,6 +1515,7 @@ galaxyrenderparticles(void)
         ready = 1;
     }
     galaxyemitters();
+    flow = .012 * F * r->holdw;
     for (i = 0; i < r->nparts; i++) {
         p = &r->parts[i];
         if (p->age >= p->life)
@@ -1519,19 +1525,43 @@ galaxyrenderparticles(void)
             continue;
         p->pos = galaxyadd(p->pos, galaxyscale(p->vel, dt));
         p->vel = galaxyscale(p->vel, exp(-p->drag * dt));
+        /* 气流: 无散度的正弦流场 (每个分量只随另外两个坐标变化), 驻留时飘散的光尘像被气流带着走 */
+        if (!p->screen && flow > 1e-6)
+            p->pos = galaxyadd(p->pos, galaxyscale(galaxyv(sin(p->pos.y * ff + t * .7), sin(p->pos.z * ff + t * .5 + 1.7),
+                            sin(p->pos.x * ff + t * .6 + 3.1)), flow * dt));
         u = p->age / p->life;
         a = p->alpha * pow(1 - u, 1.5) * galaxysmoothstep(u / .08);
         if (r->mode == GalaxyReturn)    /* 回程前半段淡完, 交给真实桌面时不会有残留的光点突然消失 */
             a *= 1 - galaxysmoothstep(r->retu / .5);
+        w = .22 * fabs(p->temp);
+        for (k = 0; k < 3; k++)
+            col[k] = galaxymix(rgb[p->tint][k], p->temp < 0 ? cool[k] : warm[k], w);
+        /* 快速粒子画成拉丝: 长度是 1/60s 内走过的屏幕距离 (与帧率无关), 亮度按 直径 / 长度 摊薄 */
         if (p->screen) {
-            galaxyglparticle(p->pos.x, p->pos.y, 0, p->size * (1 - .5 * u), rgb[p->tint], .7, a);
+            rad = p->size * (1 - .5 * u);
+            len = sqrt(galaxydot(p->vel, p->vel)) / 60;
+            if (len > 2.5 * rad)
+                galaxyglpartline(p->pos.x - p->vel.x / 60, p->pos.y - p->vel.y / 60, p->pos.x, p->pos.y, 0, MAX(.5, .45 * rad), col, .15,
+                        a * MAX(.2, MIN(1, 2.5 * rad / len)));
+            else
+                galaxyglparticle(p->pos.x, p->pos.y, 0, rad, col, .7, a, 0);
             continue;
         }
         pr = galaxyproject(p->pos);
         if (!pr.ok)
             continue;
         rad = MIN(40, p->size * pr.scale * (1 - .55 * u));
-        galaxyglparticle(pr.x, pr.y, pr.z, MAX(.6, rad), rgb[p->tint], .7, a * galaxynearfade(pr.z) * MIN(1, rad / .6));
+        a *= galaxynearfade(pr.z) * MIN(1, rad / .6);
+        len = sqrt(galaxydot(p->vel, p->vel)) * pr.scale / 60;
+        if (len > 2.5 * rad && (pp = galaxyproject(galaxysub(p->pos, galaxyscale(p->vel, 1.0 / 60)))).ok
+                && (len = hypot(pr.x - pp.x, pr.y - pp.y)) > 2.5 * rad) {
+            galaxyglpartline(pp.x, pp.y, pr.x, pr.y, pr.z, MAX(.5, .45 * rad), col, .15, a * MAX(.2, MIN(1, 2.5 * rad / len)));
+            continue;
+        }
+        /* 景深: 离对焦距离 (镜头到目标) 越远, 光斑越大越淡; 明显失焦的画成散景光斑 */
+        coc = MIN(14, 10 * fabs(1 - r->cam.dist / MAX(1, pr.z)));
+        rad2 = MIN(18, sqrt(rad * rad + coc * coc));
+        galaxyglparticle(pr.x, pr.y, pr.z, MAX(.6, rad2), col, .7, a * pow(MAX(.6, rad) / MAX(.6, rad2), 1.4), coc > 2.5 && rad2 > 3);
     }
 }
 
@@ -1806,7 +1836,8 @@ galaxyrendershards(void)
     GalaxyScene *r = &galaxyscene;
     XTransform xf = {{{0}}};
     GalaxyProj pa, pb;
-    double f = galaxybeatw(), s = r->iclock, cx, cy, k, a, u, px, py, pk, pa_, pu, c, sn, bx, by, ex, ey, al, hw = r->shardw * .5, hh = r->shardh * .5;
+    double f = galaxybeatw(), s = r->iclock, cx, cy, k, a, u, px, py, pk, pa_, pu, c, sn, bx, by, ex, ey, al, eh, hw = r->shardw * .5, hh = r->shardh * .5;
+    static const double flashrgb[3] = {1, .95, .86};
     int i, j, lvl, x0, y0, x1, y1;
 
     if (!galaxyshardsactive())
@@ -1848,6 +1879,17 @@ galaxyrendershards(void)
             x1 = (int)ceil(cx + ex);
             y1 = (int)ceil(cy + ey);
             XRenderComposite(dpy, PictOpOver, r->shardsrc, r->shardmask[lvl], r->back, x0, y0, x0, y0, x0, y0, x1 - x0, y1 - y0);
+            /* 碎块的边: 转过一个角度时迎着光亮起来 (像有厚度的玻璃片); 碎块缩小后不再描边 */
+            if (u > 0 && (eh = al * .3 * fabs(sin(a)) * galaxysmoothstep((k - .25) / .35)) > .01) {
+                GalaxyProj e[4];
+                static const double ex_[4] = {-1, 1, 1, -1}, ey_[4] = {-1, -1, 1, 1};
+                int m;
+
+                for (m = 0; m < 4; m++)
+                    e[m] = galaxysp(cx + k * (cos(a) * ex_[m] * hw - sin(a) * ey_[m] * hh), cy + k * (sin(a) * ex_[m] * hw + cos(a) * ey_[m] * hh));
+                for (m = 0; m < 4; m++)
+                    galaxyglline(&e[m], &e[(m + 1) % 4], 0xfff1dc, 0xdbe8ff, eh, .7);
+            }
             /* 碎块变小后: 光点 + 指向来路的短尾 */
             if (u > .3) {
                 galaxyshardat(i, j, s - .07, &px, &py, &pk, &pa_, &pu);
@@ -1858,6 +1900,8 @@ galaxyrendershards(void)
             }
         }
     galaxyflushbands();
+    /* 碎裂的一刻: 约 80ms 的漏光闪白, 给开场一个起拍 */
+    galaxyglrect(r->vx, r->vy, r->vw, r->vh, flashrgb, .35 * f * galaxyflash(s - .2, .025, 18));
     xf.matrix[0][0] = xf.matrix[1][1] = xf.matrix[2][2] = XDoubleToFixed(1);
     xf.matrix[0][1] = xf.matrix[1][0] = xf.matrix[0][2] = xf.matrix[1][2] = 0;
     for (lvl = 0; lvl < GALAXYSHARDA; lvl++)
