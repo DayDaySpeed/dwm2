@@ -30,7 +30,8 @@ done
 for k in Return space a; do
     case_ "key '$k' in intro -> warp to orbit" "intro (warped)" "key super+z" "sleep 2" "key $k" "sleep 1.2" "check-overlay 1" "key super+z"
 done
-case_ "click in intro -> warp to orbit" "intro (warped)" "key super+z" "sleep 2" "click 1" "sleep 1.2" "check-overlay 1" "key super+z"
+# 开场里鼠标默认休眠: 第一次点击只唤醒, 第二次才快进
+case_ "click in intro -> warp to orbit" "intro (warped)" "key super+z" "sleep 2" "click 1" "sleep .3" "click 1" "sleep 1.2" "check-overlay 1" "key super+z"
 case_ "Super+Z in intro -> return" "end: from return restore 1" "key super+z" "sleep 2" "key super+z"
 case_ "orbit: typing 'a', then Super+Z -> return" "end: from return restore 1" "key super+z" "sleep 9.5" "key a" "sleep 1" "check-overlay 1" "key super+z"
 case_ "orbit: Esc -> collapse; Esc again -> rest" "end: from rest restore 1" "key super+z" "sleep 9.5" "key Escape" "sleep 0.5" "key Escape" "sleep 0.5" "check-overlay 1" "key super+z"

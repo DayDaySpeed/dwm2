@@ -336,8 +336,9 @@ galaxyspacebake(double drift)
             return;
     }
     XRenderFillRectangle(dpy, PictOpSrc, galaxyspace.far, &base, 0, 0, galaxyspace.fw, galaxyspace.fh);
-    galaxyspacetint(1, galaxyhsv(galaxyspace.hue[0] + drift, galaxyspace.sat[0], .62, .7));
-    galaxyspacetint(2, galaxyhsv(galaxyspace.hue[1] - drift, galaxyspace.sat[1], .55, .6));
+    /* 哈勃配色: 氢的玫红 + 氧的青绿 (壁纸取色仍记在日志里, 星云不再用它), 随时间缓慢漂移 */
+    galaxyspacetint(1, galaxyhsv(345 + drift, .6, .62, .78));
+    galaxyspacetint(2, galaxyhsv(178 - drift, .55, .55, .68));
     galaxyspacetint(0, galaxyhsv(40, .18, .95, .34));
     if (galaxyspace.star[0])
         XRenderComposite(dpy, PictOpOver, galaxyspace.star[0], galaxywhite(.8), galaxyspace.far, 0, 0, 0, 0, 0, 0,

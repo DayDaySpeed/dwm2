@@ -295,6 +295,7 @@ static void restart(const Arg *arg);
 static void sighup(int unused);
 static void saveclientstates(void);
 static unsigned long restoreclientstate(Client *c);
+static Monitor *restoremon(Window w);
 static void restoreclientorder(void);
 static void setup(void);
 static void seturgent(Client *c, int urg);
@@ -401,6 +402,9 @@ static long galaxytimeout(void);
 static void galaxycleanup(void);
 static int galaxyactive(void);
 static void galaxyproperty(XPropertyEvent *ev);
+static void overview(const Arg *arg);
+static int overviewactive(void);
+static void overviewcleanup(void);
 
 /* variables */
 static Systray *systray =  NULL;
@@ -463,6 +467,14 @@ struct Pertag {
 };
 
 #include "galaxy.c"
+#include "overview.c"
+
+/* 全屏特效 (Super+Z 星系 / Super+A 窗口总览) 运行时, 主循环按帧驱动正在运行的那个, 事件也先交给它 */
+static int fxactive(void) { return galaxyactive() || overviewactive(); }
+static int fxevent(XEvent *e) { return overviewactive() ? overviewevent(e) : galaxyevent(e); }
+static void fxpost(XEvent *e) { if (overviewactive()) overviewpost(e); else galaxypost(e); }
+static void fxtick(void) { if (overviewactive()) overviewtick(); else galaxytick(); }
+static long fxtimeout(void) { return overviewactive() ? overviewtimeout() : galaxytimeout(); }
 
 /* function implementations */
 void
@@ -765,6 +777,7 @@ cleanup(void)
     size_t i;
 
     galaxycleanup();
+    overviewcleanup();
     view(&a);
     selmon->lt[selmon->sellt] = &foo;
     for (m = mons; m; m = m->next)
@@ -1885,7 +1898,7 @@ manage(Window w, XWindowAttributes *wa)
         c->mon = t->mon;
         c->tags = t->tags;
     } else {
-        c->mon = selmon;
+        c->mon = restoremon(w);
         applyrules(c);
     }
     wc.border_width = c->bw;
@@ -2263,8 +2276,8 @@ propertynotify(XEvent *e)
     }
     if ((ev->window == root) && (ev->atom == XA_WM_NAME))
         updatestatus();
-    else if (ev->window == root && ev->state == PropertyNewValue)
-        galaxyproperty(ev);     /* bin/galaxysaver.py 设置 _DWM_GALAXY: 无操作时进入星系屏保 */
+    else if (ev->window == root && ev->state == PropertyNewValue && !overviewactive())
+        galaxyproperty(ev);     /* bin/galaxysaver.py 设置 _DWM_GALAXY: 无操作时进入星系屏保 (窗口总览打开时不打断) */
     else if (ev->state == PropertyDelete)
         return; /* ignore */
     else if ((c = wintoclient(ev->window))) {
@@ -2317,7 +2330,8 @@ saveclientstates(void)
     Atom viewatom = XInternAtom(dpy, "_DWM_VIEW", False);
     Monitor *m;
     Client *c;
-    long data[10], v = selmon->tagset[selmon->seltags], idx;
+    long data[11], v[2 + 16], idx;
+    int nv = 2;
 
     for (m = mons; m; m = m->next)
         for (c = m->clients, idx = 0; c; c = c->next, idx++) {
@@ -2331,11 +2345,20 @@ saveclientstates(void)
             data[7] = c->fy;
             data[8] = c->fw;
             data[9] = c->fh;
-            XChangeProperty(dpy, c->win, state, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)data, 10);
+            data[10] = m->num;   /* 所在显示器: 重启后放回原显示器 (否则全部落到当时的 selmon 上) */
+            XChangeProperty(dpy, c->win, state, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)data, 11);
             if (data[3])
                 XMapWindow(dpy, c->win);
         }
-    XChangeProperty(dpy, root, viewatom, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&v, 1);
+    /* _DWM_VIEW: [0] 当前显示器的视图 (旧版本只读这一项), [1] 当前显示器序号, [2..] 每个显示器的视图 */
+    v[0] = selmon->tagset[selmon->seltags];
+    v[1] = selmon->num;
+    for (m = mons; m && nv < (int)LENGTH(v); m = m->next)
+        v[nv++] = m->tagset[m->seltags];
+    XChangeProperty(dpy, root, viewatom, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)v, nv);
+    if (selmon->sel)    /* 焦点窗口: 重启后还给它 */
+        XChangeProperty(dpy, root, XInternAtom(dpy, "_DWM_FOCUS", False), XA_WINDOW, 32, PropModeReplace,
+                (unsigned char *)&selmon->sel->win, 1);
     savelayouts();
     XSync(dpy, False);
 }
@@ -2412,6 +2435,26 @@ out:
     XFree(p);
 }
 
+/* 原地重启后接管窗口时: 窗口重启前所在的显示器 (_DWM_STATE 第 11 项, 只读不删); 没有记录时用 selmon */
+Monitor *
+restoremon(Window w)
+{
+    Atom state = XInternAtom(dpy, "_DWM_STATE", False), type;
+    unsigned long n, after;
+    unsigned char *p = NULL;
+    Monitor *m, *found = NULL;
+    int format;
+
+    if (XGetWindowProperty(dpy, w, state, 0, 11, False, XA_CARDINAL, &type, &format, &n, &after, &p) == Success && p) {
+        if (n >= 11)
+            for (m = mons; m && !found; m = m->next)
+                if (m->num == ((long *)p)[10])
+                    found = m;
+        XFree(p);
+    }
+    return found ? found : selmon;
+}
+
 /* 接管窗口时: 读回并删除 _DWM_STATE, 恢复 tag/浮动/全局; 返回该窗口重启前的隐藏序号 (0 表示未隐藏) */
 unsigned long
 restoreclientstate(Client *c)
@@ -2423,7 +2466,7 @@ restoreclientstate(Client *c)
     unsigned char *p = NULL;
 
     c->restoreidx = -1;
-    if (XGetWindowProperty(dpy, c->win, state, 0, 10, True, XA_CARDINAL,
+    if (XGetWindowProperty(dpy, c->win, state, 0, 11, True, XA_CARDINAL,
             &type, &format, &n, &after, &p) == Success && p) {
         if (n >= 5) {
             long *d = (long *)p;
@@ -2685,25 +2728,25 @@ run(void)
     long wait;
     int fd = ConnectionNumber(dpy);
     XSync(dpy, False);
-    /* main event loop; Super+Z 动画期间不阻塞, 按帧时间驱动 galaxytick */
+    /* main event loop; 全屏特效 (Super+Z 星系 / Super+A 窗口总览) 期间不阻塞, 按帧时间驱动 fxtick */
     while (running) {
-        if (galaxyactive()) {
-            while (running && galaxyactive() && XPending(dpy)) {
+        if (fxactive()) {
+            while (running && fxactive() && XPending(dpy)) {
                 XNextEvent(dpy, &ev);
-                if (!galaxyevent(&ev)) {
+                if (!fxevent(&ev)) {
                     if (handler[ev.type])
                         handler[ev.type](&ev);
-                    galaxypost(&ev);
+                    fxpost(&ev);
                 }
             }
-            if (!running || !galaxyactive())
+            if (!running || !fxactive())
                 continue;
-            galaxytick();
-            if (QLength(dpy) || !galaxyactive())
+            fxtick();
+            if (QLength(dpy) || !fxactive())
                 continue;
             FD_ZERO(&fds);
             FD_SET(fd, &fds);
-            wait = galaxytimeout();
+            wait = fxtimeout();
             timeout.tv_sec = wait / 1000000;
             timeout.tv_usec = wait % 1000000;
             select(fd + 1, &fds, NULL, NULL, wait < 0 ? NULL : &timeout);
@@ -4456,10 +4499,35 @@ main(int argc, char *argv[])
         int format;
         unsigned long n, after;
         unsigned char *p = NULL;
-        if (XGetWindowProperty(dpy, root, viewatom, 0, 1, True, XA_CARDINAL,
+        if (XGetWindowProperty(dpy, root, viewatom, 0, 2 + 16, True, XA_CARDINAL,
                 &type, &format, &n, &after, &p) == Success && p) {
-            if (n == 1 && (*(long *)p & TAGMASK))
-                view(&(Arg){ .ui = *(long *)p & TAGMASK });
+            long *v = (long *)p;
+            Monitor *m, *keep = selmon;
+            unsigned long i;
+            if (n >= 3) {   /* 每个显示器各自的视图, 最后回到重启前的当前显示器 */
+                for (m = mons, i = 2; m && i < n; m = m->next, i++) {
+                    if (m->num == v[1])
+                        keep = m;
+                    if (v[i] & TAGMASK) {
+                        selmon = m;
+                        view(&(Arg){ .ui = v[i] & TAGMASK });
+                    }
+                }
+                selmon = keep;
+                focus(NULL);
+            } else if (n >= 1 && (v[0] & TAGMASK)) {
+                view(&(Arg){ .ui = v[0] & TAGMASK });
+            }
+            XFree(p);
+        }
+        p = NULL;
+        if (XGetWindowProperty(dpy, root, XInternAtom(dpy, "_DWM_FOCUS", False), 0, 1, True, XA_WINDOW,
+                &type, &format, &n, &after, &p) == Success && p) {
+            Client *fc = n == 1 ? wintoclient(*(Window *)p) : NULL;
+            if (fc && ISVISIBLE(fc) && !HIDDEN(fc)) {
+                selmon = fc->mon;
+                focus(fc);
+            }
             XFree(p);
         }
         restoreclientorder();

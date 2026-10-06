@@ -55,9 +55,6 @@
 #define GALAXYWARP     .6        /* 开场中按键, 或唤醒鼠标后点击: 快进到驻留态的真实时长 */
 #define GALAXYRETURN   1.6       /* Super+Z 飞回原位的真实时长 */
 #define GALAXYLAND     .95       /* 进入窗口 (点击窗口星 / 核心): 卡片落到真实窗口位置的时长 */
-#define GALAXYXOPEN    .42       /* Super+A: 窗口飞进网格 */
-#define GALAXYXLAND    .55       /* Super+A: 选中后落到真实位置 */
-#define GALAXYXCLOSE   .38       /* Super+A: 不选, 飞回原位 */
 #define GALAXYBARS     8         /* 落位时实时截取的状态栏 / 托盘 */
 #define GALAXYSHOT     GALAXY_SHOT
 #define GALAXYSHOTMIX  6.0       /* 机位之间的过渡 (真实秒), 巡游之间是一次飞越; 慢一些, 镜头转角另有上限 */
@@ -81,7 +78,14 @@ enum { GalaxyOff, GalaxyIntro, GalaxyOrbit, GalaxyCollapse, GalaxyReturn, Galaxy
 enum { GalaxyFlyHome, GalaxyLand };    /* 回程: 飞回原位 / 进入选中的窗口 (目标 tag 已在遮罩下切好) */
 enum { GalaxyDustItem, GalaxyCoreItem, GalaxyStarItem, GalaxyRingItem, GalaxyClusterItem, GalaxyStreakItem, GalaxySunItem };
 enum { GalaxyHalo, GalaxyDisc, GalaxySpike, GalaxyShapes };   /* 柔光 / 实心光点 / 衍射芒 */
-enum { GalaxyWarm, GalaxyCool, GalaxyTints };
+/* sprite 色调: 暖白 / 冷蓝 / 橙红 (urgent, 高 CPU) / 天象用色 / 每个 tag 一个颜色. sprite 都是白芯彩晕: 中心过曝成白, 颜色在衰减部分 */
+enum { GalaxyWarm, GalaxyCool, GalaxyHot, GalaxyGold, GalaxyCyan, GalaxyRose, GalaxyGreen, GalaxyOrange, GalaxyBlue, GalaxyViolet,
+    GalaxyTag0, GalaxyTints = GalaxyTag0 + 9 };
+/* tag 固定色板 (颜色就是工作区, 换壁纸也不变): 青 / 天蓝 / 紫 / 品红 / 玫红 / 琥珀 / 黄绿 / 绿 / 靛 */
+static const double galaxytaghue[9] = { 175, 210, 265, 315, 350, 35, 95, 140, 235 };
+#define GALAXYTAGTINT(tag) (GalaxyTag0 + (tag) % 9)
+/* 三条群轨道: 内金 / 中青 / 外淡玫红 */
+static const int galaxylanetint[3] = { GalaxyGold, GalaxyCyan, GalaxyRose };
 
 static const char *galaxymodename[] = { "off", "intro", "orbit", "collapse", "return", "rest" };
 /* 开场的三套编排 (随机轮换, 不连续重复; 环境变量 GALAXY_VARIANT=A|B|C 固定一套), 其余节拍共用 */
@@ -115,6 +119,7 @@ typedef struct {
     double anomaly, peri, flare, ripple, flip, eclipse;  /* 平近点角 / 交会 / 掩食 / 涟漪 */
     double ignite, callout, streakreveal;       /* 开场: 点火闪光 / 逐个点名 / 星轨拉出进度 */
     double nova, bridge;                        /* 驻留: 超新星爆闪 / 光桥到达时的闪光 */
+    double flashat;             /* 拖进来一个窗口的时刻: 核心闪一下 */
     double fill;                /* 有窗口的程度: 空星系诞生第一颗星时从 0 长到 1 (亮度 / 轨道环半径随之长大) */
     int rank;                   /* 开场点火的先后顺序 */
     GalaxyVec nudge;             /* 交会时互相吸引的表现层偏移 */
@@ -155,8 +160,12 @@ typedef struct {
     double kw, kh, rkw, rkh, lw, lh;
     int land;
     GalaxyVec lpos;
-    /* Super+A 网格里的位置 (视口中心为原点) 和缩放 */
-    double ex, ey, es;
+    double refreshat;           /* 上次刷新截图的时刻 */
+    int urgent, pid;            /* 窗口请求关注 (红星) / 进程号 (_NET_WM_PID, 0 表示不知道) */
+    double heat, heatt;         /* 进程 (含子进程) CPU 占用 (核数): 平滑后的 / 最近一轮扫描的 */
+    unsigned long long cpuprev; /* 上一轮扫描时子树累计的 CPU 时间 (jiffies) */
+    double moveat;              /* 拖到别的核心 / 拖完飞回轨道: 开始时刻和起点 (0 表示没有) */
+    GalaxyVec movefrom;
     GalaxyProj p;
 } GalaxyStar;
 
@@ -179,9 +188,6 @@ typedef struct {
     int dragging;
     double dragx, dragy, dragtime, dragyaw, dragpitch, dragtyaw, dragtpitch, dragvyaw, dragvpitch;
     int rkind, rstar, rcore;    /* 回程种类: 飞回原位 / 进入窗口; 点中的窗口 / 点中的核心 */
-    /* Super+A (expose): 同一套遮罩和卡片渲染的平面网格; 遮罩只盖发起的那块屏 */
-    int expose;
-    Pixmap exposebg;
     /* 落位时实时截取的状态栏 / 托盘 (切 tag 之后的样子), 最后淡入 */
     Picture landbar[GALAXYBARS];
     int landbarx[GALAXYBARS], landbary[GALAXYBARS], landbarw[GALAXYBARS], landbarh[GALAXYBARS], nlandbar;
@@ -217,7 +223,30 @@ typedef struct {
     char note[GALAXYNOTES][128];
     double noteat[GALAXYNOTES];  /* 0: 还在排队 */
     double chimeat, fakehour, hushuntil, calm;  /* calm: 天象发生时随机特效让位 (降到 .3) */
-    XftFont *notefont, *clockfont;
+    XftFont *notefont, *clockfont, *iconfont;   /* iconfont: 状态栏字体, 显示 tag 图标 */
+    /* 卡片实时刷新: 轮转位置 / 本段统计 */
+    int refreshi, refreshn;
+    double refreshsum, refreshmax;
+    /* CPU 色温: 每帧增量扫描 /proc, 一轮扫完按进程树汇总 */
+    void *heatdir;
+    struct GalaxyProc { int pid, ppid; unsigned long long t; } *procs;
+    int nprocs, cprocs;
+    double heatstart, heatlast, heatcost;
+    /* 拖动卡片: 按下的候选 / 正在拖的星 (-1 没有), 按下位置, 拖动平面的镜头深度, 是否改过 tag */
+    int dragarm, dragstar, moved;
+    double dragx0, dragy0, dragz;
+    GalaxyVec dragpos;
+    /* 确定性时钟 (GALAXY_FAKETIME=帧率): 每帧前进固定步长; GALAXY_DUMP 列出要存成 PPM 的时刻 */
+    double lastcost;            /* 上一帧的渲染耗时 (帧率面板用) */
+    /* 光带颜色场: 1/4 分辨率的 ARGB, 光带写覆盖率时顺手写颜色 (亮的光带赢), 合成时作为源 (Nearest 放大), 覆盖率作蒙版 */
+    unsigned int *colbuf, bandcolor;
+    XImage *colimg;
+    Pixmap colpix;
+    Picture colpic;
+    GC colgc;
+    int colw, colh;
+    double fakestep, fakeclock, dumpt[16];
+    int ndump, dumpi;
     /* 开场变体. A: 桌面 (壁纸 + 状态栏) 切成碎块, 旋转着被吸进视口中心的灭点; C: 爆心 (焦点窗口中心, 世界坐标) */
     int variant, shardw, shardh;
     Pixmap shardpix, shardmaskpix[GALAXYSHARDA];
@@ -295,6 +324,8 @@ typedef struct {
 
 static GalaxyScene galaxyscene;
 static double galaxynow(void);
+static void galaxyheatfree(void);
+static int galaxyhud;           /* F12 帧率面板, 进程内保持 */
 static const int galaxyspritesize[GALAXYSPRITES] = { 128, 32, 8 };
 
 /* 时间轴上的关键帧曲线 (单调分段三次 Hermite), 用于镜头和形态变化.
@@ -369,6 +400,55 @@ static const GalaxyLane galaxylanes[GALAXYLANES] = {
 /* ---------- 数学 ---------- */
 
 static double galaxyclamp(double x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
+
+/* HSV (色相为度) -> 0..1 的 RGB */
+static void
+galaxyhsvrgb(double h, double s, double v, double out[3])
+{
+    double c = v * s, hp = fmod(fmod(h, 360) + 360, 360) / 60, x = c * (1 - fabs(fmod(hp, 2) - 1)), m = v - c;
+    int k = (int)hp;
+
+    out[0] = m + (k == 0 || k == 5 ? c : k == 1 || k == 4 ? x : 0);
+    out[1] = m + (k == 1 || k == 2 ? c : k == 0 || k == 3 ? x : 0);
+    out[2] = m + (k == 3 || k == 4 ? c : k == 2 || k == 5 ? x : 0);
+}
+
+/* 色调的 RGB: 光带 (sat 为 0 时是白色) 和 sprite 共用同一套颜色 */
+static void
+galaxytintcolor(int tint, double sat, double out[3])
+{
+    static const double hues[GalaxyTag0] = { 38, 215, 16, 45, 185, 340, 125, 26, 215, 268 };
+    static const double sats[GalaxyTag0] = { .13, .14, .8, .55, .55, .42, .55, .65, .62, .5 };
+
+    if (tint >= GalaxyTag0)
+        galaxyhsvrgb(galaxytaghue[(tint - GalaxyTag0) % 9], sat < 0 ? .5 : sat, 1, out);
+    else
+        galaxyhsvrgb(hues[tint], sat < 0 ? sats[tint] : sat * sats[tint] / .5, 1, out);
+}
+
+/* 光带用的打包颜色 0xAARRGGBB (不透明). sat < 0 用色调的默认饱和度; 亮芯常用一半饱和度 (白芯彩晕) */
+static unsigned int
+galaxytintrgb(int tint, double sat)
+{
+    double c[3];
+
+    galaxytintcolor(tint, sat, c);
+    return 0xff000000u | (unsigned int)(galaxyclamp(c[0]) * 255 + .5) << 16
+        | (unsigned int)(galaxyclamp(c[1]) * 255 + .5) << 8 | (unsigned int)(galaxyclamp(c[2]) * 255 + .5);
+}
+
+/* 两个打包颜色按 t 混合 (超新星冲击环蓝紫 -> 橙) */
+static unsigned int
+galaxymixrgb(unsigned int a, unsigned int b, double t)
+{
+    unsigned int out = 0xff000000u;
+    int k;
+
+    t = galaxyclamp(t);
+    for (k = 0; k < 24; k += 8)
+        out |= (unsigned int)((a >> k & 255) * (1 - t) + (b >> k & 255) * t + .5) << k;
+    return out;
+}
 static double galaxymix(double a, double b, double t) { return a + (b - a) * t; }
 static double galaxyphase(double t, double a, double b) { return galaxyclamp((t - a) / (b - a)); }
 static double galaxyeaseincubic(double x) { x = galaxyclamp(x); return x * x * x; }
@@ -681,5 +761,5 @@ galaxysetcameraat(GalaxyVec target, double dist, double pitch, double yaw, doubl
 #include "galaxy-space.c"
 #include "galaxy-render.c"
 #include "galaxy-build.c"
-#include "galaxy-expose.c"
+#include "galaxy-heat.c"
 #include "galaxy-control.c"

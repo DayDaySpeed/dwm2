@@ -139,7 +139,7 @@ static Key keys[] = {
     { MODKEY|ShiftMask,    XK_Left,         tagtoleft,        {0} },                     /* super shift left   |  将本窗口移动到左边tag */
     { MODKEY|ShiftMask,    XK_Right,        tagtoright,       {0} },                     /* super shift right  |  将本窗口移动到右边tag */
 
-    { MODKEY,              XK_a,            galaxy,           {.i = 1} },                /* super a            |  窗口总览 (点选进入) */
+    { MODKEY,              XK_a,            overview,         {0} },                     /* super a            |  窗口总览 (点选进入) */
     { MODKEY,              XK_z,            galaxy,           {0} },                     /* super z            |  3D 工作空间星系 (停在轨道态) / 回到桌面 */
 
     { MODKEY,              XK_comma,        setmfact,         {.f = -0.05} },            /* super ,            |  缩小主工作区 */
