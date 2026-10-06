@@ -12,6 +12,7 @@
  * 动画期间不移动 / 隐藏 / 映射 / 重叠 / 聚焦任何真实窗口; 只在结束时恢复 (或按点击切换) tag 和焦点. */
 
 #include <X11/extensions/dpms.h>
+#include <X11/extensions/Xrandr.h>
 #include <ctype.h>
 
 #define GALAXYMIPS     6
@@ -24,7 +25,7 @@
 #define GALAXYARCSEG   (GALAXYSEG / GALAXYARCS)
 #define GALAXYTILES    4         /* 大截图的透视画面拆成 4x4 仿射块 */
 #define GALAXYFPS      120.0
-#define GALAXYORBITFPS 60.0
+#define GALAXYORBITFPS 60.0      /* 查不到显示器刷新率时的驻留帧率 */
 #define GALAXYIDLEFPS  30.0
 #define GALAXYIDLE     90.0      /* 驻留时多久无输入后降到 GALAXYIDLEFPS (秒) */
 #define GALAXYMOUSEIDLE 8.0     /* 唤醒鼠标后无操作多久恢复纯展示 */
@@ -268,6 +269,7 @@ typedef struct {
     Picture shardsrc, shardflat, shardmask[GALAXYSHARDA];
     GalaxyVec bang;
     int quiet;                  /* 安静模式: 省电模式打开时特效变少变稀, 帧率降低 */
+    double refresh;             /* 遮罩所在显示器的刷新率 (Hz): 驻留态按它出帧 */
     int trace;                  /* 环境变量 GALAXY_TRACE: 每帧把镜头参数写进日志 */
     int saver;                  /* 屏保模式 (无操作时由 bin/galaxysaver.py 触发): 任何输入都回到桌面 */
     double saverx, savery;      /* 屏保开始时的指针位置: 移动超过几像素才算有人回来 */

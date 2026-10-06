@@ -610,9 +610,9 @@ galaxylogstart(void)
         snprintf(path, sizeof path, "%s/.cache/dwm-galaxy%s.log", home ? home : "/tmp", DisplayString(dpy));
     if (!(r->log = fopen(path, "w")))
         return;
-    fprintf(r->log, "galaxy start: screen %dx%d tags %d windows %d dust %d trail %d focal %.0f timescale %.2f dpms %d wallpaper 0x%lx%s quiet %d fxgap %.2f\n",
+    fprintf(r->log, "galaxy start: screen %dx%d tags %d windows %d dust %d trail %d focal %.0f timescale %.2f dpms %d wallpaper 0x%lx%s quiet %d fxgap %.2f refresh %.0fHz\n",
             r->w, r->h, r->ntags, r->nstars, r->ndust, r->ntrail, r->cam.focal, r->tscale, r->dpms,
-            r->wallwin, r->live ? " (live)" : "", r->quiet, r->fxgap);
+            r->wallwin, r->live ? " (live)" : "", r->quiet, r->fxgap, r->refresh);
     for (i = 0; i < r->ntags; i++)
         if (r->galaxies[i].nstars)
             fprintf(r->log, "galaxy %d: windows %d rings %d radius %.0f home %.0f %.0f %.0f\n", i + 1,

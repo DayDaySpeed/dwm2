@@ -451,16 +451,42 @@ galaxyquiet(void)
     return access(path, F_OK) == 0;
 }
 
+/* 遮罩视口中心所在显示器的刷新率 (XRandR 当前模式的 dotClock / (hTotal * vTotal)); 查不到时用 GALAXYORBITFPS */
+static double
+galaxyrefresh(void)
+{
+    GalaxyScene *r = &galaxyscene;
+    XRRScreenResources *res;
+    XRRCrtcInfo *ci;
+    double hz = 0;
+    int i, j, cx = r->vx + r->vw / 2, cy = r->vy + r->vh / 2;
+
+    if (!(res = XRRGetScreenResourcesCurrent(dpy, root)))
+        return GALAXYORBITFPS;
+    for (i = 0; i < res->ncrtc && hz <= 0; i++) {
+        if (!(ci = XRRGetCrtcInfo(dpy, res, res->crtcs[i])))
+            continue;
+        if (ci->mode && cx >= ci->x && cx < ci->x + (int)ci->width && cy >= ci->y && cy < ci->y + (int)ci->height)
+            for (j = 0; j < res->nmode; j++)
+                if (res->modes[j].id == ci->mode && res->modes[j].hTotal && res->modes[j].vTotal)
+                    hz = (double)res->modes[j].dotClock / ((double)res->modes[j].hTotal * res->modes[j].vTotal);
+        XRRFreeCrtcInfo(ci);
+    }
+    XRRFreeScreenResources(res);
+    return hz > 1 ? MAX(GALAXYORBITFPS, MIN(360, hz)) : GALAXYORBITFPS;
+}
+
 static double
 galaxyfps(double now)
 {
     GalaxyScene *r = &galaxyscene;
+    double orbit = r->refresh > 1 ? r->refresh : GALAXYORBITFPS;
 
     if (r->mode != GalaxyOrbit)
         return GALAXYFPS;
     if (r->quiet || r->saver)
-        return MIN(GALAXY_QUIETFPS, GALAXYORBITFPS);
-    return now - r->lastinput > GALAXYIDLE ? GALAXYIDLEFPS : GALAXYORBITFPS;
+        return MIN(GALAXY_QUIETFPS, orbit);
+    return now - r->lastinput > GALAXYIDLE ? GALAXYIDLEFPS : orbit;
 }
 
 /* ---------- 键盘导航: 方向键选星, Enter 跳转, 打字按标题过滤, Tab 在匹配项之间切换 ---------- */
@@ -1653,6 +1679,7 @@ galaxy(const Arg *arg)
     r->glowscale = MAX(.55, MIN(1, 1.1 - .015 * count));
     r->trace = getenv("GALAXY_TRACE") != NULL;
     r->quiet = galaxyquiet();
+    r->refresh = galaxyrefresh();
     r->fxgap = GALAXY_FXGAP * (r->quiet ? 2.5 : 1);
     r->ndust = MAX(70, MIN(140, 140 - 2 * count)) / (r->quiet ? 2 : 1);
     r->ntrail = count > 24 ? 6 : GALAXYTRAIL;
