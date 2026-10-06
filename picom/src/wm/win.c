@@ -1798,6 +1798,21 @@ bool win_process_animation_and_state_change(struct session *ps, struct win *w, d
 		trigger = ANIMATION_TRIGGER_COLOR;
 	}
 
+	if (ps->dwm_noanim_until_ms > 0 &&
+	    (trigger != ANIMATION_TRIGGER_INVALID || w->running_animation_instance != NULL)) {
+		// dwm2: dwm 要求这段时间不做动画: 不启动新动画, 正在运行的也直接结束,
+		// 窗口立即到终态 (返回 true 后调用方会释放动画实例). 只拦新动画的话,
+		// Super+A / 星系交接时还在滑动的窗口会继续晃一下
+		struct timespec now;
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		if ((int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000 < ps->dwm_noanim_until_ms) {
+			log_debug("Skipping animation for window %#010x (%s) because of "
+			          "_DWM_NOANIM.",
+			          win_id(w), w->name);
+			return true;
+		}
+	}
+
 	if (trigger == ANIMATION_TRIGGER_INVALID) {
 		// No state changes, if there's a animation running, we just continue it.
 		return win_advance_animation(w, delta_t, &win_ctx);
@@ -1816,18 +1831,6 @@ bool win_process_animation_and_state_change(struct session *ps, struct win *w, d
 		          "is blocked.",
 		          animation_trigger_names[trigger], win_id(w), w->name);
 		return win_advance_animation(w, delta_t, &win_ctx);
-	}
-
-	if (ps->dwm_noanim_until_ms > 0) {
-		// dwm2: dwm 要求这段时间不做动画, 窗口直接到终态 (调用方会停掉正在运行的动画)
-		struct timespec now;
-		clock_gettime(CLOCK_MONOTONIC, &now);
-		if ((int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000 < ps->dwm_noanim_until_ms) {
-			log_debug("Not starting animation %s for window %#010x (%s) because "
-			          "of _DWM_NOANIM.",
-			          animation_trigger_names[trigger], win_id(w), w->name);
-			return true;
-		}
 	}
 
 	auto wopts = win_options(w);
