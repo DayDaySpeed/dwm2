@@ -206,7 +206,7 @@ galaxycollapsestart(void)
     galaxysetcursor(0);
 }
 
-/* 开场中按键, 或鼠标已唤醒后点击: 场景时钟加速, GALAXYWARP 秒内走到驻留态 (一切都是时间的纯函数, 不会跳帧) */
+/* 开场中鼠标已唤醒后再次点击: 场景时钟加速, GALAXYWARP 秒内走到驻留态 (一切都是时间的纯函数, 不会跳帧) */
 static void
 galaxywarp(void)
 {
@@ -1019,36 +1019,6 @@ galaxydumpframe(void)
     XDestroyImage(img);
 }
 
-/* 卡片实时刷新: 驻留时每帧最多刷一张, 轮转; 只刷画面里显示截图面板的卡片, 同一张至少隔 2s (安静模式 6s) */
-static void
-galaxyrefreshstep(double now)
-{
-    GalaxyScene *r = &galaxyscene;
-    GalaxyStar *s;
-    double gap = r->quiet ? 6 : 2, t0, cost;
-    int k, i;
-
-    if (r->mode != GalaxyOrbit || r->nstars < 1 || r->fakestep > 0)    /* 确定性测试时不刷新 (窗口内容会变) */
-        return;
-    for (k = 0; k < r->nstars; k++) {
-        i = (r->refreshi + k) % r->nstars;
-        s = &r->stars[i];
-        if (now - s->refreshat < gap || s->born > 0 || s->moveat > 0 || i == r->dragstar || !galaxyonview(s->p)
-                || s->lod < .3 || s->vis < .2)
-            continue;
-        r->refreshi = i + 1;
-        s->refreshat = now;
-        t0 = galaxynow();
-        if (galaxyrefresh(s)) {
-            cost = galaxynow() - t0;
-            r->refreshn++;
-            r->refreshsum += cost;
-            r->refreshmax = MAX(r->refreshmax, cost);
-        }
-        return;
-    }
-}
-
 static void
 galaxytick(void)
 {
@@ -1073,6 +1043,7 @@ galaxytick(void)
     if (now - r->last < 1 / galaxyfps(now) - .0005)
         return;
     dt = r->last < 0 ? 0 : MIN(now - r->last, .1);
+    r->pdt = dt;
     if (r->mode == GalaxyOrbit && r->dpms && now - r->lastdpms >= 1) {
         /* 屏幕关闭 (DPMS) 时暂停渲染 */
         r->lastdpms = now;
@@ -1160,6 +1131,7 @@ galaxytick(void)
         galaxysetcursor(r->mouseawake ? 0 : -1);
     }
     if (r->mode == GalaxyReturn) {
+        r->retu = u;
         if (r->rkind == GalaxyFlyHome)
             galaxyupdatereturn(u);
         else
@@ -1167,7 +1139,6 @@ galaxytick(void)
     } else {
         galaxyupdateevents(now, dt);
         galaxyupdatescene(r->stage, r->motion, dt);
-        galaxyrefreshstep(now);
         galaxyheatstep(now);
     }
     r->phasecost[0] += galaxynow() - begin;
@@ -1175,6 +1146,7 @@ galaxytick(void)
     galaxyrender();
     galaxydumpframe();
     cost = galaxynow() - begin;
+    r->lastcost = cost;
     if (r->mode == GalaxyOrbit && now - r->lastinput < GALAXYIDLE) {
         r->qualityavg = r->qualityavg ? galaxymix(r->qualityavg, cost, .045) : cost;
         r->qualitybad = r->qualityavg > .0168 ? r->qualitybad + 1 : 0;
@@ -1264,8 +1236,7 @@ galaxyevent(XEvent *e)
                 galaxycollapsestart();
             else if (superz)
                 galaxyreturnstart(-1, -1);
-            else
-                galaxywarp();
+            /* 开场是完整演出，普通按键不改变时间轴。需要快进时可先唤醒鼠标再点击。 */
             break;
         case GalaxyOrbit:
             if (superz)
@@ -1684,31 +1655,11 @@ galaxy(const Arg *arg)
     r->streakz = calloc(r->ntags * 3, sizeof *r->streakz);
     r->popord = calloc(r->ntags, sizeof *r->popord);
     r->gaps = calloc(GALAXYGAPS, sizeof *r->gaps);
-    r->bandtw = (r->w + GALAXYBTILE - 1) / GALAXYBTILE;
-    r->bandth = (r->h + GALAXYBTILE - 1) / GALAXYBTILE;
-    r->bandbuf = calloc((size_t)r->w * r->h, 1);
-    r->banddirty = calloc(r->bandtw * r->bandth, 1);
-    if (!r->bandbuf || !r->banddirty
-            || !(r->bandimg = XCreateImage(dpy, DefaultVisual(dpy, screen), 8, ZPixmap, 0, (char *)r->bandbuf, r->w, r->h, 8, r->w)))
-        goto fail;
-    r->bandpix = XCreatePixmap(dpy, root, r->w, r->h, 8);
-    r->bandpic = XRenderCreatePicture(dpy, r->bandpix, r->a8, 0, NULL);
-    r->bandgc = XCreateGC(dpy, r->bandpix, 0, NULL);
-    /* 光带颜色场: 每 4x4 像素一个颜色, 初始全白 */
-    r->colw = (r->w + 3) / 4;
-    r->colh = (r->h + 3) / 4;
+    r->parts = calloc(GALAXYPARTICLES, sizeof *r->parts);
+    r->novaburst = r->bangburst = -1;
     r->bandcolor = 0xffffffffu;
-    if (!(r->colbuf = malloc((size_t)r->colw * r->colh * 4))
-            || !(r->colimg = XCreateImage(dpy, DefaultVisual(dpy, screen), 32, ZPixmap, 0, (char *)r->colbuf, r->colw, r->colh, 32, 0)))
-        goto fail;
-    memset(r->colbuf, 0xff, (size_t)r->colw * r->colh * 4);
-    r->colpix = XCreatePixmap(dpy, root, r->colw, r->colh, 32);
-    r->colpic = XRenderCreatePicture(dpy, r->colpix, XRenderFindStandardFormat(dpy, PictStandardARGB32), 0, NULL);
-    r->colgc = XCreateGC(dpy, r->colpix, 0, NULL);
-    XRenderFillRectangle(dpy, PictOpSrc, r->colpic, &(XRenderColor){0xffff, 0xffff, 0xffff, 0xffff}, 0, 0, r->colw, r->colh);
-    galaxyaffine(r->colpic, .25, .25, 0, 0);   /* 目标坐标 / 4 = 颜色格; 默认 Nearest 采样, 邻格的颜色不会渗进来 */
     if (!r->galaxies || !r->stars || !r->dust || !r->items || !r->tgpos || !r->tgplane || !r->tpts || !r->rpts
-            || !r->streakpts || !r->streakz || !r->popord || !r->gaps || !r->argb || !r->a8 || !r->a1)
+            || !r->streakpts || !r->streakz || !r->popord || !r->gaps || !r->parts || !r->argb || !r->a8 || !r->a1)
         goto fail;
     r->savedmon = r->tmon = selmon;
     r->savedtags = r->ttags = selmon->tagset[selmon->seltags] & TAGMASK;
@@ -1723,12 +1674,22 @@ galaxy(const Arg *arg)
     r->queryfont = XftFontOpenName(dpy, screen, "sans:lang=zh-cn:size=16");
     r->notefont = XftFontOpenName(dpy, screen, "sans:lang=zh-cn:size=15");
     r->clockfont = XftFontOpenName(dpy, screen, "sans:lang=zh-cn:size=34:weight=light");
+    /* 前景层: 32 位 ARGB pixmap, 文字和标签画在这里 (透明处露出下面的光和场景) */
+    {
+        XVisualInfo vinfo;
+        if (!XMatchVisualInfo(dpy, screen, 32, TrueColor, &vinfo))
+            goto fail;
+        r->argbvisual = vinfo.visual;
+        r->argbcmap = XCreateColormap(dpy, root, r->argbvisual, AllocNone);
+        r->frontpix = XCreatePixmap(dpy, root, r->w, r->h, 32);
+        if (!r->frontpix || !(r->front = XRenderCreatePicture(dpy, r->frontpix, r->argb, 0, NULL)))
+            goto fail;
+    }
     if (r->titlefont)
-        r->titledraw = XftDrawCreate(dpy, r->backpix, DefaultVisual(dpy, screen), DefaultColormap(dpy, screen));
+        r->titledraw = XftDrawCreate(dpy, r->frontpix, r->argbvisual, r->argbcmap);
     if (r->titledraw) {
         XRenderColor white = {0xe900, 0xf600, 0xffff, 0xffff};
-        r->titlecolorok = XftColorAllocValue(dpy, DefaultVisual(dpy, screen),
-                DefaultColormap(dpy, screen), &white, &r->titlecolor);
+        r->titlecolorok = XftColorAllocValue(dpy, r->argbvisual, r->argbcmap, &white, &r->titlecolor);
     }
     if (!r->titlecolorok && r->titledraw) {
         XftDrawDestroy(r->titledraw);
@@ -1743,7 +1704,6 @@ galaxy(const Arg *arg)
     r->tilemaskpix = XCreatePixmap(dpy, root, r->w, r->h, 8);
     if (!r->tilemaskpix || !(r->tilemask = XRenderCreatePicture(dpy, r->tilemaskpix, r->a8, 0, NULL)))
         goto fail;
-    galaxybuildsprites();
     galaxybuildvignette();
 
     i = 0;
@@ -1790,12 +1750,21 @@ galaxy(const Arg *arg)
         r->tpitch = ((r->my - r->vy) / r->vh - .5) * 2 * 2.5;
     }
 
-    /* 遮罩的背景就是刚截的桌面, 映射瞬间不会闪黑 */
+    /* 遮罩用 OpenGL 的 visual (一般就是默认 visual); 背景就是刚截的桌面, 映射瞬间不会闪黑 */
+    if (!galaxyglinit()) {
+        galaxylogstart();
+        if (r->log)
+            fprintf(r->log, "galaxy start failed: opengl\n");
+        goto fail;
+    }
     wa.override_redirect = True;
     wa.event_mask = ExposureMask | KeyPressMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask;
     wa.background_pixmap = r->desktoppix;
-    r->overlay = XCreateWindow(dpy, root, 0, 0, r->w, r->h, 0, DefaultDepth(dpy, screen), InputOutput,
-            DefaultVisual(dpy, screen), CWOverrideRedirect | CWEventMask | CWBackPixmap, &wa);
+    wa.colormap = galaxygl.cmap;
+    wa.border_pixel = 0;
+    r->overlay = XCreateWindow(dpy, root, 0, 0, r->w, r->h, 0, galaxygl.vi->depth, InputOutput, galaxygl.vi->visual,
+            CWOverrideRedirect | CWEventMask | CWColormap | CWBorderPixel
+            | (galaxygl.vi->depth == DefaultDepth(dpy, screen) ? CWBackPixmap : 0), &wa);
     XSetClassHint(dpy, r->overlay, &cls);
     XStoreName(dpy, r->overlay, "dwm-galaxy");
     r->hand = XCreateFontCursor(dpy, XC_hand2);
@@ -1808,10 +1777,16 @@ galaxy(const Arg *arg)
             XFreePixmap(dpy, bits);
         }
     }
-    r->overlaypic = XRenderCreatePicture(dpy, r->overlay, XRenderFindVisualFormat(dpy, DefaultVisual(dpy, screen)), 0, NULL);
+    r->overlaypic = XRenderCreatePicture(dpy, r->overlay, XRenderFindVisualFormat(dpy, galaxygl.vi->visual), 0, NULL);
     if (!r->overlaypic)
         goto fail;
     XMapRaised(dpy, r->overlay);
+    if (!galaxyglbegin(r->overlay, r->backpix, r->frontpix, r->w, r->h)) {
+        galaxylogstart();
+        if (r->log)
+            fprintf(r->log, "galaxy start failed: opengl\n");
+        goto fail;
+    }
     r->mode = GalaxyIntro;
     /* 别的程序可能正短暂持有抓取 (菜单刚关闭等): 最多重试约 0.5s, 失败时把原因写进日志 */
     for (i = 0; i < 50 && XGrabKeyboard(dpy, r->overlay, False, GrabModeAsync, GrabModeAsync, CurrentTime) != GrabSuccess; i++)
@@ -1834,8 +1809,12 @@ galaxy(const Arg *arg)
     }
     r->grabptr = 1;
     galaxylogstart();
-    if (r->log)
+    if (r->log) {
         fprintf(r->log, "galaxy variant: %s\n", galaxyvariantname[r->variant]);
+        fprintf(r->log, "galaxy gl: pixmap orientation base %s front %s (FBConfig %s)\n",
+                galaxygl.yinv24 ? "direct" : "flipped", galaxygl.yinv32 ? "direct" : "flipped",
+                galaxygl.yinv32config ? "direct" : "flipped");
+    }
     galaxymousesleep("intro start");
     XSync(dpy, False);
     clock_gettime(CLOCK_MONOTONIC, &r->start);
