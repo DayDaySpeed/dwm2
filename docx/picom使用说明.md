@@ -2,12 +2,12 @@
 
 picom 是窗口合成器，负责窗口的透明、圆角、模糊、淡入淡出和打开 / 关闭动画。没有它，dwm 照样能用，只是没有这些效果。
 
-- 使用的版本：yaocccc/picom（基于 picom v9 的动画分支），安装在 `/usr/local/bin/picom`
-- 配置文件：`config/picom.conf`
-- 由 `bin/autostart.sh` 开机启动：`picom --experimental-backends --config $DWM/config/picom.conf`
+- 使用的版本：上游 picom v13，源码在 `picom/`，带一个 dwm 用的小补丁（见 `picom/README.dwm2.md`），安装在 `~/.local/bin/picom`
+- 配置文件：`config/picom.conf`（v13 语法：窗口相关的设置都写在 `rules` 里，动画写在 `animations` 里）
+- 由 `bin/autostart.sh` 开机启动：`picom --config $DWM/config/picom.conf`
 
-> 系统里还有一个 pacman 装的 picom（`/usr/bin/picom`，v13），它不支持这份配置里的动画选项。
-> 执行 `which picom` 应该显示 `/usr/local/bin/picom`。
+> 系统里还有一个 pacman 装的 picom（`/usr/bin/picom`，也是 v13，但没有 dwm 的补丁）。
+> 执行 `which picom` 应该显示 `~/.local/bin/picom`。
 
 ---
 
@@ -17,7 +17,7 @@ picom 是窗口合成器，负责窗口的透明、圆角、模糊、淡入淡�
 |---|---|
 | `Super + P` → `close picom` / `open picom` | 从 rofi 菜单开关，最方便 |
 | `killall picom` | 在终端里关闭 |
-| `picom --experimental-backends --config $DWM/config/picom.conf -b` | 在终端里启动（`-b` 表示在后台运行） |
+| `picom --config $DWM/config/picom.conf -b` | 在终端里启动（`-b` 表示在后台运行） |
 
 **修改配置后：** 先关闭 picom 再打开，新配置才会生效。
 
@@ -32,8 +32,9 @@ picom 是窗口合成器，负责窗口的透明、圆角、模糊、淡入淡�
 | 始终不透明的窗口 | VS Code、Chrome、Edge、Typora、平铺的 st 终端（以文字为主，避免透出壁纸），以及 mpv、OBS、GIMP、VNC、画中画 |
 | 背景模糊 | dual_kawase，强度 4 |
 | 淡入淡出 | 开启（rofi、输入法、screenkey 除外） |
-| 打开窗口动画 | zoom（从中心放大） |
-| 关闭窗口动画 | squeeze（压缩消失） |
+| 打开 / 显示窗口动画 | appear（从中心放大并淡入，0.2 秒） |
+| 关闭 / 隐藏窗口动画 | disappear（缩小并淡出，0.15 秒） |
+| 位置、大小变化 | geometry-change（平滑过渡 0.2 秒）；切 tag 时窗口从屏幕左右两侧滑进来 |
 | 不加动画的窗口 | 输入法、flameshot、dunst 通知、rofi、screenkey、微信 |
 | 阴影 | 关闭 |
 | 渲染后端 | glx，开启垂直同步 |
@@ -46,20 +47,23 @@ picom 是窗口合成器，负责窗口的透明、圆角、模糊、淡入淡�
 
 所有修改都在 `config/picom.conf` 中进行，改完后按「开关 picom」一节的方法重启 picom。
 
+v13 里针对窗口的设置都写成 `rules` 里的一条规则：`match` 是匹配条件，后面跟要设置的选项，后面的规则覆盖前面的。
+
 **调整透明度：**
 ```
-active-opacity = 0.95;          # 聚焦窗口
-opacity-rule = [
-    "92:!focused",              # 未聚焦窗口
-];
+rules = (
+    { match = "focused || wmwin || override_redirect"; opacity = 0.95; },   # 聚焦窗口
+    { match = "!(focused || wmwin || override_redirect)"; opacity = 0.92; dim = 0.1; },   # 未聚焦窗口
+    ...
+);
 ```
-想让某个程序始终不透明，在 `opacity-rule` 里加一行，比如 `"100:class_g = 'kitty'"`。
+想让某个程序始终不透明，在 `rules` 里加一条，比如 `{ match = "class_g = 'kitty'"; opacity = 1; },`。
 
 **窗口 class 怎么查：** 在终端执行 `xprop WM_CLASS`，然后用鼠标点一下目标窗口。输出的第二个值就是 `class_g`。
 
 **调整圆角：**
 ```
-corner-radius = 10.0;
+corner-radius = 10;             # 全局; 某个程序不要圆角就加规则 { match = "..."; corner-radius = 0; }
 ```
 
 **调整模糊强度：**
@@ -69,12 +73,14 @@ blur-strength = 3;              # 数字越大越模糊
 
 **调整或关闭动画：**
 ```
-animations = true;                          # 改成 false 关闭动画
-animation-for-open-window = "zoom";         # 打开窗口动画
-animation-for-unmap-window = "squeeze";     # 关闭窗口动画
-animation-stiffness-in-tag = 125;           # 数值越大动画越快
+animations = (
+    { triggers = [ "open", "show" ]; preset = "appear"; scale = 0.6; duration = 0.2; },
+    { triggers = [ "close", "hide" ]; preset = "disappear"; scale = 0.6; duration = 0.15; },
+    { triggers = [ "geometry" ]; preset = "geometry-change"; duration = 0.2; }
+);
 ```
-想让某个程序不带动画，把它加进 `animation-exclude` 列表。
+`duration` 是时长（秒）；整段删掉就没有动画。可用的预设还有 `slide-in` / `slide-out`、`fly-in` / `fly-out`，详见 `man picom` 的 ANIMATIONS 一节。
+想让某个程序不带动画，在 `rules` 里不加动画的那条规则的 `match` 中加上它。
 
 **关闭淡入淡出：**
 ```
@@ -88,8 +94,9 @@ fading = false;
 | 现象 | 处理方法 |
 |---|---|
 | 没有透明、圆角、动画 | picom 没在运行：先执行 `pgrep -a picom` 确认，再用 `Super + P` 打开 |
-| 某个程序画面异常或闪烁 | 把它加进对应的 exclude 列表，或者在 `opacity-rule` 里给它设 100 |
-| 感觉卡顿、耗电 | 调小 `blur-strength`，或者关闭 `animations` |
+| 某个程序画面异常或闪烁 | 在 `rules` 里给它加一条规则（例如 `opacity = 1`、`animations` 关掉、`corner-radius = 0`） |
+| 感觉卡顿、耗电 | 调小 `blur-strength`，或者删掉 `animations` |
+| 配置写错了 | 在终端执行 `picom --config $DWM/config/picom.conf --diagnostics`，看有没有 WARN / ERROR |
 | 全屏玩游戏、看视频掉帧 | 全屏时 picom 会自动停止合成（`unredir-if-possible`），一般不需要处理；还不行就先关掉 picom |
 
 ---
