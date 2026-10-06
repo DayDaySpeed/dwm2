@@ -800,8 +800,12 @@ galaxyupdatecamera(double stage, double motion, double dt)
     dist = galaxymix(a.dist * galaxymix(r->dfit, 1, sa == GalaxyShotTour), b.dist * galaxymix(r->dfit, 1, sb == GalaxyShotTour), mix);
     if (sa == GalaxyShotTour || sb == GalaxyShotTour)
         dist += .22 * sin(GALAXYPI * mix);   /* 飞越: 先拉远再推近 */
-    cp = galaxymix(kp, galaxymix(a.pitch, b.pitch, mix), dw) + hw * (r->ppitch + r->dragpitch);
-    cy = galaxymix(ky, galaxymix(a.yaw, b.yaw, mix), dw) + hw * (r->pyaw + r->dragyaw);
+    /* 呼吸: 驻留时在导演镜头上叠一层极慢的漂移 (三个互质的周期, 不会看出循环) */
+    cp = galaxymix(kp, galaxymix(a.pitch, b.pitch, mix), dw) + hw * (r->ppitch + r->dragpitch)
+        + hw * dw * .8 * sin(2 * GALAXYPI * motion / 23);
+    cy = galaxymix(ky, galaxymix(a.yaw, b.yaw, mix), dw) + hw * (r->pyaw + r->dragyaw)
+        + hw * dw * 1.2 * sin(2 * GALAXYPI * motion / 31 + 1.3);
+    dist *= 1 + hw * dw * .015 * sin(2 * GALAXYPI * motion / 17 + .7);
     if (r->mode == GalaxyOrbit)
         cp = MAX(-48, MIN(32, cp));
     galaxysetcameraat(target,
@@ -869,10 +873,10 @@ galaxyupdatebeats(double motion)
     double f = galaxybeatw(), s = r->iclock, t, x;
     int i, k;
 
-    r->warpfx = f * (pow(sin(GALAXYPI * galaxyphase(s, .55, 1.35)), 2) + .5 * pow(sin(GALAXYPI * galaxyphase(s, 3.3, 3.95)), 2));
+    r->warpfx = f * (pow(sin(GALAXYPI * galaxyphase(s, .55, 1.35)), 2) + .3 * pow(sin(GALAXYPI * galaxyphase(s, 3.3, 3.95)), 2));
     if (r->variant == GalaxyGate)   /* 星门: 接近时只有淡淡的拉丝, 穿过星门的一刻光线从环心涌出 */
         r->warpfx = f * (.25 * pow(sin(GALAXYPI * galaxyphase(s, .55, 1.2)), 2) + 1.3 * pow(sin(GALAXYPI * galaxyphase(s, 1.12, 1.65)), 2)
-                + .5 * pow(sin(GALAXYPI * galaxyphase(s, 3.3, 3.95)), 2));
+                + .3 * pow(sin(GALAXYPI * galaxyphase(s, 3.3, 3.95)), 2));
     for (i = 0; i < GALAXYLANES; i++)
         r->lanereveal[i] = 1 - f * (1 - galaxyeaseinoutcubic(galaxyphase(s, 1.5 + .12 * i, 2.3 + .12 * i)));
     for (i = 0; i < r->ntags; i++) {
