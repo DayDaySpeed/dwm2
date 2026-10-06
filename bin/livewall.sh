@@ -232,7 +232,7 @@ static() {
 }
 
 # 静态图片列表
-images() { find "$STATIC" -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) 2>/dev/null; }
+images() { find "$STATIC" -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) 2>/dev/null; }
 
 # 根窗口上当前铺的图片 (~/.fehbg 里的路径)
 cur_wall() { sed -n "s/^feh .*--bg-fill '\([^']*\)'.*/\1/p" ~/.fehbg 2>/dev/null; }
