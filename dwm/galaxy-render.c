@@ -484,16 +484,24 @@ galaxyrenderring(int index)
     GalaxyCore *g = &r->galaxies[gi];
     GalaxyProj *pts = r->rpts + (gi * GALAXYRINGS + k) * (GALAXYSEG + 1);
     double base = r->ringalpha * MIN(1, g->alpha) * (1 + .55 * g->hover + 3 * g->callout), z, depth, width;
-    double reveal = galaxyringreveal(g) * GALAXYSEG;
+    double reveal = galaxyringreveal(g) * GALAXYSEG, maxdz = 1, front, occ, cr = 1.6 * MIN(g->size * g->p.scale, 80);
 
+    /* 立体感: 环上比核心近的一半更宽更亮, 远的一半更细更暗; 在核心后面又贴着核心光斑的一段被它挡住 */
+    for (j = 0; j <= GALAXYSEG; j++)
+        if (pts[j].ok)
+            maxdz = MAX(maxdz, fabs(pts[j].z - g->p.z));
     for (j = arc * GALAXYARCSEG; j < (arc + 1) * GALAXYARCSEG; j++) {
         if (!pts[j].ok || !pts[j + 1].ok || j >= reveal)
             continue;
         if (j + 1 > reveal)   /* 光笔笔尖 */
             galaxysprite(GalaxyHalo, GALAXYTAGTINT(g->tag), pts[j].x, pts[j].y, 14 * r->starscale * MAX(.5, pts[j].scale), .5 * MIN(1, g->alpha));
         z = (pts[j].z + pts[j + 1].z) * .5;
-        depth = galaxydepthlight(z) * galaxynearfade(z);
-        width = MAX(.65, (pts[j].scale + pts[j + 1].scale) * .5 * r->starscale);
+        front = g->p.ok ? galaxyclamp(.5 + .5 * (g->p.z - z) / maxdz) * 2 - 1 : 0;
+        occ = front < 0 && g->p.ok
+            ? 1 - .85 * -front * (1 - galaxysmoothstep((hypot((pts[j].x + pts[j + 1].x) * .5 - g->p.x, (pts[j].y + pts[j + 1].y) * .5 - g->p.y) - cr) / cr))
+            : 1;
+        depth = galaxydepthlight(z) * galaxynearfade(z) * (1 + .4 * front) * occ;
+        width = MAX(.65, (pts[j].scale + pts[j + 1].scale) * .5 * r->starscale * (1 + .3 * front));
         /* 白芯彩晕: 宽的柔光用 tag 色, 细的亮线一半饱和度 */
         galaxybandcolor(galaxytintrgb(GALAXYTAGTINT(g->tag), .8));
         galaxyband(&pts[j], &pts[j + 1], base * depth * .24 * (1 - galaxyclamp(r->qualityvisual - 2)), width * 3.2);
@@ -698,7 +706,7 @@ galaxyrenderitems(void)
             /* 衍射芒: 平时淡淡一层, 近点 / 交会 / 超新星 / 点名 / 悬停时变大变亮 */
             galaxysprite(GalaxySpike, GALAXYTAGTINT(g->tag), g->p.x, g->p.y,
                     MIN(260, g->size * MAX(.4, g->p.scale) * (3.2 + 2 * a + 1.5 * g->hover)),
-                    MIN(1, g->alpha * (.22 + .35 * a + .4 * g->hover)) * galaxynearfade(g->p.z) * (1 - .78 * g->eclipse));
+                    MIN(1, g->alpha * (.1 + .4 * a + .4 * g->hover)) * galaxynearfade(g->p.z) * (1 - .78 * g->eclipse));
             if (g->alpha > .2) {
                 g->hx = g->p.x;
                 g->hy = g->p.y;
@@ -2001,6 +2009,7 @@ galaxyrender(void)
     double t = galaxynow(), next;
     galaxyframebegin();
     galaxybandwhite();
+    galaxyrendernebula();
     galaxyrenderbackground();
     next = galaxynow(); r->phasecost[1] += next - t; t = next;
     galaxyrendertrails();

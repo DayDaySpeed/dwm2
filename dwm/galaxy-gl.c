@@ -30,7 +30,7 @@ static struct {
     XVisualInfo *vi;
     Colormap cmap;
     GLXContext ctx;
-    GLuint proglight, progcut, progdown, progup, progcomp, progprobe;
+    GLuint proglight, progcut, progdown, progup, progcomp, progprobe, prognebula;
     GLuint vao, vbo, fullvao;
     GLuint fbo, lighttex, depthtex, bloomfbo[GALAXYBLOOM], bloomtex[GALAXYBLOOM];
     int fw, fh, bw[GALAXYBLOOM], bh[GALAXYBLOOM];
@@ -131,6 +131,51 @@ static const char *galaxyglfsup =
     "  s += texture(src, uv + vec2(texel.x, -texel.y)) * 2.0; s += texture(src, uv + vec2(0.0, -texel.y * 2.0));\n"
     "  s += texture(src, uv + vec2(-texel.x, -texel.y)) * 2.0;\n"
     "  o = s / 12.0;\n"
+    "}\n";
+
+/* 程序化星云 (光层最先画的一层, 之后卡片挖洞会把它挡住): 值噪声 fbm + domain warp, 两层不同视差,
+ * 沿轨道盘面的对角线方向更浓; 极慢地流动. 外加稀疏的闪烁星点. view: 视口 (左上原点像素), cam: 镜头偏航 / 俯仰 */
+static const char *galaxyglfsnebula =
+    "#version 330 core\n"
+    "in vec2 uv; out vec4 o;\n"
+    "uniform vec2 screen, cam; uniform vec4 view; uniform float t, k, diag; uniform int oct;\n"
+    "uniform vec3 c0, c1, c2;\n"
+    "float h(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }\n"
+    "float n(vec2 p) {\n"
+    "  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);\n"
+    "  return mix(mix(h(i), h(i + vec2(1, 0)), f.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), f.x), f.y);\n"
+    "}\n"
+    "float fbm(vec2 p) {\n"
+    "  float v = 0.0, a = .5;\n"
+    "  for (int i = 0; i < 6; i++) { if (i >= oct) break; v += a * n(p); p = p * 2.03 + vec2(17.1, 9.2); a *= .5; }\n"
+    "  return v;\n"
+    "}\n"
+    "void main() {\n"
+    "  vec2 px = vec2(uv.x * screen.x, (1.0 - uv.y) * screen.y), q = (px - view.xy) / view.z;\n"
+    "  if (q.x < 0.0 || q.y < 0.0 || q.x > 1.0 || q.y > view.w / view.z) discard;\n"
+    "  vec2 d = vec2(cos(diag), -sin(diag)), c = q - vec2(.5, .5 * view.w / view.z);\n"
+    "  float across = dot(c, vec2(-d.y, d.x)), along = dot(c, d);\n"
+    "  vec3 col = vec3(0.0);\n"
+    "  for (int l = 0; l < 2; l++) {\n"
+    "    float s = l == 0 ? 2.2 : 3.6, par = l == 0 ? .12 : .3;\n"
+    "    vec2 p = q * s + cam * par * s + vec2(3.1 * float(l), 7.7 * float(l));\n"
+    "    vec2 w = vec2(fbm(p + vec2(0.0, t * .012)), fbm(p + vec2(5.2, 1.3) - vec2(t * .009, 0.0)));\n"
+    "    float f = fbm(p + 1.7 * w + vec2(t * .004));\n"
+    "    float band = exp(-across * across / (l == 0 ? .09 : .05)) * (.55 + .45 * fbm(vec2(along * 2.0, 4.0 + float(l))));\n"
+    "    float m = smoothstep(.42, .82, f) * (.35 + .65 * band);\n"
+    "    vec3 hue = mix(c0, c1, smoothstep(.3, .75, w.x));\n"
+    "    hue = mix(mix(hue, c2, smoothstep(.55, .9, w.y) * .7), vec3(.5), .35);\n"
+    "    col += hue * m * m * (l == 0 ? .55 : .35);\n"
+    "  }\n"
+    /* 闪烁星点: 每 22px 一格, 约 4% 的格子里有一颗, 亮度按各自的相位慢慢起伏 */
+    "  vec2 cell = floor((px + cam * 60.0) / 22.0), fp = fract((px + cam * 60.0) / 22.0);\n"
+    "  float r = h(cell);\n"
+    "  if (r < .04) {\n"
+    "    vec2 sp = vec2(h(cell + 3.1), h(cell + 7.3)) * .7 + .15;\n"
+    "    float tw = .55 + .45 * sin(t * (1.1 + 2.5 * h(cell + 1.7)) + 6.28 * h(cell + 9.1));\n"
+    "    col += mix(vec3(.75, .85, 1.0), vec3(1.0, .88, .7), h(cell + 5.5)) * exp(-dot(fp - sp, fp - sp) * 22.0 * 22.0 / 1.6) * tw * .5;\n"
+    "  }\n"
+    "  o = vec4(col * k, 0.0);\n"
     "}\n";
 
 /* 合成: 底层 滤色 光层 (软拐点压缩, 轻微色差和颗粒只作用在光上), 再盖前景层 */
@@ -306,7 +351,7 @@ static int
 galaxyglobjects(void)
 {
     GLuint *progs[] = { &galaxygl.proglight, &galaxygl.progcut, &galaxygl.progdown, &galaxygl.progup,
-        &galaxygl.progcomp, &galaxygl.progprobe };
+        &galaxygl.progcomp, &galaxygl.progprobe, &galaxygl.prognebula };
     int i;
 
     if (galaxygl.proglight)
@@ -317,6 +362,7 @@ galaxyglobjects(void)
     galaxygl.progup = galaxyglprogram(galaxyglvsfull, galaxyglfsup);
     galaxygl.progcomp = galaxyglprogram(galaxyglvsfull, galaxyglfscomp);
     galaxygl.progprobe = galaxyglprogram(galaxyglvsfull, galaxyglfsprobe);
+    galaxygl.prognebula = galaxyglprogram(galaxyglvsfull, galaxyglfsnebula);
     for (i = 0; i < (int)LENGTH(progs); i++)
         if (!*progs[i])
             return 0;
@@ -586,6 +632,45 @@ galaxyglglow(int shape, const double rgb[3], double core, double x, double y, do
     g = galaxyglpush();
     *g = (GalaxyGLInst){{x, y, radius, angle}, {0, alpha, shape == GalaxySpike ? GalaxyGLSpike : shape == GalaxyDisc ? GalaxyGLDisc : GalaxyGLHalo, -1},
         {rgb[0], rgb[1], rgb[2], core}, {0}};
+}
+
+/* 星云: 每帧光层清空后最先画 (加法), 之后卡片挖洞会把卡片后面的部分擦掉.
+ * k: 强度; t: 秒 (流动); oct: fbm 倍频数 (降级时减少); 颜色取极光配色的紫 / 青 / 玫粉 */
+static void
+galaxyglnebula(double k, double t, int oct)
+{
+    GalaxyScene *r = &galaxyscene;
+    GLuint p = galaxygl.prognebula;
+    static const int pick[3] = { 9, 4, 5 };
+    float c[3][3];
+    int i;
+
+    if (!galaxygl.win || !p || k < .004)
+        return;
+    for (i = 0; i < 3; i++) {
+        unsigned int v = galaxyfxcolor[pick[i]];
+        c[i][0] = (v >> 16 & 255) / 255.0f;
+        c[i][1] = (v >> 8 & 255) / 255.0f;
+        c[i][2] = (v & 255) / 255.0f;
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, galaxygl.fbo);
+    glViewport(0, 0, galaxygl.fw, galaxygl.fh);
+    glUseProgram(p);
+    glUniform2f(glGetUniformLocation(p, "screen"), galaxygl.fw, galaxygl.fh);
+    glUniform4f(glGetUniformLocation(p, "view"), r->vx, r->vy, r->vw, r->vh);
+    glUniform2f(glGetUniformLocation(p, "cam"), (float)r->cam.ry, (float)-r->cam.rx);
+    glUniform1f(glGetUniformLocation(p, "t"), (float)t);
+    glUniform1f(glGetUniformLocation(p, "k"), (float)k);
+    glUniform1f(glGetUniformLocation(p, "diag"), (float)(GALAXYDIAG * GALAXYPI / 180));
+    glUniform1i(glGetUniformLocation(p, "oct"), oct);
+    glUniform3fv(glGetUniformLocation(p, "c0"), 1, c[0]);
+    glUniform3fv(glGetUniformLocation(p, "c1"), 1, c[1]);
+    glUniform3fv(glGetUniformLocation(p, "c2"), 1, c[2]);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE);
+    glDisable(GL_DEPTH_TEST);
+    glBindVertexArray(galaxygl.fullvao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
 }
 
 /* 光带: 两端颜色可不同 (打包 0xRRGGBB), a 为不透明度, hw 为半宽 */
