@@ -789,25 +789,22 @@ galaxyrenderitems(void)
     galaxyflushbands();
 }
 
-/* 冲击环: center 处 plane 的 xy 平面内的圆 (3D, 随透视变成椭圆) */
+/* 冲击环 (粒子): center 处 plane 的 xy 平面内的一圈粒子, 带一点厚度, 缓慢转动; 颜色用当前的光带颜色 (galaxybandcolor).
+ * a: 原来光带的亮度 (上限约 .3), width: 原来的线宽 (决定环的厚度) */
 static void
 galaxyringfx(GalaxyVec center, GalaxyMat plane, double rad, double a, double width)
 {
-    GalaxyProj pts[49];
-    double th;
-    int j;
+    GalaxyScene *r = &galaxyscene;
+    unsigned int c = r->bandcolor;
+    double rgb[3] = {(c >> 16 & 255) / 255.0, (c >> 8 & 255) / 255.0, (c & 255) / 255.0}, hot[3];
+    int k;
 
     if (a < .004 || rad < 1)
         return;
-    for (j = 0; j <= 48; j++) {
-        th = 2 * GALAXYPI * j / 48;
-        pts[j] = galaxyproject(galaxyadd(center, galaxyapply(plane, galaxyv(cos(th) * rad, sin(th) * rad, 0))));
-    }
-    for (j = 0; j < 48; j++)
-        if (pts[j].ok && pts[j + 1].ok) {
-            galaxyband(&pts[j], &pts[j + 1], a * galaxynearfade(pts[j].z), MAX(.8, width * pts[j].scale));
-            galaxyband(&pts[j], &pts[j + 1], a * .3 * galaxynearfade(pts[j].z), MAX(2, 4 * width * pts[j].scale));
-        }
+    for (k = 0; k < 3; k++)
+        hot[k] = galaxymix(rgb[k], 1, .4);
+    galaxyglemitter(3, center, &plane, center, rad, MIN(.25, .025 * width + 12 / rad), 1, .15, galaxynow(), hot, rgb,
+            MIN(.6, 1.6 * a), .9 * r->starscale, (int)MIN(4000, 600 + rad * 3), 83.1 + width);
 }
 
 /* 屏幕空间光带的一个点 */
@@ -1622,6 +1619,26 @@ galaxyrendergpuparticles(void)
         galaxyglcollapsefx(pow(galaxyphase(u, GALAXYEXITSTART - .2, GALAXYSHOCK - .05), 2.2),
                 1 - pow(1 - galaxyphase(u, GALAXYSHOCK - .05, GALAXYSHOCK + GALAXYSHOCKT + GALAXYAFTER), 2),
                 galaxyapply(r->world, galaxyv(0, 1, 0)), MAX(1, ext) * 1.4 * (r->gentle ? .5 : 1));
+    }
+    /* 涟漪: 一圈粒子波在盘面上扩散, 同时把经过处的吸积盘 / 拖尾 / 星尘托起并点亮 */
+    if (r->rippleamp > .003 && r->mode != GalaxyReturn) {
+        GalaxyVec up = galaxyapply(r->world, galaxyv(0, 1, 0));
+        GalaxyMat flatm = {{{1, 0, 0}, {0, 0, 1}, {0, 1, 0}}}, disk = galaxymul(r->world, flatm);
+
+        galaxyglripple(r->ripple, r->rippleamp, .05 * r->vw, up);
+        galaxybandcolor(galaxytintrgb(GalaxyCool, .5));
+        galaxyringfx(galaxyv(0, 0, 0), disk, r->ripple, .14 * r->rippleamp, 3);
+        galaxybandwhite();
+    }
+    /* 星系翻转: 吸积盘外缘甩出一圈薄薄的光尘, 随翻转亮起又落下 */
+    for (i = 0; i < r->ntags; i++) {
+        GalaxyCore *fg = &r->galaxies[i];
+
+        if (fg->flip > .02 && fg->alpha > .1) {
+            galaxybandcolor(galaxytintrgb(GALAXYTAGTINT(fg->tag), .6));
+            galaxyringfx(fg->pos, fg->plane, fg->size * 7 * (1 + .5 * fg->flip), .18 * fg->flip * MIN(1, fg->alpha), 2);
+            galaxybandwhite();
+        }
     }
     galaxyrenderorbittrails(k);
     for (i = 0; i < r->ntags; i++) {

@@ -330,7 +330,7 @@ static const char *galaxyglvspartfx =
     "    col = mix(ec0, ec1, s);\n"
     "    a = alpha * (.3 + .7 * pow(h5, 3.0)) * mix(smoothstep(0.0, .06, s), pow(1.0 - s, 1.4), tail) * (1.0 - smoothstep(ep.w - .08, ep.w, s));\n"
     "  } else {\n"
-    "    float th = 6.2832 * h1, r = ep.x * (1.0 + (h2 - .5) * ep.y);\n"
+    "    float th = 6.2832 * h1 + ep.w * et, r = ep.x * (1.0 + (h2 - .5) * ep.y);\n"
     "    wp = epos + ebasis * vec3(cos(th) * r, sin(th) * r, (h3 - .5) * ep.y * ep.x * .3);\n"
     "    col = mix(ec0, ec1, h4);\n"
     "    a = alpha * (.3 + .7 * pow(h5, 3.0));\n"
