@@ -709,8 +709,11 @@ galaxylogseg(const char *how)
                     r->refreshn ? r->refreshsum / r->refreshn * 1000 : 0, r->refreshmax * 1000, r->heatcost / r->frames * 1000,
                     hot >= 0 ? r->stars[hot].title : "-", hot >= 0 ? r->stars[hot].heat : 0);
         }
+        fprintf(r->log, "galaxy %s: light avg %.3f max %.3f, exposure min %.2f\n", how,
+                r->lumsum / r->frames, r->lummax, r->expomin > 0 ? r->expomin : 1);
         fflush(r->log);
     }
+    r->lumsum = r->lummax = r->expomin = 0;
     r->frames = r->ngaps = 0;
     r->rendersum = r->rendermax = 0;
     memset(r->phasecost, 0, sizeof r->phasecost);

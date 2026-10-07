@@ -624,6 +624,31 @@ galaxyrenderstreak(int index)
     galaxybandwhite();
 }
 
+static GalaxyProj galaxysp(double x, double y);
+
+/* 镜头光晕: 很亮的光源沿 光源 -> 画面中心 的连线留下几枚彩色鬼影, 再加一道横向拉丝 (画在光层最前面, 不被卡片挡).
+ * 按已知光源解析地画, 不从泛光里取 (那样大面积爆闪会把整屏染色) */
+static void
+galaxylensflare(double x, double y, double k)
+{
+    GalaxyScene *r = &galaxyscene;
+    static const double at[5] = { .42, .78, 1.2, 1.55, 2.05 }, size[5] = { 22, 58, 16, 92, 38 }, alpha[5] = { .1, .05, .14, .04, .07 };
+    static const int tint[5] = { GalaxyCyan, GalaxyViolet, GalaxyGold, GalaxyRose, GalaxyCool };
+    double cx = r->vx + r->vw * .5, cy = r->vy + r->vh * .5, s = r->vw / 2560.0;
+    GalaxyProj a, b;
+    int i;
+
+    k = galaxyclamp(k);
+    if (k < .02)
+        return;
+    for (i = 0; i < 5; i++)
+        galaxysprite(i % 2 ? GalaxyHalo : GalaxyDisc, tint[i], x + (cx - x) * at[i], y + (cy - y) * at[i], size[i] * s, k * alpha[i]);
+    a = galaxysp(x - .3 * r->vw, y);
+    b = galaxysp(x + .3 * r->vw, y);
+    galaxyglline(&a, &b, 0x7fb8ff, 0x7fb8ff, .1 * k, 1.1);
+    galaxyglline(&a, &b, 0x4d8bff, 0x4d8bff, .035 * k, 6);
+}
+
 /* 中心光源: 三条椭圆的共同焦点, 发出涟漪时脉冲一次 */
 static void
 galaxyrendersun(void)
@@ -647,6 +672,8 @@ galaxyrendersun(void)
         if (chime > .01)    /* 整点报时: 双星金色爆闪 */
             galaxysprite(GalaxyHalo, GalaxyGold, p.x, p.y, MIN(400, 160 * MAX(.5, p.scale)), MIN(1, .8 * chime * r->sunalpha));
     }
+    if ((p = galaxyproject(galaxyapply(r->world, galaxyv(0, 0, 0)))).ok)
+        galaxylensflare(p.x, p.y, .45 * MIN(1, a) * galaxynearfade(p.z) + chime * r->sunalpha);
 }
 
 /* CPU 色温: 闲时是所在 tag 的颜色 -> 暖白 (约 30%) -> 橙红 (80% 以上). w[0..2] 对应 tint[0..2] */
@@ -766,6 +793,8 @@ galaxyrenderitems(void)
             galaxysprite(GalaxySpike, GALAXYTAGTINT(g->tag), g->p.x, g->p.y,
                     MIN(260, g->size * MAX(.4, g->p.scale) * (3.2 + 2 * a + 1.5 * g->hover)),
                     MIN(1, g->alpha * (.1 + .4 * a + .4 * g->hover)) * galaxynearfade(g->p.z) * (1 - .78 * g->eclipse));
+            if (g->nova > .05)   /* 超新星: 镜头光晕 */
+                galaxylensflare(g->p.x, g->p.y, .8 * g->nova * galaxynearfade(g->p.z));
             if (g->alpha > .2) {
                 g->hx = g->p.x;
                 g->hy = g->p.y;
@@ -924,6 +953,7 @@ galaxyrenderbang(double f, double s)
     }
     galaxysprite(GalaxyHalo, GalaxyGold, c.x, c.y, 60 + 380 * galaxyeaseoutcubic(t / .5), MIN(1, a));
     galaxysprite(GalaxySpike, GalaxyGold, c.x, c.y, MIN(600, 520 * (.5 + .5 * a)), MIN(1, 1.2 * a));
+    galaxylensflare(c.x, c.y, a);
     if (f * galaxyflash(t, .03, 7) > .01)  /* 爆闪: 暖白 */
         galaxyglrect(r->vx, r->vy, r->vw, r->vh, (double[3]){1, .93, .8}, .4 * MIN(1, f * galaxyflash(t, .03, 7)));
     for (i = 0; i < 2; i++) {
@@ -2076,7 +2106,21 @@ galaxypresent(void)
 {
     GalaxyScene *r = &galaxyscene;
     double q = r->mode == GalaxyOrbit ? r->qualityvisual : 0, u, cx, cy, far, sp, lens, sr = 0, sw = 1, sk = 0, glow;
-    GalaxyProj p;
+    double now = galaxynow(), dt, expo, rays;
+    GalaxyProj p, sun;
+
+    /* 曝光适应: 光层变亮时约 0.12s 跟上, 变暗时约 0.8s 恢复; 曝光只乘在光上 (底层不变), 大闪光后画面短暂压暗 */
+    dt = r->adaptat > 0 ? MAX(0, MIN(.1, now - r->adaptat)) : 0;
+    r->adaptat = now;
+    r->adapt += (galaxygl.lum - r->adapt) * MIN(1, dt / (galaxygl.lum > r->adapt ? .12 : .8));
+    expo = MAX(.55, 1 / (1 + 2.5 * MAX(0, r->adapt - .05)));
+    r->lumsum += galaxygl.lum;
+    r->lummax = MAX(r->lummax, galaxygl.lum);
+    r->expomin = r->expomin > 0 ? MIN(r->expomin, expo) : expo;
+    /* 体积光束: 从中心光源发出, 跟它的亮度走 */
+    sun = galaxyproject(galaxyv(0, 0, 0));
+    rays = sun.ok && r->mode != GalaxyReturn ? .2 * r->sunalpha * (1 + .5 * r->sunpulse) : 0;
+    galaxyglpostfx(sun.x, sun.y, rays, expo);
 
     /* Esc 收尾: 收束时引力透镜把背景拽向中心; 然后中心爆出冲击波, 圆内露出壁纸, 余晖慢慢散去 */
     if (r->mode == GalaxyCollapse && galaxygl.gwall) {
@@ -2097,6 +2141,7 @@ galaxypresent(void)
             if (r->live)    /* 动态壁纸: 揭开的是正在播放的画面 */
                 XRenderComposite(dpy, PictOpSrc, r->live, None, r->wallpaper, 0, 0, 0, 0, 0, 0, r->w, r->h);
         }
+        galaxylensflare(cx, cy, .8 * glow);
         galaxyglexitfx(cx, cy, lens, .95 * MAX(1, MIN(MIN(cx - r->vx, r->vx + r->vw - cx), MIN(cy - r->vy, r->vy + r->vh - cy))),
                 sr, sw, sk, u >= GALAXYSHOCK, glow);
     }

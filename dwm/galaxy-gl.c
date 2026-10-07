@@ -42,6 +42,11 @@ static struct {
     GLuint texback, texfront, texwall;
     GLXPixmap gback, gfront, gwall;
     float lens[4], shock[4], glow;    /* 收尾特效 (每帧 galaxyglframe 清零, 坍缩时 galaxyglexitfx 设置) */
+    float rays[3], expo;              /* 体积光束 (光源像素位置 + 强度) / 光层曝光 (每帧清零, galaxyglpostfx 设置) */
+    GLuint pbo[3];                    /* 读回最小一级泛光 (曝光适应), 轮流使用, 晚两帧读 */
+    int pboi, pbocap, pbon_[3];
+    GLsync pbofence[3];
+    double lum;                       /* 最近读回的光层平均亮度 (最亮通道) */
     Window win;
     GalaxyGLInst *inst, *part;
     int ninst, npart;
@@ -222,7 +227,7 @@ static const char *galaxyglfscomp =
     "in vec2 uv; out vec4 o;\n"
     "uniform sampler2D tbase, tlight, tbloom, tfront, twall, tcards; uniform float cards;\n"
     "uniform float ybase, yfront, bloomk, aberr, grain, seed, glow; uniform vec2 screen;\n"
-    "uniform vec4 lens, shock;\n"
+    "uniform vec4 lens, shock; uniform float expo; uniform vec3 rays; uniform sampler2D tbloom2;\n"
     "vec3 tolin(vec3 c) { return mix(c / 12.92, pow((c + .055) / 1.055, vec3(2.4)), step(.04045, c)); }\n"
     "vec3 tosrgb(vec3 c) { return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - .055, step(.0031308, c)); }\n"
     /* 保色相的软肩: 按最亮通道压缩, 各通道等比缩放 (不会像逐通道截断那样先变白); 极亮处才逐渐偏白 */
@@ -260,6 +265,14 @@ static const char *galaxyglfscomp =
     /* 冲击波的光环 (外沿偏暖) 和收尾的余晖 */
     "  if (shock.z > .001) L += vec3(1.0, .9, .78) * shock.z * exp(-pow((rd - shock.x) / (.6 * shock.y), 2.0));\n"
     "  if (glow > .001) L += vec3(1.0, .86, .7) * glow * exp(-rd * rd / (.025 * screen.x * screen.x));\n"
+    /* 体积光束: 从光源出发沿径向采样泛光, 逐次衰减 (星云 / 光尘被照出放射状的光柱) */
+    "  if (rays.z > .001) {\n"
+    "    vec2 c = vec2(rays.x / screen.x, 1.0 - rays.y / screen.y), dl = (uv - c) * (.9 / 24.0), sp = uv;\n"
+    "    vec3 acc = vec3(0.0); float dec = 1.0;\n"
+    "    for (int i = 0; i < 24; i++) { sp -= dl; acc += max(texture(tbloom2, sp).rgb - .08, 0.0) * dec; dec *= .93; }\n"
+    "    L += rays.z * acc * (2.0 / 24.0);\n"
+    "  }\n"
+    "  L *= expo;\n"
     "  L = tone(pow(max(L * 1.15, 0.0), vec3(2.2)));\n"
     "  vec3 c = tosrgb(1.0 - (1.0 - base) * (1.0 - L));\n"
     "  vec4 f = texture(tfront, uf);\n"
@@ -487,6 +500,13 @@ galaxyglbuffers(int w, int h)
         glDeleteTextures(GALAXYBLOOM, galaxygl.bloomtex);
         glDeleteFramebuffers(1, &galaxygl.cardfbo);
         glDeleteTextures(1, &galaxygl.cardtex);
+        if (galaxygl.pbo[0])
+            glDeleteBuffers(3, galaxygl.pbo);
+        memset(galaxygl.pbo, 0, sizeof galaxygl.pbo);
+        for (i = 0; i < 3; i++)
+            if (galaxygl.pbofence[i])
+                glDeleteSync(galaxygl.pbofence[i]);
+        memset(galaxygl.pbofence, 0, sizeof galaxygl.pbofence);
     }
     galaxygl.fw = w;
     galaxygl.fh = h;
@@ -658,6 +678,8 @@ galaxyglframe(void)
     memset(galaxygl.lens, 0, sizeof galaxygl.lens);
     memset(galaxygl.shock, 0, sizeof galaxygl.shock);
     galaxygl.glow = 0;
+    galaxygl.rays[2] = 0;
+    galaxygl.expo = 1;
 }
 
 static void
@@ -1009,6 +1031,82 @@ galaxyglcard(GLuint tex, double q[4][2], double z[4], double vis, double tint, d
     galaxygl.ncards++;
 }
 
+/* 半精度浮点 -> float (读回的泛光是 RGBA16F) */
+static float
+galaxyhalf(unsigned short h)
+{
+    int e = h >> 10 & 31, m = h & 1023;
+    float v = e == 0 ? m / 16777216.0f : e == 31 ? 65504.0f : ldexpf(1 + m / 1024.0f, e - 15);
+
+    return h & 0x8000 ? -v : v;
+}
+
+/* 曝光适应: 每两帧把最小一级泛光 (只做过降采样, 是光层的平均) 按原格式读进 PBO 并插一个 fence;
+ * 之后只在 fence 已经完成时才映射读出, 绝不等 GPU (等的话每帧要多 2~3ms) */
+static void
+galaxyglreadlum(int level)
+{
+    unsigned short *px;
+    double sum = 0, m;
+    GLenum st;
+    int i, k, n, w = galaxygl.bw[level], h = galaxygl.bh[level];
+
+    /* 按降级后可能用到的最大一级 (第 2 级, 级数最少剩 3) 分配 */
+    if (!galaxygl.pbo[0]) {
+        galaxygl.pbocap = galaxygl.bw[2] * galaxygl.bh[2];
+        glGenBuffers(3, galaxygl.pbo);
+        for (i = 0; i < 3; i++) {
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, galaxygl.pbo[i]);
+            glBufferData(GL_PIXEL_PACK_BUFFER, (GLsizeiptr)galaxygl.pbocap * 4 * sizeof(unsigned short), NULL, GL_STREAM_READ);
+        }
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    }
+    /* 已经完成的读回: 取出来算平均 */
+    for (k = 0; k < 3; k++) {
+        if (!galaxygl.pbofence[k])
+            continue;
+        st = glClientWaitSync(galaxygl.pbofence[k], 0, 0);
+        if (st != GL_ALREADY_SIGNALED && st != GL_CONDITION_SATISFIED)
+            continue;
+        glDeleteSync(galaxygl.pbofence[k]);
+        galaxygl.pbofence[k] = 0;
+        n = galaxygl.pbon_[k];
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, galaxygl.pbo[k]);
+        if (n > 0 && (px = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, (GLsizeiptr)n * 4 * sizeof(unsigned short), GL_MAP_READ_BIT))) {
+            for (i = 0; i < n; i++) {
+                m = MAX(galaxyhalf(px[i * 4]), MAX(galaxyhalf(px[i * 4 + 1]), galaxyhalf(px[i * 4 + 2])));
+                sum += m;
+            }
+            galaxygl.lum = sum / n;
+            sum = 0;
+            glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        }
+    }
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    if (++galaxygl.pboi % 2 || w * h > galaxygl.pbocap)
+        return;
+    /* 找一个空闲的 PBO 发起新的读回 */
+    for (k = 0; k < 3 && galaxygl.pbofence[k]; k++);
+    if (k == 3)
+        return;
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, galaxygl.bloomfbo[level]);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, galaxygl.pbo[k]);
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_HALF_FLOAT, NULL);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    galaxygl.pbofence[k] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    galaxygl.pbon_[k] = w * h;
+}
+
+/* 后期 (这一帧): 体积光束的光源位置 (像素) 和强度, 光层曝光 */
+static void
+galaxyglpostfx(double rx, double ry, double rays, double expo)
+{
+    galaxygl.rays[0] = (float)rx;
+    galaxygl.rays[1] = (float)ry;
+    galaxygl.rays[2] = (float)rays;
+    galaxygl.expo = (float)expo;
+}
+
 /* 收尾特效 (这一帧): 透镜中心 / 强度 / 半径, 冲击波半径 / 宽度 / 光环亮度, 是否揭开壁纸, 余晖亮度 (像素, 左上原点) */
 static void
 galaxyglexitfx(double cx, double cy, double lens, double lensr, double sr, double sw, double sk, int reveal, double glow)
@@ -1058,6 +1156,7 @@ galaxyglpresent(double bloom, double fx, int levels)
             galaxyglfull(galaxygl.progup, galaxygl.bloomtex[i], galaxygl.bw[i - 1], galaxygl.bh[i - 1], galaxygl.bw[i], galaxygl.bh[i]);
         }
         glDisable(GL_BLEND);
+        galaxyglreadlum(levels - 1);
     }
     /* 底层 / 前景层的 XRender 绘制必须先完成 */
     glXWaitX();
@@ -1093,6 +1192,9 @@ galaxyglpresent(double bloom, double fx, int levels)
     glUniform1i(glGetUniformLocation(p, "tfront"), 3);
     glUniform1i(glGetUniformLocation(p, "twall"), 4);
     glUniform1i(glGetUniformLocation(p, "tcards"), 5);
+    glUniform1i(glGetUniformLocation(p, "tbloom2"), 6);
+    glActiveTexture(GL_TEXTURE6);
+    glBindTexture(GL_TEXTURE_2D, galaxygl.bloomtex[MIN(2, levels - 1)]);
     glUniform1f(glGetUniformLocation(p, "cards"), galaxygl.ncards > 0 ? 1 : 0);
     glActiveTexture(GL_TEXTURE5);
     glBindTexture(GL_TEXTURE_2D, galaxygl.cardtex);
@@ -1100,6 +1202,8 @@ galaxyglpresent(double bloom, double fx, int levels)
     glUniform4fv(glGetUniformLocation(p, "lens"), 1, galaxygl.lens);
     glUniform4f(glGetUniformLocation(p, "shock"), galaxygl.shock[0], galaxygl.shock[1], galaxygl.shock[2], wall ? 1 : 0);
     glUniform1f(glGetUniformLocation(p, "glow"), galaxygl.glow);
+    glUniform3f(glGetUniformLocation(p, "rays"), galaxygl.rays[0], galaxygl.rays[1], bloom > .001 ? galaxygl.rays[2] : 0);
+    glUniform1f(glGetUniformLocation(p, "expo"), galaxygl.expo > 0 ? galaxygl.expo : 1);
     glUniform1f(glGetUniformLocation(p, "ybase"), galaxygl.yinv24);
     glUniform1f(glGetUniformLocation(p, "yfront"), galaxygl.yinv32);
     glUniform1f(glGetUniformLocation(p, "bloomk"), bloom > .001 ? bloom * GALAXYBLOOMK : 0);
