@@ -290,7 +290,7 @@ static const char *galaxyglvspart =
     "#version 330 core\n"
     "uniform mat3 view, plane; uniform vec3 campos, cpos, tint; uniform vec2 center, screen;\n"
     "uniform float focal, cnear, cfar, fnear, time, mode, seed, alpha, psize, extent; uniform vec4 disk;\n"
-    "uniform vec4 lights[10]; uniform vec3 lcol[10]; uniform int nl;\n"
+    "uniform vec4 lights[10]; uniform vec3 lcol[10]; uniform int nl; uniform vec3 trail[24]; uniform int ntrail; uniform float mclock;\n"
     "out vec2 vl; out vec3 vc; out float va;\n"
     "float hs(float n) { return fract(sin(n * 12.9898 + seed * 78.233) * 43758.5453); }\n"
     "void main() {\n"
@@ -298,7 +298,19 @@ static const char *galaxyglvspart =
     "  vec2 c = vec2(gl_VertexID & 1, gl_VertexID >> 1) * 2.0 - 1.0;\n"
     "  float h1 = hs(fi * 1.37 + .1), h2 = hs(fi * 2.71 + .3), h3 = hs(fi * 3.13 + .7), h4 = hs(fi * 5.17 + .9);\n"
     "  vec3 wp, col;\n"
-    "  if (mode > 1.5) {\n"
+    "  if (mode > 2.5) {\n"
+    /* 尾迹: 星体过去 disk.x (motion) 内走过的路径 (trail[0] 是现在的位置). 每颗粒子在星体经过的那一刻生成,
+     * 之后原地 (世界坐标固定) 慢慢散开、变暗, 直到下一轮; 越新越亮、越靠近路径中心 */
+    "    float age = fract(h1 + mclock / disk.x), fk = age * float(ntrail - 1);\n"
+    "    int k0 = int(floor(fk)); float fr = fk - float(k0);\n"
+    "    vec3 pth = mix(trail[k0], trail[min(k0 + 1, ntrail - 1)], fr);\n"
+    "    vec3 rd = vec3(h2, h3, h4) * 2.0 - 1.0; rd /= max(length(rd), .05);\n"
+    "    float h5 = hs(fi * 7.31 + .2), h6 = hs(fi * 8.97 + .4);\n"
+    "    wp = pth + rd * disk.y * sqrt(h6) * (.06 + 1.1 * pow(age, 1.3));\n"
+    "    col = mix(vec3(1.0, .96, .9), tint, smoothstep(0.0, .3, age));\n"
+    "    a = alpha * pow(1.0 - age, 1.4) * (.25 + .75 * pow(h5, 4.0));\n"
+    "    sz = psize * (.45 + .6 * h5);\n"
+    "  } else if (mode > 1.5) {\n"
     /* 粒子恒星: 球形分布, 中心密外围疏, 略扁; 绕自转轴内快外慢地转, 每颗粒子还有一点缓慢的涌动; 中心暖白, 外圈 tag 色 */
     "    float u = pow(h1, .9), rr = disk.x * u;\n"
     "    float z = h2 * 2.0 - 1.0, ph = 6.2832 * h3, s = sqrt(1.0 - z * z);\n"
@@ -1113,6 +1125,37 @@ galaxyglstarball(GalaxyVec pos, const GalaxyMat *plane, double rad, double omega
     glUniform1f(glGetUniformLocation(p, "alpha"), alpha);
     glUniform1f(glGetUniformLocation(p, "psize"), psize);
     glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, n);
+    glDisable(GL_DEPTH_TEST);
+}
+
+/* 星体身后的粒子尾迹: pts[0..n-1] 是星体现在和过去 (等时间间隔, 共 lm 个 motion 单位) 的世界位置;
+ * width: 散开的半径, count 颗粒子, alpha 是单颗粒子的亮度 */
+static void
+galaxygltrail(const GalaxyVec *pts, int n, double lm, double mclock, double width, const double rgb[3], double alpha, double psize,
+        int count, double seed)
+{
+    GLuint p;
+    float f[24][3];
+    int i;
+
+    if (n < 2 || count < 1 || alpha < .002 || lm <= 0 || !(p = galaxyglpartbegin()))
+        return;
+    n = MIN(n, 24);
+    for (i = 0; i < n; i++) {
+        f[i][0] = pts[i].x;
+        f[i][1] = pts[i].y;
+        f[i][2] = pts[i].z;
+    }
+    glUniform3fv(glGetUniformLocation(p, "trail"), n, &f[0][0]);
+    glUniform1i(glGetUniformLocation(p, "ntrail"), n);
+    glUniform1f(glGetUniformLocation(p, "mclock"), (float)fmod(mclock, lm * 4096));
+    glUniform3f(glGetUniformLocation(p, "tint"), rgb[0], rgb[1], rgb[2]);
+    glUniform4f(glGetUniformLocation(p, "disk"), lm, width, 0, 0);
+    glUniform1f(glGetUniformLocation(p, "mode"), 3);
+    glUniform1f(glGetUniformLocation(p, "seed"), seed);
+    glUniform1f(glGetUniformLocation(p, "alpha"), alpha);
+    glUniform1f(glGetUniformLocation(p, "psize"), psize);
+    glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, count);
     glDisable(GL_DEPTH_TEST);
 }
 

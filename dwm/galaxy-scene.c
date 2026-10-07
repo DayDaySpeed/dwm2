@@ -855,14 +855,6 @@ galaxyupdateripple(double motion)
     r->sunpulse = .7 * galaxyflash(local, .6, 2);
 }
 
-/* 局部轨道环的描绘进度: 像光笔一样从起点沿环画出一整圈 */
-static double
-galaxyringreveal(GalaxyCore *g)
-{
-    double s = galaxyscene.iclock;
-
-    return 1 - galaxybeatw() * (1 - galaxyeaseinoutcubic(galaxyphase(s, 1 + .05 * g->rank, 1.9 + .05 * g->rank)));
-}
 
 /* 开场节拍: 跃迁 / 轨道描绘 / 点火 / 点名 / 星轨拉出 / 卡片翻面 / 转速峰值爆闪 / 落定涟漪 */
 static void

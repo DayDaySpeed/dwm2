@@ -138,6 +138,7 @@ typedef struct {
     GalaxyMat plane;             /* 当前轨道平面 (含全局旋转) */
     double hx, hy, hr;          /* 屏幕上的点击范围 */
     GalaxyProj p;
+    GalaxyVec trail[24];        /* 粒子尾迹: 现在和过去的世界位置 (回程时冻结) */
 } GalaxyCore;
 
 typedef struct {
@@ -157,6 +158,7 @@ typedef struct {
     double pq[4][2];            /* 上一帧画出的屏幕四角 (运动模糊), pqframe: 那一帧的编号 */
     unsigned long pqframe;
     double clickat, clickuv[2]; /* 点中卡片的时刻和卡面上的位置 (涟漪) */
+    GalaxyVec trail[24];        /* 粒子尾迹 (同核心) */
     GalaxyVec home, detach;      /* 桌面平面 z=0 上的起点 / 脱离桌面后的位置 */
     double drx, dry, drz;       /* 脱离桌面时的卡片旋转 */
     double radius, angle, speed, rock, delay;
