@@ -44,7 +44,8 @@ static struct {
     GLXPixmap gback, gfront, gwall;
     float lens[4], shock[4], glow;    /* 收尾特效 (每帧 galaxyglframe 清零, 坍缩时 galaxyglexitfx 设置) */
     float rays[3], expo;
-    float pull, burst, bext, axis[3];  /* Esc 收尾时粒子的吸入 / 爆发 (每帧清零, galaxyglcollapsefx 设置) */              /* 体积光束 (光源像素位置 + 强度) / 光层曝光 (每帧清零, galaxyglpostfx 设置) */
+    float pull, burst, bext, axis[3];  /* Esc 收尾时粒子的吸入 / 爆发 (每帧清零, galaxyglcollapsefx 设置) */
+    float rip[4], ripn[3];             /* 涟漪场: 半径 / 强度 / 宽度 (世界), 盘面法线 (每帧清零, galaxyglripple 设置) */              /* 体积光束 (光源像素位置 + 强度) / 光层曝光 (每帧清零, galaxyglpostfx 设置) */
     GLuint pbo[3];                    /* 读回最小一级泛光 (曝光适应), 轮流使用, 晚两帧读 */
     int pboi, pbocap, pbon_[3];
     GLsync pbofence[3];
@@ -296,13 +297,52 @@ static const char *galaxyglvspart =
     "out vec2 vl; out vec3 vc; out float va;\n"
     "float hs(float n) { return fract(sin(n * 12.9898 + seed * 78.233) * 43758.5453); }\n"
     "";
+/* 天象粒子 (mode 4): 通用发射器, 不存状态. eshape 0 球壳爆发 (减速扩张, 纤维结构), 1 双向喷流 (沿 ±z 循环发射),
+ * 2 粒子流 (epos 沿二次贝塞尔曲线流向 eb, 控制点 = 中点 + ebasis 第二列), 3 环形波 (ebasis 的 xy 平面上半径 ep.x 的一圈).
+ * ep: 速度 (或半径 / 流速), 锥角 (或散开), 寿命 (秒), 发射持续时间 (或可见比例); et: 事件经过的秒数.
+ * 涟漪场 rip (半径, 强度, 宽度) 和盘面法线 ripn: 经过处的吸积盘 / 拖尾 / 星尘被托起、点亮 */
+static const char *galaxyglvspartfx =
+    "uniform vec3 epos, eb, ec0, ec1, ripn; uniform mat3 ebasis; uniform vec4 ep, rip; uniform float et; uniform int eshape;\n"
+    "void emitp(float fi, float h1, float h2, float h3, float h4, out vec3 wp, out vec3 col, out float a, out float sz) {\n"
+    "  float h5 = hs(fi * 7.31 + .2), h6 = hs(fi * 8.97 + .4), u;\n"
+    "  vec3 rd = vec3(h2, h3, h4) * 2.0 - 1.0; rd /= max(length(rd), .05);\n"
+    "  a = 0.0; wp = epos; col = ec0; sz = psize * (.5 + .8 * h5);\n"
+    "  if (eshape == 0) {\n"
+    "    float age = et - h1 * ep.w; u = age / ep.z;\n"
+    "    if (age < 0.0 || u > 1.0) return;\n"
+    "    float fil = .72 + .28 * sin(9.0 * rd.x + 3.1) * sin(7.0 * rd.y + 1.7) * sin(8.0 * rd.z + .4);\n"
+    "    wp = epos + rd * ep.x * ep.z * (1.0 - pow(1.0 - u, 2.5)) * fil * (.82 + .18 * h6);\n"
+    "    col = u < .3 ? mix(vec3(1.0, .97, .92), ec0, u / .3) : mix(ec0, ec1, (u - .3) / .7);\n"
+    "    a = alpha * pow(1.0 - u, 1.3) * (.3 + .7 * pow(h5, 3.0));\n"
+    "  } else if (eshape == 1) {\n"
+    "    float age = fract(h1 + et / ep.z) * ep.z, side = h2 < .5 ? -1.0 : 1.0; u = age / ep.z;\n"
+    "    vec3 d = normalize(vec3((h3 - .5) * 2.0 * ep.y, (h4 - .5) * 2.0 * ep.y, 1.0)) * side;\n"
+    "    wp = epos + ebasis * (d * ep.x * age * (.8 + .4 * h5));\n"
+    "    col = mix(ec0, ec1, u);\n"
+    "    a = alpha * pow(1.0 - u, 1.5) * (.35 + .65 * pow(h6, 3.0));\n"
+    "  } else if (eshape == 2) {\n"
+    "    float s = fract(h1 + et * ep.x);\n"
+    "    if (s > ep.w) return;\n"
+    "    vec3 c1 = (epos + eb) * .5 + ebasis[1];\n"
+    "    wp = mix(mix(epos, c1, s), mix(c1, eb, s), s) + rd * ep.y * sin(3.1416 * s) * sqrt(h6);\n"
+    "    col = mix(ec0, ec1, s);\n"
+    "    a = alpha * (.3 + .7 * pow(h5, 3.0)) * smoothstep(0.0, .06, s) * (1.0 - smoothstep(ep.w - .08, ep.w, s));\n"
+    "  } else {\n"
+    "    float th = 6.2832 * h1, r = ep.x * (1.0 + (h2 - .5) * ep.y);\n"
+    "    wp = epos + ebasis * vec3(cos(th) * r, sin(th) * r, (h3 - .5) * ep.y * ep.x * .3);\n"
+    "    col = mix(ec0, ec1, h4);\n"
+    "    a = alpha * (.3 + .7 * pow(h5, 3.0));\n"
+    "  }\n"
+    "}\n";
 static const char *galaxyglvspart2 =
     "void main() {\n"
     "  float fi = float(gl_InstanceID), a, sz;\n"
     "  vec2 c = vec2(gl_VertexID & 1, gl_VertexID >> 1) * 2.0 - 1.0;\n"
     "  float h1 = hs(fi * 1.37 + .1), h2 = hs(fi * 2.71 + .3), h3 = hs(fi * 3.13 + .7), h4 = hs(fi * 5.17 + .9);\n"
     "  vec3 wp, col;\n"
-    "  if (mode > 2.5) {\n"
+    "  if (mode > 3.5) {\n"
+    "    emitp(fi, h1, h2, h3, h4, wp, col, a, sz);\n"
+    "  } else if (mode > 2.5) {\n"
     /* 尾迹: 星体过去 disk.x (motion) 内走过的路径 (trail[0] 是现在的位置). 每颗粒子在星体经过的那一刻生成,
      * 之后原地 (世界坐标固定) 慢慢散开、变暗, 直到下一轮; 越新越亮、越靠近路径中心 */
     /* trail[0] 是现在的位置, trail[1..] 是固定时间网格上的过去位置 (网格不随时间滑动, 插值误差不会逐帧变化):
@@ -353,6 +393,11 @@ static const char *galaxyglvspart2 =
     "    }\n"
     "    a = alpha * (.4 + .6 * h4);\n"
     "    sz = psize * (.5 + h4);\n"
+    "  }\n"
+    /* 涟漪场: 吸积盘 / 星尘 / 拖尾的粒子在波经过时沿盘面法线被托起一点, 并短暂变亮 */
+    "  if (rip.y > .001 && (mode < 1.5 || (mode > 2.5 && mode < 3.5))) {\n"
+    "    float dw = (length(wp) - rip.x) / rip.z, w = rip.y * exp(-dw * dw);\n"
+    "    wp += ripn * w * rip.z * .35; a *= 1.0 + 2.5 * w; col = mix(col, vec3(1.0), .3 * min(w, 1.0));\n"
     "  }\n"
     /* Esc 收尾: 先绕星系群的上轴螺旋着吸进中心 (各自有延迟, 越近越亮越白), 再随冲击波从中心炸开、淡出 */
     "  float hd = hs(fi * 9.71 + .5), he = hs(fi * 6.13 + .8);\n"
@@ -651,12 +696,13 @@ galaxyglobjects(void)
     galaxygl.progcopy = galaxyglprogram(galaxyglvsfull, galaxyglfscopy);
     galaxygl.progcard = galaxyglprogram(galaxyglvscard, galaxyglfscard);
     {   /* 顶点着色器源码也分两段 */
-        size_t na = strlen(galaxyglvspart), nb = strlen(galaxyglvspart2);
-        char *vs = malloc(na + nb + 1);
+        size_t na = strlen(galaxyglvspart), nf = strlen(galaxyglvspartfx), nb = strlen(galaxyglvspart2);
+        char *vs = malloc(na + nf + nb + 1);
 
         if (vs) {
             memcpy(vs, galaxyglvspart, na);
-            memcpy(vs + na, galaxyglvspart2, nb + 1);
+            memcpy(vs + na, galaxyglvspartfx, nf);
+            memcpy(vs + na + nf, galaxyglvspart2, nb + 1);
             galaxygl.progpart = galaxyglprogram(vs, galaxyglfspart);
             free(vs);
         }
@@ -913,6 +959,7 @@ galaxyglframe(void)
     galaxygl.rays[2] = 0;
     galaxygl.expo = 1;
     galaxygl.pull = galaxygl.burst = 0;
+    memset(galaxygl.rip, 0, sizeof galaxygl.rip);
 }
 
 static void
@@ -1118,6 +1165,8 @@ galaxyglpartbegin(void)
     glUniform1f(glGetUniformLocation(p, "burst"), galaxygl.burst);
     glUniform1f(glGetUniformLocation(p, "bext"), galaxygl.bext);
     glUniform3fv(glGetUniformLocation(p, "axis"), 1, galaxygl.axis);
+    glUniform4fv(glGetUniformLocation(p, "rip"), 1, galaxygl.rip);
+    glUniform3fv(glGetUniformLocation(p, "ripn"), 1, galaxygl.ripn);
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE);
     glEnable(GL_DEPTH_TEST);
@@ -1216,6 +1265,46 @@ galaxyglcollapsefx(double pull, double burst, GalaxyVec axis, double ext)
     galaxygl.axis[0] = (float)(l > 0 ? axis.x / l : 0);
     galaxygl.axis[1] = (float)(l > 0 ? axis.y / l : 1);
     galaxygl.axis[2] = (float)(l > 0 ? axis.z / l : 0);
+}
+
+/* 涟漪场 (这一帧): 以世界原点为中心、半径 radius 的一圈波, 强度 amp, 宽度 width; normal 是盘面法线 */
+static void
+galaxyglripple(double radius, double amp, double width, GalaxyVec normal)
+{
+    double l = galaxylen(normal);
+
+    galaxygl.rip[0] = (float)radius;
+    galaxygl.rip[1] = (float)amp;
+    galaxygl.rip[2] = (float)MAX(1, width);
+    galaxygl.ripn[0] = (float)(l > 0 ? normal.x / l : 0);
+    galaxygl.ripn[1] = (float)(l > 0 ? normal.y / l : 1);
+    galaxygl.ripn[2] = (float)(l > 0 ? normal.z / l : 0);
+}
+
+/* 天象粒子: shape 见 galaxyglvspartfx; basis 的第三列是主方向 (喷流轴 / 环面法线), 粒子流用第二列作弯曲偏移;
+ * speed / spread / life / dur 依形状含义不同; et 事件经过的秒数; c0 -> c1 颜色渐变; n 颗粒子 */
+static void
+galaxyglemitter(int shape, GalaxyVec pos, const GalaxyMat *basis, GalaxyVec b, double speed, double spread, double life,
+        double dur, double et, const double c0[3], const double c1[3], double alpha, double psize, int n, double seed)
+{
+    GLuint p;
+
+    if (n < 1 || alpha < .002 || !(p = galaxyglpartbegin()))
+        return;
+    glUniform1f(glGetUniformLocation(p, "mode"), 4);
+    glUniform1i(glGetUniformLocation(p, "eshape"), shape);
+    glUniform3f(glGetUniformLocation(p, "epos"), pos.x, pos.y, pos.z);
+    glUniform3f(glGetUniformLocation(p, "eb"), b.x, b.y, b.z);
+    galaxyglmat(p, "ebasis", basis);
+    glUniform4f(glGetUniformLocation(p, "ep"), speed, spread, MAX(1e-3, life), dur);
+    glUniform1f(glGetUniformLocation(p, "et"), (float)et);
+    glUniform3f(glGetUniformLocation(p, "ec0"), c0[0], c0[1], c0[2]);
+    glUniform3f(glGetUniformLocation(p, "ec1"), c1[0], c1[1], c1[2]);
+    glUniform1f(glGetUniformLocation(p, "seed"), seed);
+    glUniform1f(glGetUniformLocation(p, "alpha"), alpha);
+    glUniform1f(glGetUniformLocation(p, "psize"), psize);
+    glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, n);
+    glDisable(GL_DEPTH_TEST);
 }
 
 /* 星尘: 半径 extent 的扁平区域里 n 颗, 被至多 10 个光源 (位置 + 影响半径, 颜色 * 强度) 照亮 */

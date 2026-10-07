@@ -69,6 +69,7 @@
 #define GALAXYAFTER    .3        /* 揭开后中心余晖再散去的时长, 之后才停在壁纸 */
 #define GALAXYPREP     .45       /* 开场按 Esc 时平滑进入星系群形态 */
 #define GALAXYLANES    3
+#define GALAXYNOVAPRE  .3        /* 超新星爆发前核心收缩、变暗的时长 (秒) */
 #define GALAXYSPARE    8         /* 星系运行中新开的窗口最多再诞生几颗星 */
 #define GALAXYNOTES    6         /* 通知彗星队列 (同时最多 2 颗) */
 #define GALAXYRIVER    60        /* 星际尘埃流: 沿三条群轨道流动的粒子数 */

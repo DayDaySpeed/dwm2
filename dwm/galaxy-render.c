@@ -753,10 +753,15 @@ galaxyrenderitems(void)
                 + 1.5 * g->nova + 1.2 * g->bridge;
             /* 粒子恒星 (不再是明亮光斑 / 星芒): 事件发生时粒子团更亮、略微胀大; 外面只留一层很淡的光晕 */
             {
-                double rgb[3], k = MIN(1, g->alpha) * (1 - .78 * g->eclipse) * galaxydepthlight(g->p.z);
+                double rgb[3], k = MIN(1, g->alpha) * (1 - .78 * g->eclipse) * galaxydepthlight(g->p.z), lc, pre = 0;
+                int kk;
 
                 galaxytintcolor(GALAXYTAGTINT(g->tag), -1, rgb);
-                galaxyglstarball(g->pos, &g->plane, g->size * 2.4 * (1 + .12 * g->hover + .25 * MIN(2, a)), .8, rgb,
+                if (g - r->galaxies == r->novag && galaxycycle(r->motion, 9, 20, &kk, &lc) && lc < GALAXYNOVAPRE) {
+                    pre = galaxysmoothstep(lc / GALAXYNOVAPRE);     /* 超新星爆发前: 收缩、变暗 */
+                    k *= 1 - .5 * pre;
+                }
+                galaxyglstarball(g->pos, &g->plane, g->size * 2.4 * (1 + .12 * g->hover + .25 * MIN(2, a)) * (1 - .45 * pre), .8, rgb,
                         .09 * k * (1 + .6 * MIN(2, a) + .5 * g->hover), r->starscale,
                         (int)(2600 * (r->quiet ? .5 : 1)), 31.7 * (g->tag + 1));
                 galaxysprite(GalaxyHalo, GALAXYTAGTINT(g->tag), g->p.x, g->p.y, MIN(160, g->size * 6 * g->p.scale),
@@ -1082,7 +1087,7 @@ galaxyrenderholdfx(void)
     GalaxyCore *g, *h;
     GalaxyStar *st;
     GalaxyProj pts[13], c, hp;
-    GalaxyMat m, disk;
+    GalaxyMat m;
     GalaxyVec v, head, tail, A, B, perp;
     double f = r->holdw, t = r->motion * r->tscale, local, env, u, th, rad, ang, len, wave, phi, R;
     int i, j, k, l, n, order[32];
@@ -1174,26 +1179,18 @@ galaxyrenderholdfx(void)
                 galaxysprite(GalaxyHalo, GALAXYTAGTINT(u < .5 ? g->tag : h->tag), galaxymix(g->p.x, h->p.x, u), galaxymix(g->p.y, h->p.y, u), 18, .9 * env);
         }
     }
-    /* 超新星: 核心所在轨道平面和盘面上各一圈冲击环 */
-    if (r->novag >= 0 && galaxycycle(r->motion, 9, 20, &k, &local) && local < 2) {
+    /* 超新星: 核心先收缩变暗 GALAXYNOVAPRE 秒, 然后一个粒子球壳爆发 (白 -> 蓝紫 -> 橙, 带纤维结构, 减速扩张),
+     * 再留下一团慢慢散开的残骸星云 */
+    if (r->novag >= 0 && galaxycycle(r->motion, 9, 20, &k, &local) && local < 6 && local > GALAXYNOVAPRE) {
+        static const double white[3] = {1, .97, .92}, violet[3] = {.62, .45, 1}, orange[3] = {1, .55, .25}, rose[3] = {.9, .45, .75};
+        double R, et = local - GALAXYNOVAPRE;
+
         g = &r->galaxies[r->novag];
-        if (k != r->novaburst && f > .05 && g->p.ok) {     /* 爆发的一刻: 粒子向四面八方喷出, 蓝紫和橙 */
-            r->novaburst = k;
-            for (j = 0; j < 280; j++)
-                galaxyemit(g->pos, galaxyscale(galaxynormalize(galaxyprandvec(1)), r->cam.focal * (.06 + .22 * galaxyprand())),
-                        1.3 + .9 * galaxyprand(), .0028 * r->cam.focal, j % 3 ? GalaxyViolet : GalaxyOrange, .8 * f, 1.3, 0);
-        }
-        disk = galaxymul(r->world, galaxyrotx(GALAXYPI / 2));
-        u = galaxyphase(local, 0, 1.6);
-        if (u < 1 && g->p.ok) {     /* 先蓝紫冲击壳, 随扩散转橙 */
-            galaxybandcolor(galaxymixrgb(galaxytintrgb(GalaxyViolet, -1), galaxytintrgb(GalaxyOrange, -1), u));
-            galaxyringfx(g->pos, g->plane, 3 * MAX(g->radius, 60) * galaxyeaseoutcubic(u), f * .26 * (1 - u), 1.8);
-        }
-        u = galaxyphase(local, .25, 2);
-        if (u > 0 && u < 1 && g->p.ok) {
-            galaxybandcolor(galaxymixrgb(galaxytintrgb(GalaxyBlue, -1), galaxytintrgb(GalaxyOrange, .5), u));
-            galaxyringfx(g->pos, disk, .3 * r->vw * galaxyeaseoutcubic(u), f * .18 * (1 - u), 1.3);
-        }
+        R = 3.4 * MAX(g->size * 7, g->nrings ? g->ringr[g->nrings - 1] : g->size * 7);
+        galaxyglemitter(0, g->pos, &g->plane, g->pos, R / 3, 0, 3, .12, et, violet, orange, .35 * f, r->starscale,
+                (int)(8000 * (r->quiet ? .5 : 1)), 5.3 + k);
+        galaxyglemitter(0, g->pos, &g->plane, g->pos, R * .35 / 5, 0, 5, .5, et, white, rose, .14 * f, r->starscale * .9,
+                (int)(3000 * (r->quiet ? .5 : 1)), 9.1 + k);
     }
     /* 彗星: 每 15s 一颗, 从星系群外侧穿过盘面, 尾巴背向中心光源 */
     if (!r->quiet && galaxycycle(r->motion, 6, 15, &k, &local) && local < 5) {
@@ -1646,6 +1643,17 @@ galaxyrendergpuparticles(void)
                 lcol[nl][j] = .9 * rgb[j] * MIN(1, g->alpha);
             nl++;
         }
+    }
+    if (r->novag >= 0 && r->novag < r->ntags && nl < 9 && r->galaxies[r->novag].nova > .01) {   /* 超新星照亮附近的星尘 */
+        g = &r->galaxies[r->novag];
+        lights[nl][0] = g->pos.x;
+        lights[nl][1] = g->pos.y;
+        lights[nl][2] = g->pos.z;
+        lights[nl][3] = extent * .45;
+        lcol[nl][0] = 1.4 * g->nova;
+        lcol[nl][1] = 1.1 * g->nova;
+        lcol[nl][2] = 1.6 * g->nova;
+        nl++;
     }
     if (nl && r->sunalpha > .01) {   /* 中心双星: 暖白, 照得更远 */
         lights[nl][0] = lights[nl][1] = lights[nl][2] = 0;

@@ -1739,6 +1739,26 @@ galaxy(const Arg *arg)
     r->nebseed[1] = 40 * galaxyhash((unsigned int)t0.tv_nsec ^ 0x9e3779b9u);
     galaxyfarinit();
     r->fxgap = GALAXY_FXGAP * (r->quiet ? 2.5 : 1);
+    {   /* 测试: 环境变量 GALAXY_FXGAP 或文件 $XDG_CACHE_HOME/galaxy-fxgap 里的数覆盖特效间隔倍数 (.25 = 天象快 4 倍) */
+        char path[512], buf[32] = "";
+        const char *cache = getenv("XDG_CACHE_HOME"), *home = getenv("HOME");
+        FILE *f;
+        double v = 0;
+
+        if ((env = getenv("GALAXY_FXGAP")))
+            v = atof(env);
+        if (cache && *cache)
+            snprintf(path, sizeof path, "%s/galaxy-fxgap", cache);
+        else
+            snprintf(path, sizeof path, "%s/.cache/galaxy-fxgap", home ? home : "");
+        if (v <= 0 && (f = fopen(path, "r"))) {
+            if (fgets(buf, sizeof buf, f))
+                v = atof(buf);
+            fclose(f);
+        }
+        if (v > 0)
+            r->fxgap = v;
+    }
     r->ndust = MAX(70, MIN(140, 140 - 2 * count)) / (r->quiet ? 2 : 1);
     r->ntrail = count > 24 ? 6 : GALAXYTRAIL;
     r->cam.fov = 62 * GALAXYPI / 180;

@@ -976,7 +976,7 @@ galaxyupdateholdfx(double motion)
         }
         gi = r->novag;
         if (gi >= 0)
-            r->galaxies[gi].nova = f * galaxyflash(local, .4, 1.6);
+            r->galaxies[gi].nova = f * galaxyflash(local - GALAXYNOVAPRE, .25, 1.4);   /* 先收缩 GALAXYNOVAPRE 秒再爆亮 */
     }
     for (i = 0; i < r->ndust; i++) {
         d = &r->dust[i];
