@@ -366,7 +366,7 @@ galaxyrendercardgl(GalaxyStar *s, double q[4][2], double qz[4], double vis, doub
 
         if (sp > 0 && sp < 1) {
             fx.specat = -.25 + 1.5 * sp;
-            fx.spec = .28 * sin(GALAXYPI * sp) * vis;
+            fx.spec = .14 * sin(GALAXYPI * sp) * vis;
         }
     }
     /* 点击涟漪: 点中后 0.45s 内从点击处扩散一圈 */
@@ -884,9 +884,9 @@ galaxyrendergate(double f, double s)
         galaxybandwhite();
     }
     galaxyflushbands();
-    a = f * galaxyflash(s - 1.18, .05, 6);
+    a = f * galaxyflash(s - 1.18, .04, 12);
     if (a > .01)    /* 穿过星门: 青白色闪光 */
-        galaxyglrect(r->vx, r->vy, r->vw, r->vh, (double[3]){.85, .97, 1}, .3 * MIN(1, a) * (r->gentle ? .25 : 1));
+        galaxyglrect(r->vx, r->vy, r->vw, r->vh, (double[3]){.85, .97, 1}, .08 * MIN(1, a) * (r->gentle ? .25 : 1));
 }
 
 /* 开场 C: 大爆炸. 焦点窗口中心爆闪, 两圈冲击波, 粒子向四周喷射; 核心从爆心飞出 (galaxyupdatecores) 后再点火 */
@@ -917,7 +917,7 @@ galaxyrenderbang(double f, double s)
     galaxysprite(GalaxySpike, GalaxyGold, c.x, c.y, MIN(600, 520 * (.5 + .5 * a)), MIN(1, 1.2 * a));
     galaxylensflare(c.x, c.y, a);
     if (f * galaxyflash(t, .03, 7) > .01)  /* 爆闪: 暖白 */
-        galaxyglrect(r->vx, r->vy, r->vw, r->vh, (double[3]){1, .93, .8}, .4 * MIN(1, f * galaxyflash(t, .03, 7)) * (r->gentle ? .25 : 1));
+        galaxyglrect(r->vx, r->vy, r->vw, r->vh, (double[3]){1, .93, .8}, .1 * MIN(1, f * galaxyflash(t, .03, 12)) * (r->gentle ? .25 : 1));
     for (i = 0; i < 2; i++) {
         u = galaxyphase(t, .15 * i, .8 + .25 * i);
         if (u <= 0 || u >= 1)
@@ -1548,7 +1548,7 @@ galaxyrenderorbittrails(double k)
     GalaxyStar *s;
     GalaxyMat world, plane, orient;
     GalaxyVec gpos;
-    double rgb[3], lm, m, sm, w, grid, top, stage = r->stage, motion = r->motion;
+    double rgb[3], lm, m, sm, w, grid, top, span = 0, stage = r->stage, motion = r->motion;
     int i, j, live = r->mode != GalaxyReturn;
 
     /* 坍缩时不提前淡出: 由吸入 / 爆发接手 (galaxyglcollapsefx) */
@@ -1556,6 +1556,8 @@ galaxyrenderorbittrails(double k)
         : r->mode == GalaxyCollapse ? 1 : galaxysmoothstep(galaxyphase(stage, 1.6, 2.6));
     if (w < .01)
         return;
+    for (i = 0; i < r->ntags; i++)      /* 星系群半径: 核心大尾迹的最大长度按它算 */
+        span = MAX(span, galaxylen(r->galaxies[i].pos));
     for (i = 0; i < r->ntags; i++) {
         g = &r->galaxies[i];
         if (g->alpha < .05)
@@ -1566,31 +1568,34 @@ galaxyrenderorbittrails(double k)
         for (j = 0; live && j < GALAXYTRAILN; j++) {
             m = j ? top - (j - 1) * grid : motion;
             sm = j ? galaxystageat(m) : stage;
-            world = r->mode == GalaxyCollapse ? r->cworld : galaxyworldat(sm, m);
+            world = r->world;   /* 尾迹在星系群自己的坐标系里: 整体自转 (演出) 时跟着一起转, 只留下相对轨道的运动 */
             galaxycoreat(g, sm, m, world, &g->trail[j], &plane);
         }
         galaxytintcolor(GALAXYTAGTINT(g->tag), -1, rgb);
-        galaxygltrail(g->trail, GALAXYTRAILN, lm, motion, motion - top, grid, g->size * 1.6, rgb, .32 * w * MIN(1, g->alpha), .9 * r->starscale,
-                (int)(14000 * k), 13.1 * (i + 1));
+        /* 星系轨道: 大拖尾 (最长约星系群半径, 越往后越宽); 坍缩开始后逐渐放长, 整条卷进中心 */
+        galaxygltrail(g->trail, GALAXYTRAILN, lm, motion, motion - top, grid, MAX(1, span) * (.9 + (r->mode == GalaxyCollapse ? 2.5 * galaxysmoothstep(galaxyphase(r->celapsed, .8, 1.6)) : 0)),
+                g->size * 2.2, rgb,
+                .32 * w * MIN(1, g->alpha), .9 * r->starscale, (int)(16000 * k), 13.1 * (i + 1));
     }
     for (i = 0; i < r->nstars; i++) {
         s = &r->stars[i];
         if (s->died || s->alpha < .1 || s->galaxy < 0 || s->galaxy >= r->ntags)
             continue;
         g = &r->galaxies[s->galaxy];
-        lm = 2.2 / MAX(.05, fabs(s->speed));
+        lm = 1.2 / MAX(.05, fabs(s->speed));
         grid = lm / (GALAXYTRAILN - 2);
         top = floor(motion / grid) * grid;
         for (j = 0; live && j < GALAXYTRAILN; j++) {
             m = j ? top - (j - 1) * grid : motion;
             sm = j ? galaxystageat(m) : stage;
-            world = r->mode == GalaxyCollapse ? r->cworld : galaxyworldat(sm, m);
+            world = r->world;
             galaxycoreat(g, sm, m, world, &gpos, &plane);
             galaxystarat(s, sm, m, world, gpos, galaxymul(plane, g->ring[s->ring]), &s->trail[j], &orient);
         }
         galaxytintcolor(GALAXYTAGTINT(s->galaxy), -1, rgb);
-        galaxygltrail(s->trail, GALAXYTRAILN, lm, motion, motion - top, grid, g->size * .4, rgb, .3 * w * MIN(1, s->alpha), .8 * r->starscale,
-                (int)(3500 * k), 7.7 * (i + 1));
+        /* 恒星 (窗口星) 轨道: 细短的小拖尾, 不和核心的大尾迹抢视觉 */
+        galaxygltrail(s->trail, GALAXYTRAILN, lm, motion, motion - top, grid, g->size * 3, g->size * .2, rgb,
+                .22 * w * MIN(1, s->alpha), .7 * r->starscale, (int)(1200 * k), 7.7 * (i + 1));
     }
 }
 
@@ -1613,8 +1618,9 @@ galaxyrendergpuparticles(void)
 
         for (i = 0; i < r->ntags; i++)
             ext = MAX(ext, galaxylen(r->galaxies[i].pos) + r->galaxies[i].size * 7);
-        galaxyglcollapsefx(galaxysmoothstep(galaxyphase(u, GALAXYEXITSTART - .2, GALAXYSHOCK)),
-                galaxyphase(u, GALAXYSHOCK, GALAXYSHOCK + GALAXYSHOCKT + GALAXYAFTER),
+        /* 吸入在冲击波出现的那一刻刚好收拢 (越到最后越快), 冲击波一出现就开始爆发 (起步最快), 中间不留空档 */
+        galaxyglcollapsefx(pow(galaxyphase(u, GALAXYEXITSTART - .2, GALAXYSHOCK - .05), 2.2),
+                1 - pow(1 - galaxyphase(u, GALAXYSHOCK - .05, GALAXYSHOCK + GALAXYSHOCKT + GALAXYAFTER), 2),
                 galaxyapply(r->world, galaxyv(0, 1, 0)), MAX(1, ext) * 1.4 * (r->gentle ? .5 : 1));
     }
     galaxyrenderorbittrails(k);
@@ -1649,7 +1655,7 @@ galaxyrendergpuparticles(void)
         lcol[nl][2] = .75 * r->sunalpha;
         nl++;
     }
-    galaxygldust(extent * 1.25, lights, lcol, nl, .45 * (r->mode == GalaxyCollapse ? 1 : r->dustfade), .7, (int)(16000 * k), 91.7);
+    galaxygldust(&r->world, extent * 1.25, lights, lcol, nl, .45 * (r->mode == GalaxyCollapse ? 1 : r->dustfade), .7, (int)(16000 * k), 91.7);
 }
 
 /* 更新并画出所有粒子: 透视投影, 按年龄淡出、缩小, 交给 GPU (按深度被卡片挡住) */
@@ -1992,7 +1998,7 @@ galaxyrendershards(void)
         }
     galaxyflushbands();
     /* 碎裂的一刻: 约 80ms 的漏光闪白, 给开场一个起拍 */
-    galaxyglrect(r->vx, r->vy, r->vw, r->vh, flashrgb, .35 * f * galaxyflash(s - .2, .025, 18) * (r->gentle ? .25 : 1));
+    galaxyglrect(r->vx, r->vy, r->vw, r->vh, flashrgb, .1 * f * galaxyflash(s - .2, .025, 18) * (r->gentle ? .25 : 1));
     xf.matrix[0][0] = xf.matrix[1][1] = xf.matrix[2][2] = XDoubleToFixed(1);
     xf.matrix[0][1] = xf.matrix[1][0] = xf.matrix[0][2] = xf.matrix[1][2] = 0;
     for (lvl = 0; lvl < GALAXYSHARDA; lvl++)

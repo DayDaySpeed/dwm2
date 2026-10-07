@@ -291,10 +291,12 @@ static const char *galaxyglvspart =
     "#version 330 core\n"
     "uniform mat3 view, plane; uniform vec3 campos, cpos, tint; uniform vec2 center, screen;\n"
     "uniform float focal, cnear, cfar, fnear, time, mode, seed, alpha, psize, extent; uniform vec4 disk;\n"
-    "uniform vec4 lights[10]; uniform vec3 lcol[10]; uniform int nl; uniform vec3 trail[48]; uniform int ntrail; uniform float mclock;\n"
+    "uniform vec4 lights[10]; uniform vec3 lcol[10]; uniform int nl; uniform vec4 trail[48]; uniform int ntrail; uniform float mclock, tlen;\n"
     "uniform float pull, burst, bext; uniform vec3 axis;\n"
     "out vec2 vl; out vec3 vc; out float va;\n"
     "float hs(float n) { return fract(sin(n * 12.9898 + seed * 78.233) * 43758.5453); }\n"
+    "";
+static const char *galaxyglvspart2 =
     "void main() {\n"
     "  float fi = float(gl_InstanceID), a, sz;\n"
     "  vec2 c = vec2(gl_VertexID & 1, gl_VertexID >> 1) * 2.0 - 1.0;\n"
@@ -305,17 +307,20 @@ static const char *galaxyglvspart =
      * 之后原地 (世界坐标固定) 慢慢散开、变暗, 直到下一轮; 越新越亮、越靠近路径中心 */
     /* trail[0] 是现在的位置, trail[1..] 是固定时间网格上的过去位置 (网格不随时间滑动, 插值误差不会逐帧变化):
      * disk.z = 现在距最近网格点的时间, disk.w = 网格间隔 */
-    "    float age = fract(h1 + mclock / disk.x), back = age * disk.x - disk.z; vec3 pth;\n"
-    "    if (back <= 0.0) pth = mix(trail[0], trail[1], age * disk.x / max(disk.z, 1e-6));\n"
+    /* trail[k].w: 该点沿路径到星体的距离. 可见长度按路径长度 tlen 截断 (开场星体跑得快时尾迹也紧跟在身后),
+     * 离星体越远散得越开 (彗尾形状), 越暗 */
+    "    float age = fract(h1 + mclock / disk.x), back = age * disk.x - disk.z; vec4 pt;\n"
+    "    if (back <= 0.0) pt = mix(trail[0], trail[1], age * disk.x / max(disk.z, 1e-6));\n"
     "    else {\n"
     "      float fk = min(1.0 + back / disk.w, float(ntrail - 1)); int k0 = int(floor(fk));\n"
-    "      pth = mix(trail[k0], trail[min(k0 + 1, ntrail - 1)], fk - float(k0));\n"
+    "      pt = mix(trail[k0], trail[min(k0 + 1, ntrail - 1)], fk - float(k0));\n"
     "    }\n"
+    "    float u = clamp(pt.w / max(tlen, 1e-3), 0.0, 1.0);\n"
     "    vec3 rd = vec3(h2, h3, h4) * 2.0 - 1.0; rd /= max(length(rd), .05);\n"
     "    float h5 = hs(fi * 7.31 + .2), h6 = hs(fi * 8.97 + .4);\n"
-    "    wp = pth + rd * disk.y * sqrt(h6) * (.06 + 1.1 * pow(age, 1.3));\n"
-    "    col = mix(vec3(1.0, .96, .9), tint, smoothstep(0.0, .3, age));\n"
-    "    a = alpha * pow(1.0 - age, 1.4) * (.25 + .75 * pow(h5, 4.0));\n"
+    "    wp = pt.xyz + rd * disk.y * sqrt(h6) * (.05 + pow(u, 1.1));\n"
+    "    col = mix(vec3(1.0, .96, .9), tint, smoothstep(0.0, .3, u));\n"
+    "    a = alpha * (1.0 - smoothstep(.55, 1.0, u)) * (1.0 - .5 * u) * pow(1.0 - age, .7) * (.25 + .75 * pow(h5, 4.0));\n"
     "    sz = psize * (.45 + .6 * h5);\n"
     "  } else if (mode > 1.5) {\n"
     /* 粒子恒星: 球形分布, 中心密外围疏, 略扁; 绕自转轴内快外慢地转, 每颗粒子还有一点缓慢的涌动; 中心暖白, 外圈 tag 色 */
@@ -339,7 +344,7 @@ static const char *galaxyglvspart =
     "  } else {\n"
     "    vec3 p0 = vec3(h1, h2, h3) * 2.0 - 1.0;\n"
     "    p0 += .03 * vec3(sin(time * .05 + fi), sin(time * .04 + fi * 1.3), sin(time * .045 + fi * .7));\n"
-    "    wp = p0 * extent * vec3(1.0, .45, 1.0);\n"
+    "    wp = plane * (p0 * extent * vec3(1.0, .45, 1.0));\n"
     "    col = vec3(0.0);\n"
     "    for (int k = 0; k < 10; k++) {\n"
     "      if (k >= nl) break;\n"
@@ -645,7 +650,17 @@ galaxyglobjects(void)
     galaxygl.prognebula = galaxyglprogram2(galaxyglvsfull, galaxyglfsnebula, galaxyglfsnebula2);
     galaxygl.progcopy = galaxyglprogram(galaxyglvsfull, galaxyglfscopy);
     galaxygl.progcard = galaxyglprogram(galaxyglvscard, galaxyglfscard);
-    galaxygl.progpart = galaxyglprogram(galaxyglvspart, galaxyglfspart);
+    {   /* 顶点着色器源码也分两段 */
+        size_t na = strlen(galaxyglvspart), nb = strlen(galaxyglvspart2);
+        char *vs = malloc(na + nb + 1);
+
+        if (vs) {
+            memcpy(vs, galaxyglvspart, na);
+            memcpy(vs + na, galaxyglvspart2, nb + 1);
+            galaxygl.progpart = galaxyglprogram(vs, galaxyglfspart);
+            free(vs);
+        }
+    }
     for (i = 0; i < (int)LENGTH(progs); i++)
         if (!*progs[i])
             return 0;
@@ -1156,22 +1171,27 @@ galaxyglstarball(GalaxyVec pos, const GalaxyMat *plane, double rad, double omega
 /* 星体身后的粒子尾迹: pts[0..n-1] 是星体现在和过去 (等时间间隔, 共 lm 个 motion 单位) 的世界位置;
  * width: 散开的半径, count 颗粒子, alpha 是单颗粒子的亮度 */
 static void
-galaxygltrail(const GalaxyVec *pts, int n, double lm, double mclock, double head, double grid, double width, const double rgb[3],
-        double alpha, double psize, int count, double seed)
+galaxygltrail(const GalaxyVec *pts, int n, double lm, double mclock, double head, double grid, double tlen, double width,
+        const double rgb[3], double alpha, double psize, int count, double seed)
 {
     GLuint p;
-    float f[48][3];
+    float f[48][4];
+    double arc = 0;
     int i;
 
     if (n < 2 || count < 1 || alpha < .002 || lm <= 0 || !(p = galaxyglpartbegin()))
         return;
     n = MIN(n, 48);
     for (i = 0; i < n; i++) {
+        if (i)
+            arc += galaxylen(galaxysub(pts[i], pts[i - 1]));
         f[i][0] = pts[i].x;
         f[i][1] = pts[i].y;
         f[i][2] = pts[i].z;
+        f[i][3] = arc;
     }
-    glUniform3fv(glGetUniformLocation(p, "trail"), n, &f[0][0]);
+    glUniform4fv(glGetUniformLocation(p, "trail"), n, &f[0][0]);
+    glUniform1f(glGetUniformLocation(p, "tlen"), tlen);
     glUniform1i(glGetUniformLocation(p, "ntrail"), n);
     glUniform1f(glGetUniformLocation(p, "mclock"), (float)fmod(mclock, lm * 4096));
     glUniform3f(glGetUniformLocation(p, "tint"), rgb[0], rgb[1], rgb[2]);
@@ -1200,12 +1220,13 @@ galaxyglcollapsefx(double pull, double burst, GalaxyVec axis, double ext)
 
 /* 星尘: 半径 extent 的扁平区域里 n 颗, 被至多 10 个光源 (位置 + 影响半径, 颜色 * 强度) 照亮 */
 static void
-galaxygldust(double extent, float lights[][4], float lcol[][3], int nl, double alpha, double psize, int n, double seed)
+galaxygldust(const GalaxyMat *world, double extent, float lights[][4], float lcol[][3], int nl, double alpha, double psize, int n, double seed)
 {
     GLuint p = galaxyglpartbegin();
 
     if (!p || n < 1 || alpha < .004 || nl < 1)
         return;
+    galaxyglmat(p, "plane", world);   /* 星尘跟着星系群整体转 */
     glUniform1f(glGetUniformLocation(p, "mode"), 1);
     glUniform1f(glGetUniformLocation(p, "seed"), seed);
     glUniform1f(glGetUniformLocation(p, "alpha"), alpha);

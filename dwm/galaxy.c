@@ -405,8 +405,8 @@ static const GalaxyKey galaxycardvis[] = {  /* 截图可见度 (再乘深度 LOD
 static const GalaxyKey galaxycardsize[] = {
     {.15, 1}, {.6, .74}, {1, .46}, {1.5, .3}, {2.2, .2}, {3.3, .15}, {4.2, .17}, {4.8, .17}, {5.2, .08}
 };
-static const GalaxyKey galaxycardtint[] = { /* 卡片自身发光: 截图 -> 发光的小面板 */
-    {1.2, 0}, {2.2, .22}, {3, .42}, {3.6, .3}, {4.2, .14}, {4.8, .14}, {5, .5}
+static const GalaxyKey galaxycardtint[] = { /* 卡片自身发光: 只轻微提亮, 截图内容始终看得见 (太白会变成一块灰板) */
+    {1.2, 0}, {2.2, .07}, {3, .12}, {3.6, .09}, {4.2, .05}, {4.8, .05}, {5, .3}
 };
 static const GalaxyKey galaxystarglow[] = {
     {.8, 0}, {1.5, .22}, {2.2, .45}, {3, .75}, {3.6, 1}
