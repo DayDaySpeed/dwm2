@@ -685,7 +685,7 @@ galaxylensflare(double x, double y, double k)
     int i;
 
     k = galaxyclamp(k);
-    if (k < .02)
+    if (k < .02 || r->gentle)
         return;
     for (i = 0; i < 5; i++)
         galaxysprite(i % 2 ? GalaxyHalo : GalaxyDisc, tint[i], x + (cx - x) * at[i], y + (cy - y) * at[i], size[i] * s, k * alpha[i]);
@@ -970,7 +970,7 @@ galaxyrendergate(double f, double s)
     galaxyflushbands();
     a = f * galaxyflash(s - 1.18, .05, 6);
     if (a > .01)    /* 穿过星门: 青白色闪光 */
-        galaxyglrect(r->vx, r->vy, r->vw, r->vh, (double[3]){.85, .97, 1}, .3 * MIN(1, a));
+        galaxyglrect(r->vx, r->vy, r->vw, r->vh, (double[3]){.85, .97, 1}, .3 * MIN(1, a) * (r->gentle ? .25 : 1));
 }
 
 /* 开场 C: 大爆炸. 焦点窗口中心爆闪, 两圈冲击波, 粒子向四周喷射; 核心从爆心飞出 (galaxyupdatecores) 后再点火 */
@@ -1001,7 +1001,7 @@ galaxyrenderbang(double f, double s)
     galaxysprite(GalaxySpike, GalaxyGold, c.x, c.y, MIN(600, 520 * (.5 + .5 * a)), MIN(1, 1.2 * a));
     galaxylensflare(c.x, c.y, a);
     if (f * galaxyflash(t, .03, 7) > .01)  /* 爆闪: 暖白 */
-        galaxyglrect(r->vx, r->vy, r->vw, r->vh, (double[3]){1, .93, .8}, .4 * MIN(1, f * galaxyflash(t, .03, 7)));
+        galaxyglrect(r->vx, r->vy, r->vw, r->vh, (double[3]){1, .93, .8}, .4 * MIN(1, f * galaxyflash(t, .03, 7)) * (r->gentle ? .25 : 1));
     for (i = 0; i < 2; i++) {
         u = galaxyphase(t, .15 * i, .8 + .25 * i);
         if (u <= 0 || u >= 1)
@@ -2036,7 +2036,7 @@ galaxyrendershards(void)
         }
     galaxyflushbands();
     /* 碎裂的一刻: 约 80ms 的漏光闪白, 给开场一个起拍 */
-    galaxyglrect(r->vx, r->vy, r->vw, r->vh, flashrgb, .35 * f * galaxyflash(s - .2, .025, 18));
+    galaxyglrect(r->vx, r->vy, r->vw, r->vh, flashrgb, .35 * f * galaxyflash(s - .2, .025, 18) * (r->gentle ? .25 : 1));
     xf.matrix[0][0] = xf.matrix[1][1] = xf.matrix[2][2] = XDoubleToFixed(1);
     xf.matrix[0][1] = xf.matrix[1][0] = xf.matrix[0][2] = xf.matrix[1][2] = 0;
     for (lvl = 0; lvl < GALAXYSHARDA; lvl++)
@@ -2159,7 +2159,7 @@ galaxypresent(void)
     dt = r->adaptat > 0 ? MAX(0, MIN(.1, now - r->adaptat)) : 0;
     r->adaptat = now;
     r->adapt += (galaxygl.lum - r->adapt) * MIN(1, dt / (galaxygl.lum > r->adapt ? .12 : .8));
-    expo = MAX(.55, 1 / (1 + 2.5 * MAX(0, r->adapt - .05)));
+    expo = r->gentle ? 1 : MAX(.55, 1 / (1 + 2.5 * MAX(0, r->adapt - .05)));
     r->lumsum += galaxygl.lum;
     r->lummax = MAX(r->lummax, galaxygl.lum);
     r->expomin = r->expomin > 0 ? MIN(r->expomin, expo) : expo;
@@ -2187,11 +2187,16 @@ galaxypresent(void)
             if (r->live)    /* 动态壁纸: 揭开的是正在播放的画面 */
                 XRenderComposite(dpy, PictOpSrc, r->live, None, r->wallpaper, 0, 0, 0, 0, 0, 0, r->w, r->h);
         }
+        if (r->gentle) {   /* 减弱动效: 不扭曲背景, 闪光和光环只留四分之一 */
+            lens = 0;
+            glow *= .25;
+            sk *= .25;
+        }
         galaxylensflare(cx, cy, .8 * glow);
         galaxyglexitfx(cx, cy, lens, .95 * MAX(1, MIN(MIN(cx - r->vx, r->vx + r->vw - cx), MIN(cy - r->vy, r->vy + r->vh - cy))),
                 sr, sw, sk, u >= GALAXYSHOCK, glow);
     }
-    galaxyglpresent(.6, 1 - galaxyclamp(q - 1), GALAXYBLOOM - (int)lround(galaxyclamp(q / 3) * 3));
+    galaxyglpresent(.6, r->gentle ? 0 : 1 - galaxyclamp(q - 1), GALAXYBLOOM - (int)lround(galaxyclamp(q / 3) * 3));   /* 减弱动效: 不加色差 */
 }
 
 /* 一帧开始: 清空光层和前景层 */

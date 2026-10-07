@@ -457,6 +457,22 @@ galaxyquiet(void)
     return access(path, F_OK) == 0;
 }
 
+/* 减弱动效: 环境变量 GALAXY_GENTLE=1, 或 $XDG_CACHE_HOME/galaxy-gentle 存在 (对强光 / 闪烁敏感时用) */
+static int
+galaxygentle(void)
+{
+    char path[512];
+    const char *env = getenv("GALAXY_GENTLE"), *cache = getenv("XDG_CACHE_HOME"), *home = getenv("HOME");
+
+    if (env && *env && *env != '0')
+        return 1;
+    if (cache && *cache)
+        snprintf(path, sizeof path, "%s/galaxy-gentle", cache);
+    else
+        snprintf(path, sizeof path, "%s/.cache/galaxy-gentle", home ? home : "");
+    return access(path, F_OK) == 0;
+}
+
 /* 遮罩视口中心所在显示器的刷新率 (XRandR 当前模式的 dotClock / (hTotal * vTotal)); 查不到时用 GALAXYORBITFPS */
 static double
 galaxyrefreshhz(void)
@@ -1718,6 +1734,7 @@ galaxy(const Arg *arg)
     r->trace = getenv("GALAXY_TRACE") != NULL;
     r->quiet = galaxyquiet();
     r->refresh = galaxyrefreshhz();
+    r->gentle = galaxygentle();
     r->nebseed[0] = 40 * galaxyhash((unsigned int)t0.tv_nsec);
     r->nebseed[1] = 40 * galaxyhash((unsigned int)t0.tv_nsec ^ 0x9e3779b9u);
     r->fxgap = GALAXY_FXGAP * (r->quiet ? 2.5 : 1);

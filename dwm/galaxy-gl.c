@@ -152,7 +152,7 @@ static const char *galaxyglfsup =
 static const char *galaxyglfsnebula =
     "#version 330 core\n"
     "in vec2 uv; out vec4 o;\n"
-    "uniform vec2 screen, cam, seed; uniform vec4 view; uniform float t, k, diag, aurora; uniform int oct;\n"
+    "uniform vec2 screen, cam, seed; uniform vec4 view; uniform float t, k, diag, aurora, still; uniform int oct;\n"
     "uniform vec3 c0, c1, c2;\n"
     "float h(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }\n"
     "float n(vec2 p) {\n"
@@ -186,7 +186,7 @@ static const char *galaxyglfsnebula =
     "  float r = h(cell);\n"
     "  if (r < .04) {\n"
     "    vec2 sp = vec2(h(cell + 3.1), h(cell + 7.3)) * .7 + .15;\n"
-    "    float tw = .55 + .45 * sin(t * (1.1 + 2.5 * h(cell + 1.7)) + 6.28 * h(cell + 9.1));\n"
+    "    float tw = still > .5 ? .8 : .55 + .45 * sin(t * (1.1 + 2.5 * h(cell + 1.7)) + 6.28 * h(cell + 9.1));\n"
     "    col += mix(vec3(.75, .85, 1.0), vec3(1.0, .88, .7), h(cell + 5.5)) * exp(-dot(fp - sp, fp - sp) * 22.0 * 22.0 / 1.6) * tw * .5;\n"
     "  }\n"
     "  col *= k;\n"
@@ -788,7 +788,7 @@ galaxyglglow(int shape, const double rgb[3], double core, double x, double y, do
 /* 星云: 每帧光层清空后最先画 (加法), 之后卡片挖洞会把卡片后面的部分擦掉.
  * k: 强度; t: 秒 (流动); oct: fbm 倍频数 (降级时减少); 颜色取极光配色的紫 / 青 / 玫粉 */
 static void
-galaxyglnebula(double k, double t, int oct, const double seed[2], double aurora)
+galaxyglnebula(double k, double t, int oct, const double seed[2], double aurora, int still)
 {
     GalaxyScene *r = &galaxyscene;
     GLuint p = galaxygl.prognebula;
@@ -816,6 +816,7 @@ galaxyglnebula(double k, double t, int oct, const double seed[2], double aurora)
     glUniform1i(glGetUniformLocation(p, "oct"), oct);
     glUniform2f(glGetUniformLocation(p, "seed"), (float)seed[0], (float)seed[1]);
     glUniform1f(glGetUniformLocation(p, "aurora"), (float)aurora);
+    glUniform1f(glGetUniformLocation(p, "still"), still ? 1 : 0);
     glUniform3fv(glGetUniformLocation(p, "c0"), 1, c[0]);
     glUniform3fv(glGetUniformLocation(p, "c1"), 1, c[1]);
     glUniform3fv(glGetUniformLocation(p, "c2"), 1, c[2]);

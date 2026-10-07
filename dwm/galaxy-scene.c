@@ -1085,6 +1085,8 @@ galaxyupdatescene(double stage, double motion, double dt)
     }
     r->rippleamp *= r->holdw;
     r->sunpulse *= r->holdw;
+    if (r->gentle)      /* 减弱动效: 中心双星的脉冲不爆闪 */
+        r->sunpulse = MIN(r->sunpulse, .4);
     galaxyupdatebeats(motion);
     galaxyupdatecamera(stage, motion, dt);
     galaxylogactions(motion);

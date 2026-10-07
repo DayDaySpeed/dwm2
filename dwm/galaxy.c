@@ -283,6 +283,7 @@ typedef struct {
     Picture shardsrc, shardflat, shardmask[GALAXYSHARDA];
     GalaxyVec bang;
     int quiet;                  /* 安静模式: 省电模式打开时特效变少变稀, 帧率降低 */
+    int gentle;                 /* 减弱动效 (GALAXY_GENTLE=1 或 ~/.cache/galaxy-gentle): 闪白 / 透镜 / 光晕 / 曝光骤降 / 闪烁都收敛 */
     double refresh;             /* 遮罩所在显示器的刷新率 (Hz): 驻留态按它出帧 */
     double nebseed[2];          /* 星云噪声的偏移: 每次 Super+Z 随机, 浓淡的位置每次不同 */
     double adapt, adaptat;      /* 曝光适应: 平滑后的光层亮度 / 上次更新的时刻 */
