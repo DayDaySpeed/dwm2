@@ -322,10 +322,15 @@ galaxyrendercardgl(GalaxyStar *s, double q[4][2], double qz[4], double vis, doub
         if (galaxygl.cardups >= (r->mode == GalaxyOrbit ? 2 : 1))
             return 0;
         galaxygl.cardups++;
-        if (!(s->gltex = galaxyglcardtex(s->mippix[s->base], s->mipw[s->base], s->miph[s->base]))) {
+        if (!(s->gltex = galaxyglcardtex(s->mippix[s->base], s->mipw[s->base], s->miph[s->base], &s->glpix, &s->glsrc))) {
             s->glfail = 1;
             return 0;
         }
+        s->gldirty = 0;
+    } else if (s->gldirty && galaxygl.cardups < 2) {   /* 截图刷新过: 原地重拷 (同样计入每帧限额, 超额就先用旧的) */
+        galaxygl.cardups++;
+        galaxyglcardcopy(s->glpix, s->glsrc, s->gltex, s->mipw[s->base], s->miph[s->base]);
+        s->gldirty = 0;
     }
     exact = aligned && s->base == 0 && fabs(rw - s->mipw[0]) < snap && fabs(rh - s->miph[0]) < snap
         && (r->mode != GalaxyReturn || (fabs(left - lround(left)) < snap && fabs(top - lround(top)) < snap));
@@ -1735,7 +1740,7 @@ galaxyrenderhud(void)
 {
     GalaxyScene *r = &galaxyscene;
     XRenderColor shade = {0x0400, 0x0600, 0x0c00, 0xc800};
-    char line[2][128];
+    char line[2][200];
     double sum = 0, fps;
     int i, n = 0, k, w = 0, lh, x, y;
     XGlyphInfo ext;
@@ -1746,9 +1751,9 @@ galaxyrenderhud(void)
         sum += r->gaps[i];
     fps = sum > 0 ? n / sum : 0;
     snprintf(line[0], sizeof line[0], "%.0f fps  ·  渲染 %.1f ms  ·  质量 %d", fps, r->lastcost * 1000, r->quality);
-    snprintf(line[1], sizeof line[1], "GPU 合成 %.2f ms/帧  ·  CPU 扫描 %.2f ms/帧  ·  %s",
-            r->frames ? galaxygl.gputime / r->frames * 1000 : 0, r->frames ? r->heatcost / r->frames * 1000 : 0,
-            galaxymodename[r->mode]);
+    snprintf(line[1], sizeof line[1], "GPU 合成 %.2f ms/帧  ·  截图刷新 %d 张 / 平均 %.2f ms  ·  CPU 扫描 %.2f ms/帧  ·  %s",
+            r->frames ? galaxygl.gputime / r->frames * 1000 : 0, r->refreshn, r->refreshn ? r->refreshsum / r->refreshn * 1000 : 0,
+            r->frames ? r->heatcost / r->frames * 1000 : 0, galaxymodename[r->mode]);
     for (k = 0; k < 2; k++) {
         XftTextExtentsUtf8(dpy, r->titlefont, (XftChar8 *)line[k], strlen(line[k]), &ext);
         w = MAX(w, ext.xOff);

@@ -453,7 +453,7 @@ galaxyquiet(void)
 
 /* 遮罩视口中心所在显示器的刷新率 (XRandR 当前模式的 dotClock / (hTotal * vTotal)); 查不到时用 GALAXYORBITFPS */
 static double
-galaxyrefresh(void)
+galaxyrefreshhz(void)
 {
     GalaxyScene *r = &galaxyscene;
     XRRScreenResources *res;
@@ -1064,6 +1064,36 @@ galaxydumpframe(void)
     XDestroyImage(img);
 }
 
+/* 卡片实时刷新: 驻留时每帧最多刷一张, 轮转; 只刷画面里显示截图面板的卡片, 同一张至少隔 2s (安静模式 6s) */
+static void
+galaxyrefreshstep(double now)
+{
+    GalaxyScene *r = &galaxyscene;
+    GalaxyStar *s;
+    double gap = r->quiet ? 6 : 2, t0, cost;
+    int k, i;
+
+    if (r->mode != GalaxyOrbit || r->nstars < 1 || r->fakestep > 0)    /* 确定性测试时不刷新 (窗口内容会变) */
+        return;
+    for (k = 0; k < r->nstars; k++) {
+        i = (r->refreshi + k) % r->nstars;
+        s = &r->stars[i];
+        if (now - s->refreshat < gap || s->born > 0 || s->moveat > 0 || i == r->dragstar || !galaxyonview(s->p)
+                || s->lod < .3 || s->vis < .2)
+            continue;
+        r->refreshi = i + 1;
+        s->refreshat = now;
+        t0 = galaxynow();
+        if (galaxyrefresh(s)) {
+            cost = galaxynow() - t0;
+            r->refreshn++;
+            r->refreshsum += cost;
+            r->refreshmax = MAX(r->refreshmax, cost);
+        }
+        return;
+    }
+}
+
 static void
 galaxytick(void)
 {
@@ -1184,6 +1214,7 @@ galaxytick(void)
     } else {
         galaxyupdateevents(now, dt);
         galaxyupdatescene(r->stage, r->motion, dt);
+        galaxyrefreshstep(now);
         galaxyheatstep(now);
     }
     r->phasecost[0] += galaxynow() - begin;
@@ -1679,7 +1710,7 @@ galaxy(const Arg *arg)
     r->glowscale = MAX(.55, MIN(1, 1.1 - .015 * count));
     r->trace = getenv("GALAXY_TRACE") != NULL;
     r->quiet = galaxyquiet();
-    r->refresh = galaxyrefresh();
+    r->refresh = galaxyrefreshhz();
     r->nebseed[0] = 40 * galaxyhash((unsigned int)t0.tv_nsec);
     r->nebseed[1] = 40 * galaxyhash((unsigned int)t0.tv_nsec ^ 0x9e3779b9u);
     r->fxgap = GALAXY_FXGAP * (r->quiet ? 2.5 : 1);

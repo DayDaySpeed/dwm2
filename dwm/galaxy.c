@@ -151,8 +151,9 @@ typedef struct {
     Pixmap mippix[GALAXYMIPS];
     Picture mip[GALAXYMIPS];
     int mipw[GALAXYMIPS], miph[GALAXYMIPS];
-    unsigned int gltex;         /* 截图的 GL 纹理 (带 mip 链), 第一次画时建; glfail: 建不了, 走 XRender */
-    int glfail;
+    unsigned int gltex, glsrc;  /* 截图的 GL 纹理 (带 mip 链), 第一次画时建; glsrc / glpix: 读截图用的纹理和 GLX pixmap */
+    unsigned long glpix;
+    int glfail, gldirty;        /* 建不了 (走 XRender) / 截图刷新过, 下次画时重拷 */
     GalaxyVec home, detach;      /* 桌面平面 z=0 上的起点 / 脱离桌面后的位置 */
     double drx, dry, drz;       /* 脱离桌面时的卡片旋转 */
     double radius, angle, speed, rock, delay;
@@ -171,6 +172,7 @@ typedef struct {
     double kw, kh, rkw, rkh, lw, lh;
     int land;
     GalaxyVec lpos;
+    double refreshat;           /* 上次刷新截图的时刻 */
     int urgent, pid;            /* 窗口请求关注 (红星) / 进程号 (_NET_WM_PID, 0 表示不知道) */
     double heat, heatt;         /* 进程 (含子进程) CPU 占用 (核数): 平滑后的 / 最近一轮扫描的 */
     unsigned long long cpuprev; /* 上一轮扫描时子树累计的 CPU 时间 (jiffies) */
@@ -249,6 +251,9 @@ typedef struct {
     Visual *argbvisual;
     Colormap argbcmap;
     int frontused;
+    /* 卡片实时刷新: 轮转位置 / 本段统计 */
+    int refreshi, refreshn;
+    double refreshsum, refreshmax;
     /* CPU 色温: 每帧增量扫描 /proc, 一轮扫完按进程树汇总 */
     void *heatdir;
     struct GalaxyProc { int pid, ppid; unsigned long long t; } *procs;

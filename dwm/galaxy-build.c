@@ -140,6 +140,47 @@ done:
         XFreePixmap(dpy, tmp);
 }
 
+static void galaxyfreestar(GalaxyStar *s);
+
+/* 重新截一张卡片 (驻留时轮流刷新): 大小变了整张重截, 否则重画最大一级再缩出 mip; GL 纹理作废, 下次画时重建 */
+static int
+galaxyrefresh(GalaxyStar *s)
+{
+    XRenderPictureAttributes pa = {.subwindow_mode = IncludeInferiors};
+    XRenderColor clear = {0, 0, 0, 0};
+    XRenderPictFormat *fmt;
+    XWindowAttributes wa;
+    Client *c = s->valid ? wintoclient(s->win) : NULL;
+    Picture src;
+    int l, full = s->base == 0;
+
+    if (!c || HIDDEN(c) || !s->snap || s->died || !XGetWindowAttributes(dpy, s->win, &wa) || wa.map_state != IsViewable
+            || !(fmt = XRenderFindVisualFormat(dpy, wa.visual)))
+        return 0;
+    if (wa.width != s->w || wa.height != s->h) {
+        galaxyfreestar(s);
+        s->snap = 0;
+        s->w = MAX(1, wa.width);
+        s->h = MAX(1, wa.height);
+        s->hidden = 0;
+        galaxycapture(s, c, full);
+        return 1;
+    }
+    if (!(src = XRenderCreatePicture(dpy, s->win, fmt, CPSubwindowMode, &pa)))
+        return 0;
+    if (!full) {
+        galaxyaffine(src, (double)s->w / s->mipw[1], (double)s->h / s->miph[1], 0, 0);
+        XRenderSetPictureFilter(dpy, src, FilterBilinear, NULL, 0);
+    }
+    XRenderFillRectangle(dpy, PictOpSrc, s->mip[s->base], &clear, 0, 0, s->mipw[s->base], s->miph[s->base]);
+    XRenderComposite(dpy, PictOpOver, src, None, s->mip[s->base], 0, 0, 0, 0, 0, 0, s->mipw[s->base], s->miph[s->base]);
+    XRenderFreePicture(dpy, src);
+    for (l = s->base + 1; l < GALAXYMIPS && s->mip[l]; l++)
+        galaxyshrink(s->mip[l - 1], s->mipw[l - 1], s->miph[l - 1], s->mip[l], s->mipw[l], s->miph[l]);
+    s->gldirty = 1;
+    return 1;
+}
+
 static void
 galaxyfreemip(GalaxyStar *s, int l)
 {
@@ -156,7 +197,7 @@ galaxyfreestar(GalaxyStar *s)
 {
     int l;
 
-    galaxyglfreetex(&s->gltex);
+    galaxyglfreecard(&s->gltex, &s->glsrc, &s->glpix);
     for (l = 0; l < GALAXYMIPS; l++)
         galaxyfreemip(s, l);
 }
@@ -659,13 +700,14 @@ galaxylogseg(const char *how)
                 r->phasecost[4] / r->frames * 1000, r->phasecost[5] / r->frames * 1000,
                 galaxygl.gputime / r->frames * 1000, r->quality,
                 r->mode == GalaxyOrbit && now - r->lastinput > GALAXYIDLE ? " (idle)" : "", r->errors);
-        if (r->heatcost > 0) {
+        if (r->refreshn || r->heatcost > 0) {
             int i, hot = -1;
             for (i = 0; i < r->nstars; i++)
                 if (r->stars[i].heat > .05 && (hot < 0 || r->stars[i].heat > r->stars[hot].heat))
                     hot = i;
-            fprintf(r->log, "galaxy %s: heat scan %.2fms/frame, hottest %s %.2f\n", how,
-                    r->heatcost / r->frames * 1000, hot >= 0 ? r->stars[hot].title : "-", hot >= 0 ? r->stars[hot].heat : 0);
+            fprintf(r->log, "galaxy %s: refresh %d cards avg %.2fms max %.2fms, heat scan %.2fms/frame, hottest %s %.2f\n", how, r->refreshn,
+                    r->refreshn ? r->refreshsum / r->refreshn * 1000 : 0, r->refreshmax * 1000, r->heatcost / r->frames * 1000,
+                    hot >= 0 ? r->stars[hot].title : "-", hot >= 0 ? r->stars[hot].heat : 0);
         }
         fflush(r->log);
     }
@@ -673,7 +715,8 @@ galaxylogseg(const char *how)
     r->rendersum = r->rendermax = 0;
     memset(r->phasecost, 0, sizeof r->phasecost);
     galaxygl.gputime = 0;
-    r->heatcost = 0;
+    r->refreshn = 0;
+    r->refreshsum = r->refreshmax = r->heatcost = 0;
     r->segstart = now;
 }
 

@@ -873,14 +873,38 @@ galaxyglfull(GLuint prog, GLuint src, int w, int h, int sw, int sh)
     glDrawArrays(GL_TRIANGLES, 0, 3);
 }
 
-/* 截图 pixmap (ARGB, 预乘) -> 自己的 RGBA8 纹理 + mip 链 (三线性 / 各向异性过滤). 失败返回 0 */
+/* 截图 pixmap -> 卡片纹理: 经 GLX pixmap 逐像素拷贝 (统一成第 0 行在上), 再生成 mip 链 */
+static void
+galaxyglcardcopy(GLXPixmap gp, GLuint src, GLuint t, int w, int h)
+{
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, src);
+    glXBindTexImageEXT(dpy, gp, GLX_FRONT_LEFT_EXT, NULL);
+    glBindFramebuffer(GL_FRAMEBUFFER, galaxygl.copyfbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t, 0);
+    glViewport(0, 0, w, h);
+    glDisable(GL_BLEND);
+    glDisable(GL_DEPTH_TEST);
+    glUseProgram(galaxygl.progcopy);
+    glUniform1i(glGetUniformLocation(galaxygl.progcopy, "src"), 0);
+    glUniform1f(glGetUniformLocation(galaxygl.progcopy, "flip"), galaxygl.yinv32);
+    glBindVertexArray(galaxygl.fullvao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glXReleaseTexImageEXT(dpy, gp, GLX_FRONT_LEFT_EXT);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);   /* 卸下, 删纹理时显存才能立即释放 */
+    glBindFramebuffer(GL_FRAMEBUFFER, galaxygl.fbo);
+    glBindTexture(GL_TEXTURE_2D, t);
+    glGenerateMipmap(GL_TEXTURE_2D);
+}
+
+/* 建卡片纹理 (三线性 / 各向异性过滤). GLX pixmap 和读它用的纹理留着: 截图刷新后用 galaxyglcardcopy 原地重拷,
+ * 不必每次分配显存 / 建 GLX pixmap. 失败返回 0 */
 static GLuint
-galaxyglcardtex(Pixmap pix, int w, int h)
+galaxyglcardtex(Pixmap pix, int w, int h, unsigned long *keep, unsigned int *srctex)
 {
     GLXPixmap gp;
     GLuint src, t;
     GLint maxsz = 0;
-    XErrorHandler old;
 
     if (!galaxygl.win || !galaxygl.progcopy || w < 1 || h < 1)
         return 0;
@@ -890,9 +914,7 @@ galaxyglcardtex(Pixmap pix, int w, int h)
     if (!(gp = galaxyglpixmap(pix, 1)))
         return 0;
     glGenTextures(1, &src);
-    glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, src);
-    glXBindTexImageEXT(dpy, gp, GLX_FRONT_LEFT_EXT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glGenTextures(1, &t);
@@ -900,46 +922,41 @@ galaxyglcardtex(Pixmap pix, int w, int h)
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glBindFramebuffer(GL_FRAMEBUFFER, galaxygl.copyfbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t, 0);
-    glViewport(0, 0, w, h);
-    glDisable(GL_BLEND);
-    glDisable(GL_DEPTH_TEST);
-    glUseProgram(galaxygl.progcopy);
-    glBindTexture(GL_TEXTURE_2D, src);
-    glUniform1i(glGetUniformLocation(galaxygl.progcopy, "src"), 0);
-    glUniform1f(glGetUniformLocation(galaxygl.progcopy, "flip"), galaxygl.yinv32);
-    glBindVertexArray(galaxygl.fullvao);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    glXReleaseTexImageEXT(dpy, gp, GLX_FRONT_LEFT_EXT);
-    glBindTexture(GL_TEXTURE_2D, t);
-    glGenerateMipmap(GL_TEXTURE_2D);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     if (galaxygl.aniso > 1)
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, MIN(8, galaxygl.aniso));
-    glBindFramebuffer(GL_FRAMEBUFFER, galaxygl.copyfbo);   /* 卸下, 否则删纹理时显存要等 FBO 换绑才释放 */
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
-    glBindFramebuffer(GL_FRAMEBUFFER, galaxygl.fbo);
-    glDeleteTextures(1, &src);
+    galaxyglcardcopy(gp, src, t, w, h);
     galaxygl.texmade++;
-    old = XSetErrorHandler(xerrordummy);
-    glXDestroyPixmap(dpy, gp);
-    XSync(dpy, False);
-    XSetErrorHandler(old);
+    *keep = gp;
+    *srctex = src;
     return t;
 }
 
+/* 释放卡片纹理 (要在释放截图的 X pixmap 之前) */
 static void
-galaxyglfreetex(GLuint *t)
+galaxyglfreecard(unsigned int *t, unsigned int *src, unsigned long *gp)
 {
-    if (!*t)
+    XErrorHandler old;
+
+    if (!*t && !*gp)
         return;
     if (galaxygl.win && (glXGetCurrentContext() == galaxygl.ctx || glXMakeCurrent(dpy, galaxygl.win, galaxygl.ctx))) {
-        glDeleteTextures(1, t);
-        galaxygl.texfreed++;
+        if (*t) {
+            glDeleteTextures(1, t);
+            galaxygl.texfreed++;
+        }
+        if (*src)
+            glDeleteTextures(1, src);
+        if (*gp) {
+            old = XSetErrorHandler(xerrordummy);
+            glXDestroyPixmap(dpy, *gp);
+            XSync(dpy, False);
+            XSetErrorHandler(old);
+        }
     }
-    *t = 0;
+    *t = *src = 0;
+    *gp = 0;
 }
 
 /* 画一张卡片进卡片层: q 屏幕四角 (左上 右上 右下 左下), z 镜头深度 (透视校正); exact: 与像素对齐的原尺寸, 逐像素采样 */
