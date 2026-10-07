@@ -205,13 +205,13 @@ galaxyrenderspace(void)
     }
 }
 
-/* GPU 星云 (光层最底下的一层薄雾和远景元素): 强度跟深空的溶解走, 揭开壁纸时一起淡出 */
+/* GPU 远景星空 (光层最底下): 跟深空的溶解走, 揭开壁纸时一起淡出 */
 static void
 galaxyrendernebula(void)
 {
     GalaxyScene *r = &galaxyscene;
 
-    galaxyglnebula(.14 * r->space * (1 - r->reveal), galaxynow(), 3, r->nebseed, r->gentle);
+    galaxyglnebula(r->space * (1 - r->reveal), galaxynow(), r->nebseed, r->gentle);
 }
 
 /* dwm 启动 (含原地重启) 时预先按当前显示器生成好 (约 85ms), 第一次按 Super+Z 时开场不再卡一下.

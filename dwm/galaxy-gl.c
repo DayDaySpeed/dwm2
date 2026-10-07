@@ -147,24 +147,14 @@ static const char *galaxyglfsup =
     "  o = s / 12.0;\n"
     "}\n";
 
-/* 程序化星云 (光层最先画的一层, 之后卡片挖洞会把它挡住): 值噪声 fbm + domain warp, 两层不同视差,
- * 一层很淡很柔的薄雾, 加两个远方星系、三颗偶尔闪烁的亮星、稀疏的闪烁星点和远处彗星; 作为远景: 偏冷灰、视差小、流动慢,
- * 四边渐隐、画面中央压暗 (不抢焦点); 噪声偏移 seed 每次随机. 外加稀疏的闪烁星点. view: 视口 (左上原点像素), cam: 镜头偏航 / 俯仰 */
+/* 远景星空 (光层最先画的一层, 之后卡片挖洞会把它挡住): 两个远方星系、三颗偶尔闪烁的亮星、稀疏的闪烁星点和远处彗星;
+ * 作为远景: 视差很小、动作很慢, 四边渐隐、画面中央压暗 (不抢焦点); 位置每次按 seed 随机. view: 视口 (左上原点像素), cam: 镜头偏航 / 俯仰 */
 static const char *galaxyglfsnebula =
     "#version 330 core\n"
     "in vec2 uv; out vec4 o;\n"
-    "uniform vec2 screen, cam, seed; uniform vec4 view; uniform float t, k, diag, still; uniform int oct;\n"
-    "uniform vec3 c0, c1, c2; uniform vec4 fg0[2], fg1[2], fs[3], comet;\n"
+    "uniform vec2 screen, cam, seed; uniform vec4 view; uniform float t, k, still;\n"
+    "uniform vec4 fg0[2], fg1[2], fs[3], comet;\n"
     "float h(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }\n"
-    "float n(vec2 p) {\n"
-    "  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);\n"
-    "  return mix(mix(h(i), h(i + vec2(1, 0)), f.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), f.x), f.y);\n"
-    "}\n"
-    "float fbm(vec2 p) {\n"
-    "  float v = 0.0, a = .5;\n"
-    "  for (int i = 0; i < 6; i++) { if (i >= oct) break; v += a * n(p); p = p * 2.03 + vec2(17.1, 9.2); a *= .5; }\n"
-    "  return v;\n"
-    "}\n"
     "";
 /* 着色器源码分两段 (C99 只保证 4095 字节以内的字符串字面量), 建程序时拼起来 */
 static const char *galaxyglfsnebula2 =
@@ -177,9 +167,6 @@ static const char *galaxyglfsnebula2 =
     /* 远景: 四边 / 四角渐隐 (不堆在角上), 画面中央压暗 (星系和卡片才是焦点) */
     "  float ed = min(min(q.x, 1.0 - q.x), min(q.y, hh - q.y));\n"
     "  float edge = .4 + .6 * smoothstep(0.0, .18, ed), cd = 1.0 - .45 * exp(-dot(c, c) / .05);\n"
-    /* 星云: 一层很淡、很柔的薄雾 (低频 fbm, 极慢流动, 视差很小), 颜色固定为偏冷灰的淡紫青 */
-    "  float f = fbm(q * 1.6 + cam * .1 + seed + vec2(t * .003, 0.0));\n"
-    "  col = mix(mix(c0, c1, .5), grey, .6) * smoothstep(.4, .95, f);\n"
     /* 远景元素 (视差只有星云远层的一半): 远方星系 (旋涡: 核心 + 两条对数螺旋臂, 极慢自转; 椭圆: 柔和光斑) */
     "  vec2 pq = q - cam * .03; vec3 far = vec3(0.0);\n"
     "  for (int i = 0; i < 2; i++) {\n"
@@ -209,10 +196,10 @@ static const char *galaxyglfsnebula2 =
     "  if (r < .02) {\n"
     "    vec2 sp = vec2(h(cell + 3.1), h(cell + 7.3)) * .7 + .15;\n"
     "    float tw = still > .5 ? .8 : .55 + .45 * sin(t * (1.1 + 2.5 * h(cell + 1.7)) + 6.28 * h(cell + 9.1));\n"
-    "    col += mix(vec3(.75, .85, 1.0), vec3(1.0, .88, .7), h(cell + 5.5)) * exp(-dot(fp - sp, fp - sp) * 22.0 * 22.0 / 1.6) * tw * .3 * cd;\n"
+    "    col += mix(vec3(.75, .85, 1.0), vec3(1.0, .88, .7), h(cell + 5.5)) * exp(-dot(fp - sp, fp - sp) * 22.0 * 22.0 / 1.6) * tw * .045 * cd;\n"
     "  }\n"
     "  col *= k;\n"
-    /* 远景元素只跟深空的淡入淡出走 (k / .14), 不再乘星云本身的强度 */
+    /* k: 深空的淡入淡出 (开场溶解进来, 揭开壁纸时一起淡出) */
     /* 远处彗星: 头部一个小光点带淡晕, 彗尾沿运动反方向延伸约 12% 视口宽, 逐渐张开、指数变淡 */
     "  if (comet.w > .001) {\n"
     "    vec2 dv = pq - comet.xy, dir = vec2(cos(comet.z), sin(comet.z));\n"
@@ -222,7 +209,7 @@ static const char *galaxyglfsnebula2 =
     "    float head = exp(-d2 / 16.0) + .3 * exp(-d2 / 400.0);\n"
     "    far += mix(vec3(.8, .92, 1.0), grey, .2) * (head * .35 + tail * .2) * comet.w / max(cd, .01);\n"
     "  }\n"
-    "  col += far * edge * cd * (k / .14);\n"
+    "  col += far * edge * cd * k;\n"
     "  o = vec4(col, 0.0);\n"
     "}\n";
 
@@ -817,22 +804,13 @@ galaxyglglow(int shape, const double rgb[3], double core, double x, double y, do
 /* 星云: 每帧光层清空后最先画 (加法), 之后卡片挖洞会把卡片后面的部分擦掉.
  * k: 强度; t: 秒 (流动); oct: fbm 倍频数 (降级时减少); 颜色取极光配色的紫 / 青 / 玫粉 */
 static void
-galaxyglnebula(double k, double t, int oct, const double seed[2], int still)
+galaxyglnebula(double k, double t, const double seed[2], int still)
 {
     GalaxyScene *r = &galaxyscene;
     GLuint p = galaxygl.prognebula;
-    static const int pick[3] = { 9, 4, 5 };
-    float c[3][3];
-    int i;
 
     if (!galaxygl.win || !p || k < .004)
         return;
-    for (i = 0; i < 3; i++) {
-        unsigned int v = galaxyfxcolor[pick[i]];
-        c[i][0] = (v >> 16 & 255) / 255.0f;
-        c[i][1] = (v >> 8 & 255) / 255.0f;
-        c[i][2] = (v & 255) / 255.0f;
-    }
     glBindFramebuffer(GL_FRAMEBUFFER, galaxygl.fbo);
     glViewport(0, 0, galaxygl.fw, galaxygl.fh);
     glUseProgram(p);
@@ -841,8 +819,6 @@ galaxyglnebula(double k, double t, int oct, const double seed[2], int still)
     glUniform2f(glGetUniformLocation(p, "cam"), (float)r->cam.ry, (float)-r->cam.rx);
     glUniform1f(glGetUniformLocation(p, "t"), (float)t);
     glUniform1f(glGetUniformLocation(p, "k"), (float)k);
-    glUniform1f(glGetUniformLocation(p, "diag"), (float)(GALAXYDIAG * GALAXYPI / 180));
-    glUniform1i(glGetUniformLocation(p, "oct"), oct);
     glUniform2f(glGetUniformLocation(p, "seed"), (float)seed[0], (float)seed[1]);
     glUniform1f(glGetUniformLocation(p, "still"), still ? 1 : 0);
     {   /* 远景元素 (galaxyfarinit 生成) */
@@ -858,9 +834,6 @@ galaxyglnebula(double k, double t, int oct, const double seed[2], int still)
         glUniform4fv(glGetUniformLocation(p, "fs"), 3, &r->fars[0][0]);
         glUniform4fv(glGetUniformLocation(p, "comet"), 1, r->farcomet);
     }
-    glUniform3fv(glGetUniformLocation(p, "c0"), 1, c[0]);
-    glUniform3fv(glGetUniformLocation(p, "c1"), 1, c[1]);
-    glUniform3fv(glGetUniformLocation(p, "c2"), 1, c[2]);
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE);
     glDisable(GL_DEPTH_TEST);
