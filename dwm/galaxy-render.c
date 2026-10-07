@@ -1146,17 +1146,27 @@ galaxyrenderholdfx(void)
                     < fmod(galaxyorbitangle(&r->stars[order[j - 1]], GALAXYHOLD, r->motion) + 100 * GALAXYPI, 2 * GALAXYPI); j--) {
                 l = order[j]; order[j] = order[j - 1]; order[j - 1] = l;
             }
-        galaxybandcolor(galaxytintrgb(GALAXYTAGTINT(g->tag), .4));
+        /* 细粒子流从核心开始依次长出到各张卡片 (每段晚 0.12s), 停留后散开成星尘 */
         if (env > .01 && n) {
-            for (i = 0; i < n; i++) {
+            double rgb0[3], rgb1[3], dis = galaxysmoothstep((local - 1.4) / 1), rev, d;
+            GalaxyMat flat = {{{0, 0, 0}, {0, 0, 0}, {0, 0, 0}}};
+            GalaxyVec from;
+
+            galaxytintcolor(GALAXYTAGTINT(g->tag), .3, rgb0);
+            galaxytintcolor(GALAXYTAGTINT(g->tag), -1, rgb1);
+            for (i = 0; i < n && (n > 1 || i == 0); i++) {
+                if (n == 2 && i == 1)
+                    break;
                 st = &r->stars[order[i]];
-                hp = r->stars[order[(i + 1) % n]].p;
-                if (n > 1 && (n > 2 || i == 0))
-                    galaxyband(&st->p, &hp, .2 * env, 1.1);
-                galaxysprite(GalaxyHalo, GALAXYTAGTINT(g->tag), st->p.x, st->p.y, 12, .6 * env);
+                from = i ? r->stars[order[i - 1]].pos : g->pos;
+                if (i == 0 && !g->p.ok)
+                    continue;
+                rev = galaxysmoothstep((local - .12 * i) / .45);
+                d = galaxylen(galaxysub(st->pos, from));
+                if (rev > .01)
+                    galaxyglemitter(2, from, &flat, st->pos, .5, d * (.02 + .25 * dis), 1, rev, local, rgb0, rgb1,
+                            .3 * env, .8 * r->starscale, 700, 61.3 + i + k);
             }
-            if (g->p.ok)
-                galaxyband(&r->stars[order[0]].p, &g->p, .14 * env, .9);
         }
     }
     /* 核心光桥: 一道光线连起两个核心, 一个亮点沿光线跑过去 */
@@ -1164,13 +1174,19 @@ galaxyrenderholdfx(void)
         g = &r->galaxies[r->bri];
         h = &r->galaxies[r->brj];
         env = f * galaxysmoothstep(local / .25) * (1 - galaxysmoothstep((local - 1.3) / .6));
+        /* 物质流: 粒子从一个核心沿弯曲的路径流向另一个 (先长出再流动), 到达时在目标核心溅起一小团粒子 */
         if (env > .01 && g->p.ok && h->p.ok) {
-            galaxybandcolor(galaxymixrgb(galaxytintrgb(GALAXYTAGTINT(g->tag), .45), galaxytintrgb(GALAXYTAGTINT(h->tag), .45), .5));
-            galaxyband(&g->p, &h->p, .14 * env, 1.2);
-            galaxyband(&g->p, &h->p, .05 * env, 5);
-            u = galaxyeaseinoutcubic(galaxyphase(local, .25, 1.15));
-            if (u > 0 && u < 1)
-                galaxysprite(GalaxyHalo, GALAXYTAGTINT(u < .5 ? g->tag : h->tag), galaxymix(g->p.x, h->p.x, u), galaxymix(g->p.y, h->p.y, u), 18, .9 * env);
+            double rgb0[3], rgb1[3], d = galaxylen(galaxysub(h->pos, g->pos));
+            GalaxyVec bend = galaxyscale(galaxynormalize(galaxycross(galaxysub(h->pos, g->pos), galaxyapply(r->world, galaxyv(0, 1, 0)))), .18 * d);
+            GalaxyMat curve = {{{0, bend.x, 0}, {0, bend.y, 0}, {0, bend.z, 0}}};
+
+            galaxytintcolor(GALAXYTAGTINT(g->tag), -1, rgb0);
+            galaxytintcolor(GALAXYTAGTINT(h->tag), -1, rgb1);
+            galaxyglemitter(2, g->pos, &curve, h->pos, .7, .035 * d, 1, galaxysmoothstep(local / .6), local, rgb0, rgb1,
+                    .35 * env, .9 * r->starscale, 2200, 71.9 + k);
+            if (local > .6)
+                galaxyglemitter(0, h->pos, &curve, h->pos, .06 * d / .8, 0, .8, .1, local - .6, rgb0, rgb1, .3 * env,
+                        .8 * r->starscale, 900, 77.3 + k);
         }
     }
     /* 超新星: 核心先收缩变暗 GALAXYNOVAPRE 秒, 然后一个粒子球壳爆发 (白 -> 蓝紫 -> 橙, 带纤维结构, 减速扩张),
