@@ -19,7 +19,7 @@
 #define GALAXYBLOOMW    .75f      /* 泛光逐级权重: 第 i 级 (越往后越宽) 的权重是它的 i 次方 */
 #define GALAXYBLOOMK    1.8       /* 加权后总能量变小 (1+.75+.56+... 约 3.3, 原来等权是 6 级), 整体补偿 */
 
-enum { GalaxyGLHalo, GalaxyGLDisc, GalaxyGLSpike, GalaxyGLLine, GalaxyGLRect, GalaxyGLDust, GalaxyGLBokeh };
+enum { GalaxyGLHalo, GalaxyGLDisc, GalaxyGLSpike, GalaxyGLLine, GalaxyGLRect, GalaxyGLDust, GalaxyGLBokeh, GalaxyGLStar };
 
 typedef struct { float a[4], b[4], c0[4], c1[4]; } GalaxyGLInst;
 
@@ -99,9 +99,11 @@ static const char *galaxyglfslight =
     "    else if (kind == 5) a = exp(-d * d / .12) * (1.0 - smoothstep(.8, 1.0, d));\n"
     /* 焦外光斑: 实心圆盘, 边缘略亮 (镜头的散景) */
     "    else if (kind == 6) a = (1.0 - smoothstep(.86, 1.0, d)) * (.6 + .4 * smoothstep(.55, .92, d));\n"
+    /* 恒星核心 (点光源): 很亮很小的芯 + 指数衰减的眩光 + 一圈极淡的散射环; 没有平的圆盘边 */
+    "    else if (kind == 7) a = (exp(-d * d / .01) + .4 * exp(-d * 7.0) + .05 * exp(-pow((d - .62) / .05, 2.0))) * (1.0 - smoothstep(.85, 1.0, d));\n"
     "    else a = 1.0 - smoothstep(.4, 1.0, d);\n"
     "    a = clamp(a, 0.0, 1.0);\n"
-    "    col = mix(vec3(1.0), fc0.rgb, smoothstep(0.0, .45, d) * fc0.a);\n"
+    "    col = mix(vec3(1.0), fc0.rgb, smoothstep(0.0, kind == 7 ? .22 : .45, d) * fc0.a);\n"
     "  }\n"
     "  float al = a * fb.y;\n"
     "  if (al < .0005) discard;\n"
@@ -797,7 +799,7 @@ galaxyglglow(int shape, const double rgb[3], double core, double x, double y, do
             || x - radius > galaxygl.fw || y - radius > galaxygl.fh)
         return;
     g = galaxyglpush();
-    *g = (GalaxyGLInst){{x, y, radius, angle}, {0, alpha, shape == GalaxySpike ? GalaxyGLSpike : shape == GalaxyDisc ? GalaxyGLDisc : GalaxyGLHalo, -1},
+    *g = (GalaxyGLInst){{x, y, radius, angle}, {0, alpha, shape == GalaxySpike ? GalaxyGLSpike : shape == GalaxyDisc ? GalaxyGLDisc : shape == GalaxyPoint ? GalaxyGLStar : GalaxyGLHalo, -1},
         {rgb[0], rgb[1], rgb[2], core}, {0}};
 }
 

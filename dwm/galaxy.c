@@ -81,7 +81,7 @@
 enum { GalaxyOff, GalaxyIntro, GalaxyOrbit, GalaxyCollapse, GalaxyReturn, GalaxyRest };
 enum { GalaxyFlyHome, GalaxyLand };    /* 回程: 飞回原位 / 进入选中的窗口 (目标 tag 已在遮罩下切好) */
 enum { GalaxyDustItem, GalaxyCoreItem, GalaxyStarItem, GalaxyRingItem, GalaxyClusterItem, GalaxyStreakItem, GalaxySunItem };
-enum { GalaxyHalo, GalaxyDisc, GalaxySpike, GalaxyShapes };   /* 柔光 / 实心光点 / 衍射芒 */
+enum { GalaxyHalo, GalaxyDisc, GalaxySpike, GalaxyPoint, GalaxyShapes };   /* 柔光 / 实心光点 / 衍射芒 / 恒星核心 (点光源) */
 /* sprite 色调: 暖白 / 冷蓝 / 橙红 (urgent, 高 CPU) / 天象用色 / 每个 tag 一个颜色. sprite 都是白芯彩晕: 中心过曝成白, 颜色在衰减部分 */
 enum { GalaxyWarm, GalaxyCool, GalaxyHot, GalaxyGold, GalaxyCyan, GalaxyRose, GalaxyGreen, GalaxyOrange, GalaxyBlue, GalaxyViolet,
     GalaxyTag0, GalaxyTints = GalaxyTag0 + 9 };

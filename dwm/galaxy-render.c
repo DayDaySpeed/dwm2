@@ -541,12 +541,15 @@ galaxyrenderwindow(GalaxyStar *s, double vis, double tint, double light)
 static void
 galaxyrenderglow(int tint, GalaxyProj p, double radius, double alpha, double blur, double halo, double outer)
 {
-    double rr = MIN(radius * p.scale, 80);   /* 俯冲时核心近在眼前: 限制光晕半径, 避免整屏的大面积合成 */
+    /* 点光源: 靠近时核心只按透视比例的平方根慢慢变大 (有上限), 主要是变亮, 多出的能量交给眩光和泛光;
+     * 眩光越大单位面积越淡 (能量守恒), 近在眼前也不会糊成一张白饼 */
+    double s = MAX(.05, p.scale), core = MIN(24, radius * sqrt(s)), boost = MIN(1.8, pow(s, .3));
+    double glare = core * (3.5 + 2.5 * MIN(1, s / 3)) * (1 + .5 * blur);
 
     if (outer > 0)
-        galaxysprite(GalaxyHalo, tint, p.x, p.y, rr * 7 * (1 + .3 * blur), outer * alpha);
-    galaxysprite(GalaxyHalo, tint, p.x, p.y, rr * (3 + .8 * blur), halo * alpha);
-    galaxysprite(GalaxyDisc, tint, p.x, p.y, MAX(.7, rr), alpha * (1 - .5 * blur));
+        galaxysprite(GalaxyHalo, tint, p.x, p.y, glare * 2.2, outer * alpha * boost / MAX(1, glare * 2.2 / 180));
+    galaxysprite(GalaxyHalo, tint, p.x, p.y, glare, halo * alpha * boost / MAX(1, glare / 110));
+    galaxysprite(GalaxyPoint, tint, p.x, p.y, MAX(1.5, core * 2.4), MIN(1, alpha * (1 - .5 * blur) * boost));
 }
 
 /* 细光带 (轨道环 / 尾迹 / 冲击环): 软件画进 a8 画布 (按距离算覆盖率的抗锯齿胶囊), 同一画布内取最大值, 重叠处不叠亮.
@@ -711,8 +714,9 @@ galaxyrendersun(void)
         if (!p.ok)
             continue;
         w = 1 + .12 * sin(th * 2 + i * GALAXYPI);
-        galaxyrenderglow(i ? GalaxyWarm : GalaxyCool, p, (i ? 14 : 17) * r->starscale * w * (1 + .5 * r->sunpulse), MIN(1, .5 * a),
-                galaxydepthblur(p.z), 1.1, .45 * r->glowscale * (1 + r->sunpulse));
+        /* 脉冲时只让光晕稍微加强 (气势交给涟漪光环), 不再鼓成一个白色大球 */
+        galaxyrenderglow(i ? GalaxyWarm : GalaxyCool, p, (i ? 14 : 17) * r->starscale * w * (1 + .2 * r->sunpulse), MIN(1, .5 * a),
+                galaxydepthblur(p.z), .55 * (1 + .3 * r->sunpulse), .25 * r->glowscale * (1 + .5 * r->sunpulse));
         galaxysprite(GalaxySpike, i ? GalaxyWarm : GalaxyCool, p.x, p.y, MIN(220, (90 + 60 * r->sunpulse) * w * MAX(.5, p.scale)),
                 MIN(1, .55 * a) * galaxynearfade(p.z));
         if (chime > .01)    /* 整点报时: 双星金色爆闪 */
