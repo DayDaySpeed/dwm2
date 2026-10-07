@@ -327,12 +327,12 @@ galaxyrenderspace(void)
     }
 }
 
-/* GPU 星云 (光层最底下): 强度跟深空的溶解走, 揭开壁纸时一起淡出; 降级 / 安静模式减少 fbm 倍频 */
+/* GPU 星云 (光层最底下): 强度跟深空的溶解走, 揭开壁纸时一起淡出; 降级 / 安静模式减少 fbm 倍频; 噪声偏移每次随机 */
 static void
 galaxyrendernebula(void)
 {
     GalaxyScene *r = &galaxyscene;
     double q = r->mode == GalaxyOrbit ? r->qualityvisual : 0;
 
-    galaxyglnebula(.5 * r->space * (1 - r->reveal), galaxynow(), q > 2 ? 3 : r->quiet ? 4 : 5);
+    galaxyglnebula(.5 * r->space * (1 - r->reveal), galaxynow(), q > 2 ? 3 : r->quiet ? 4 : 5, r->nebseed);
 }

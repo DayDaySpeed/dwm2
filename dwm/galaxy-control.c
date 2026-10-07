@@ -1680,6 +1680,8 @@ galaxy(const Arg *arg)
     r->trace = getenv("GALAXY_TRACE") != NULL;
     r->quiet = galaxyquiet();
     r->refresh = galaxyrefresh();
+    r->nebseed[0] = 40 * galaxyhash((unsigned int)t0.tv_nsec);
+    r->nebseed[1] = 40 * galaxyhash((unsigned int)t0.tv_nsec ^ 0x9e3779b9u);
     r->fxgap = GALAXY_FXGAP * (r->quiet ? 2.5 : 1);
     r->ndust = MAX(70, MIN(140, 140 - 2 * count)) / (r->quiet ? 2 : 1);
     r->ntrail = count > 24 ? 6 : GALAXYTRAIL;

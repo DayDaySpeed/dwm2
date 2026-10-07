@@ -142,11 +142,11 @@ static const char *galaxyglfsup =
     "}\n";
 
 /* 程序化星云 (光层最先画的一层, 之后卡片挖洞会把它挡住): 值噪声 fbm + domain warp, 两层不同视差,
- * 沿轨道盘面的对角线方向更浓; 极慢地流动. 外加稀疏的闪烁星点. view: 视口 (左上原点像素), cam: 镜头偏航 / 俯仰 */
+ * 集中在银河带上 (左上 -> 右下, 与底层的银河 / 暗尘带同向), 带外只剩很淡的一层; 极慢地流动; 噪声偏移 seed 每次随机. 外加稀疏的闪烁星点. view: 视口 (左上原点像素), cam: 镜头偏航 / 俯仰 */
 static const char *galaxyglfsnebula =
     "#version 330 core\n"
     "in vec2 uv; out vec4 o;\n"
-    "uniform vec2 screen, cam; uniform vec4 view; uniform float t, k, diag; uniform int oct;\n"
+    "uniform vec2 screen, cam, seed; uniform vec4 view; uniform float t, k, diag; uniform int oct;\n"
     "uniform vec3 c0, c1, c2;\n"
     "float h(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }\n"
     "float n(vec2 p) {\n"
@@ -161,16 +161,16 @@ static const char *galaxyglfsnebula =
     "void main() {\n"
     "  vec2 px = vec2(uv.x * screen.x, (1.0 - uv.y) * screen.y), q = (px - view.xy) / view.z;\n"
     "  if (q.x < 0.0 || q.y < 0.0 || q.x > 1.0 || q.y > view.w / view.z) discard;\n"
-    "  vec2 d = vec2(cos(diag), -sin(diag)), c = q - vec2(.5, .5 * view.w / view.z);\n"
+    "  vec2 d = vec2(cos(diag), sin(diag)), c = q - vec2(.5, .5 * view.w / view.z);\n"
     "  float across = dot(c, vec2(-d.y, d.x)), along = dot(c, d);\n"
     "  vec3 col = vec3(0.0);\n"
     "  for (int l = 0; l < 2; l++) {\n"
     "    float s = l == 0 ? 2.2 : 3.6, par = l == 0 ? .12 : .3;\n"
-    "    vec2 p = q * s + cam * par * s + vec2(3.1 * float(l), 7.7 * float(l));\n"
+    "    vec2 p = q * s + cam * par * s + seed + vec2(3.1 * float(l), 7.7 * float(l));\n"
     "    vec2 w = vec2(fbm(p + vec2(0.0, t * .012)), fbm(p + vec2(5.2, 1.3) - vec2(t * .009, 0.0)));\n"
     "    float f = fbm(p + 1.7 * w + vec2(t * .004));\n"
     "    float band = exp(-across * across / (l == 0 ? .09 : .05)) * (.55 + .45 * fbm(vec2(along * 2.0, 4.0 + float(l))));\n"
-    "    float m = smoothstep(.42, .82, f) * (.35 + .65 * band);\n"
+    "    float m = smoothstep(.42, .82, f) * (.08 + .92 * band);\n"
     "    vec3 hue = mix(c0, c1, smoothstep(.3, .75, w.x));\n"
     "    hue = mix(mix(hue, c2, smoothstep(.55, .9, w.y) * .7), vec3(.5), .35);\n"
     "    col += hue * m * m * (l == 0 ? .55 : .35);\n"
@@ -735,7 +735,7 @@ galaxyglglow(int shape, const double rgb[3], double core, double x, double y, do
 /* 星云: 每帧光层清空后最先画 (加法), 之后卡片挖洞会把卡片后面的部分擦掉.
  * k: 强度; t: 秒 (流动); oct: fbm 倍频数 (降级时减少); 颜色取极光配色的紫 / 青 / 玫粉 */
 static void
-galaxyglnebula(double k, double t, int oct)
+galaxyglnebula(double k, double t, int oct, const double seed[2])
 {
     GalaxyScene *r = &galaxyscene;
     GLuint p = galaxygl.prognebula;
@@ -761,6 +761,7 @@ galaxyglnebula(double k, double t, int oct)
     glUniform1f(glGetUniformLocation(p, "k"), (float)k);
     glUniform1f(glGetUniformLocation(p, "diag"), (float)(GALAXYDIAG * GALAXYPI / 180));
     glUniform1i(glGetUniformLocation(p, "oct"), oct);
+    glUniform2f(glGetUniformLocation(p, "seed"), (float)seed[0], (float)seed[1]);
     glUniform3fv(glGetUniformLocation(p, "c0"), 1, c[0]);
     glUniform3fv(glGetUniformLocation(p, "c1"), 1, c[1]);
     glUniform3fv(glGetUniformLocation(p, "c2"), 1, c[2]);
