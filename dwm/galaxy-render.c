@@ -574,7 +574,7 @@ galaxyband(GalaxyProj *pa, GalaxyProj *pb, double a, double hw)
 
     if (a < 1 / 64.0)
         return;
-    galaxyglline(pa, pb, r->bandcolor, r->bandcolor, MIN(a, .25), MIN(hw, 9));
+    galaxyglstream(pa, pb, r->bandcolor, r->bandcolor, MIN(a, .25), MIN(hw, 9));
 }
 
 /* 画布上是否有尚未合成、且与这个屏幕矩形相交的光带 */

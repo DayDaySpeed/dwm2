@@ -19,7 +19,7 @@
 #define GALAXYBLOOMW    .75f      /* 泛光逐级权重: 第 i 级 (越往后越宽) 的权重是它的 i 次方 */
 #define GALAXYBLOOMK    1.8       /* 加权后总能量变小 (1+.75+.56+... 约 3.3, 原来等权是 6 级), 整体补偿 */
 
-enum { GalaxyGLHalo, GalaxyGLDisc, GalaxyGLSpike, GalaxyGLLine, GalaxyGLRect, GalaxyGLDust, GalaxyGLBokeh, GalaxyGLStar, GalaxyGLSurface };
+enum { GalaxyGLHalo, GalaxyGLDisc, GalaxyGLSpike, GalaxyGLLine, GalaxyGLRect, GalaxyGLDust, GalaxyGLBokeh, GalaxyGLStar, GalaxyGLSurface, GalaxyGLStream };
 
 typedef struct { float a[4], b[4], c0[4], c1[4]; } GalaxyGLInst;
 
@@ -61,12 +61,12 @@ static const char *galaxyglvslight =
     "layout(location=0) in vec4 ia; layout(location=1) in vec4 ib;\n"
     "layout(location=2) in vec4 ic0; layout(location=3) in vec4 ic1;\n"
     "uniform vec2 screen;\n"
-    "out vec2 vl; out float vt; flat out vec4 fb; flat out vec4 fc0; flat out vec4 fc1; flat out vec2 flen;\n"
+    "out vec2 vl; out float vt; flat out vec4 fb; flat out vec4 fc0; flat out vec4 fc1; flat out vec2 flen; flat out float frad;\n"
     "void main() {\n"
     "  vec2 c = vec2(gl_VertexID & 1, gl_VertexID >> 1) * 2.0 - 1.0, pos;\n"
     "  int kind = int(ib.z + .5);\n"
-    "  vt = 0.0; flen = vec2(0.0);\n"
-    "  if (kind == 3) {\n"
+    "  vt = 0.0; flen = vec2(0.0); frad = ia.z;\n"
+    "  if (kind == 3 || kind == 9) {\n"
     "    vec2 d = ia.zw - ia.xy; float L = max(length(d), 1e-3); vec2 dir = d / L, n = vec2(-dir.y, dir.x);\n"
     "    float e = ib.x + 1.5, along = mix(-e, L + e, c.x * .5 + .5), across = c.y * e;\n"
     "    pos = ia.xy + dir * along + n * across; vl = vec2(along, across); flen = vec2(L, ib.x); vt = clamp(along / L, 0.0, 1.0);\n"
@@ -82,16 +82,45 @@ static const char *galaxyglvslight =
 /* 光晕 / 圆点 / 衍射芒的形状与原来的 sprite 相同; 白芯彩晕: 中心偏白, 颜色在衰减部分 (fc0.a 是着色强度) */
 static const char *galaxyglfslight =
     "#version 330 core\n"
-    "in vec2 vl; in float vt; flat in vec4 fb; flat in vec4 fc0; flat in vec4 fc1; flat in vec2 flen;\n"
-    "out vec4 o; uniform float time;\n"
+    "in vec2 vl; in float vt; flat in vec4 fb; flat in vec4 fc0; flat in vec4 fc1; flat in vec2 flen; flat in float frad;\n"
+    "out vec4 o; uniform float time, still;\n"
     "float hs(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }\n"
     "float sn(vec2 p) {\n"
     "  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);\n"
     "  return mix(mix(hs(i), hs(i + vec2(1, 0)), f.x), mix(hs(i + vec2(0, 1)), hs(i + vec2(1, 1)), f.x), f.y);\n"
     "}\n"
+    "float h2(vec2 p) { return hs(p + 17.31); }\n"
+    /* 星尘: 光斑 (像素坐标 P, 局部强度 w(P) 由调用方给出) 里按 4px 一格散布的粒子, 每格出现的概率跟强度走; 缓慢闪烁 */
+    "float dust(vec2 P, float cellsz, float dens) {\n"
+    "  vec2 g = floor(P / cellsz); float s = 0.0;\n"
+    "  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {\n"
+    "    vec2 c = g + vec2(i, j), q = (c + vec2(hs(c), h2(c))) * cellsz;\n"
+    "    float pr = hs(c + 3.7); if (pr > dens) continue;\n"
+    "    float rd = .6 + .7 * hs(c + 5.1), d = length(P - q);\n"
+    "    float tw = still > .5 ? 1.0 : .65 + .35 * sin(time * (1.0 + 2.0 * hs(c + 7.3)) + 6.28 * hs(c + 9.9));\n"
+    "    s += exp(-d * d / (rd * rd)) * (.35 + .65 * pow(h2(c + 1.3), 3.0)) * tw;\n"
+    "  }\n"
+    "  return s;\n"
+    "}\n"
+    "";
+static const char *galaxyglfslight2 =
     "void main() {\n"
     "  int kind = int(fb.z + .5); float a; vec3 col = fc0.rgb;\n"
-    "  if (kind == 8) {\n"
+    "  if (kind == 9) {\n"
+    /* 粒子流: 沿线按间距分格, 每格一颗, 顺着线的方向流动, 横向越靠中间越密; 叠一点原来的实心线保持轮廓 */
+    "    float hw = max(flen.y, .6), sp = max(2.5, .6 * hw), fl = (still > .5 ? 5.0 : 14.0) * time;\n"
+    "    float x = vl.x + fl, g = floor(x / sp), s = 0.0;\n"
+    "    for (int i = -1; i <= 1; i++) {\n"
+    "      float c = g + float(i), along = (c + hs(vec2(c, 1.0))) * sp - fl;\n"
+    "      float off = (hs(vec2(c, 2.0)) - .5) * (hs(vec2(c, 3.0)) * 2.0) * 1.6 * hw;\n"
+    "      float rd = .6 + .9 * hs(vec2(c, 4.0)), d = length(vec2(vl.x - along, vl.y - off));\n"
+    "      float tw = still > .5 ? 1.0 : .6 + .4 * sin(time * (1.2 + 2.0 * hs(vec2(c, 5.0))) + 6.28 * hs(vec2(c, 6.0)));\n"
+    "      s += exp(-d * d / (rd * rd)) * (.35 + .65 * pow(hs(vec2(c, 7.0)), 3.0)) * tw;\n"
+    "    }\n"
+    "    float t = clamp(vl.x, 0.0, flen.x), dl = length(vec2(vl.x - t, vl.y));\n"
+    "    a = clamp(.2 * clamp(flen.y + .5 - dl, 0.0, 1.0) + 1.3 * s * step(vl.x, flen.x + 2.0) * step(-2.0, vl.x), 0.0, 1.0);\n"
+    "    col = mix(mix(fc0.rgb, fc1.rgb, vt), vec3(1.0), .35 * smoothstep(.6, 1.0, s));\n"
+    "  } else if (kind == 8) {\n"
     /* 近处的恒星表面: 球面 (半径 .55) 有临边昏暗和缓慢流动的米粒纹理, 中间偏白; 球外一圈随角度起伏、缓慢翻涌的日冕 */
     "    float d = length(vl), x = d / .55, th = atan(vl.y, vl.x);\n"
     "    if (x < 1.0) {\n"
@@ -110,14 +139,36 @@ static const char *galaxyglfslight =
     "    a = 1.0;\n"
     "  } else {\n"
     "    float d = length(vl);\n"
-    "    if (kind == 0) a = (.55 * exp(-d * d / .0288) + .3 * exp(-d * d / .1568) + .15 * exp(-d * d / .5)) * (1.0 - smoothstep(.75, 1.0, d));\n"
-    "    else if (kind == 2) a = max(max(exp(-vl.y * vl.y / .0006) * pow(max(1.0 - abs(vl.x), 0.0), 3.0), exp(-vl.x * vl.x / .0006) * pow(max(1.0 - abs(vl.y), 0.0), 3.0)),\n"
-    "                            .35 * max(exp(-(vl.x - vl.y) * (vl.x - vl.y) / .0008), exp(-(vl.x + vl.y) * (vl.x + vl.y) / .0008)) * pow(clamp(1.0 - d, 0.0, 1.0), 3.0)) + .6 * exp(-d * d / .004);\n"
+    "    float rot = still > .5 ? 0.0 : time * .15; vec2 P = mat2(cos(rot), sin(rot), -sin(rot), cos(rot)) * vl * frad;\n"
+    "    if (kind == 0) {\n"
+    /* 柔光 -> 平滑光晕 (35%) + 一团缓慢旋转、闪烁的星尘 */
+    "      float w = (.55 * exp(-d * d / .0288) + .3 * exp(-d * d / .1568) + .15 * exp(-d * d / .5)) * (1.0 - smoothstep(.75, 1.0, d));\n"
+    "      a = .35 * w + (frad > 6.0 ? dust(P, 4.0, min(1.0, w * 1.6)) * .9 : .65 * w);\n"
+    "    }\n"
+    "    else if (kind == 2) {\n"
+    /* 衍射芒 -> 沿四条射线 (45° 两条较淡) 排布的粒子串, 亮度沿射线衰减, 轻微向外流动 */
+    "      vec2 Q = vl * frad; float fo = still > .5 ? 0.0 : time * 6.0, s = 0.0;\n"
+    "      for (int k = 0; k < 4; k++) {\n"
+    "        vec2 dir = k == 0 ? vec2(1, 0) : k == 1 ? vec2(0, 1) : k == 2 ? vec2(.7071, .7071) : vec2(.7071, -.7071);\n"
+    "        float al = dot(Q, dir), pe = dot(Q, vec2(-dir.y, dir.x)), side = sign(al), x = abs(al) - fo;\n"
+    "        float g = floor(x / 3.0), wk = k < 2 ? 1.0 : .4;\n"
+    "        for (int i = -1; i <= 1; i++) {\n"
+    "          float c = g + float(i), at = (c + hs(vec2(c, float(k) + side))) * 3.0 + fo;\n"
+    "          float rd = .5 + .6 * hs(vec2(c, 9.0 + float(k))), dd = length(vec2(abs(al) - at, pe - (hs(vec2(c, 4.0 + side)) - .5) * 1.2));\n"
+    "          s += wk * exp(-dd * dd / (rd * rd)) * pow(clamp(1.0 - at / frad, 0.0, 1.0), 2.0);\n"
+    "        }\n"
+    "      }\n"
+    "      a = s + .6 * exp(-d * d / .004);\n"
+    "    }\n"
     "    else if (kind == 5) a = exp(-d * d / .12) * (1.0 - smoothstep(.8, 1.0, d));\n"
     /* 焦外光斑: 实心圆盘, 边缘略亮 (镜头的散景) */
     "    else if (kind == 6) a = (1.0 - smoothstep(.86, 1.0, d)) * (.6 + .4 * smoothstep(.55, .92, d));\n"
     /* 恒星核心 (点光源): 很亮很小的芯 + 指数衰减的眩光 + 一圈极淡的散射环; 没有平的圆盘边 */
-    "    else if (kind == 7) a = (exp(-d * d / .01) + .4 * exp(-d * 7.0) + .05 * exp(-pow((d - .62) / .05, 2.0))) * (1.0 - smoothstep(.85, 1.0, d));\n"
+    "    else if (kind == 7) {\n"
+    /* 点光源: 很小的芯 + 星尘眩光 */
+    "      float w = .4 * exp(-d * 7.0) * (1.0 - smoothstep(.85, 1.0, d));\n"
+    "      a = exp(-d * d / .01) + .3 * w + (frad > 6.0 ? dust(P, 4.0, min(1.0, w * 2.5)) * .8 : .7 * w);\n"
+    "    }\n"
     "    else a = 1.0 - smoothstep(.4, 1.0, d);\n"
     "    a = clamp(a, 0.0, 1.0);\n"
     "    col = mix(vec3(1.0), fc0.rgb, smoothstep(0.0, kind == 7 ? .22 : .45, d) * fc0.a);\n"
@@ -527,6 +578,23 @@ galaxyglinit(void)
 }
 
 /* 程序和缓冲在上下文第一次可用后再建 (需要 current) */
+/* 片元着色器源码分两段 (C99 只保证 4095 字节以内的字符串字面量), 拼起来再建程序 */
+static GLuint
+galaxyglprogram2(const char *vs, const char *fa, const char *fb)
+{
+    size_t na = strlen(fa), nb = strlen(fb);
+    char *src = malloc(na + nb + 1);
+    GLuint p;
+
+    if (!src)
+        return 0;
+    memcpy(src, fa, na);
+    memcpy(src + na, fb, nb + 1);
+    p = galaxyglprogram(vs, src);
+    free(src);
+    return p;
+}
+
 static int
 galaxyglobjects(void)
 {
@@ -536,23 +604,13 @@ galaxyglobjects(void)
 
     if (galaxygl.proglight)
         return 1;
-    galaxygl.proglight = galaxyglprogram(galaxyglvslight, galaxyglfslight);
+    galaxygl.proglight = galaxyglprogram2(galaxyglvslight, galaxyglfslight, galaxyglfslight2);
     galaxygl.progcut = galaxyglprogram(galaxyglvscut, galaxyglfscut);
     galaxygl.progdown = galaxyglprogram(galaxyglvsfull, galaxyglfsdown);
     galaxygl.progup = galaxyglprogram(galaxyglvsfull, galaxyglfsup);
     galaxygl.progcomp = galaxyglprogram(galaxyglvsfull, galaxyglfscomp);
     galaxygl.progprobe = galaxyglprogram(galaxyglvsfull, galaxyglfsprobe);
-    {
-        size_t na = strlen(galaxyglfsnebula), nb = strlen(galaxyglfsnebula2);
-        char *src = malloc(na + nb + 1);
-
-        if (src) {
-            memcpy(src, galaxyglfsnebula, na);
-            memcpy(src + na, galaxyglfsnebula2, nb + 1);
-            galaxygl.prognebula = galaxyglprogram(galaxyglvsfull, src);
-            free(src);
-        }
-    }
+    galaxygl.prognebula = galaxyglprogram2(galaxyglvsfull, galaxyglfsnebula, galaxyglfsnebula2);
     galaxygl.progcopy = galaxyglprogram(galaxyglvsfull, galaxyglfscopy);
     galaxygl.progcard = galaxyglprogram(galaxyglvscard, galaxyglfscard);
     galaxygl.progpart = galaxyglprogram(galaxyglvspart, galaxyglfspart);
@@ -819,6 +877,7 @@ galaxygldraw(GalaxyGLInst *inst, int n, int depthtest)
     glUseProgram(galaxygl.proglight);
     glUniform2f(glGetUniformLocation(galaxygl.proglight, "screen"), galaxygl.fw, galaxygl.fh);
     glUniform1f(glGetUniformLocation(galaxygl.proglight, "time"), (float)galaxynow());
+    glUniform1f(glGetUniformLocation(galaxygl.proglight, "still"), galaxyscene.gentle ? 1 : 0);
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE);
     if (depthtest) {
@@ -932,6 +991,20 @@ galaxyglline(const GalaxyProj *pa, const GalaxyProj *pb, unsigned int c0, unsign
         return;
     g = galaxyglpush();
     *g = (GalaxyGLInst){{pa->x, pa->y, pb->x, pb->y}, {hw, a, GalaxyGLLine, -1},
+        {(c0 >> 16 & 255) / 255.0f, (c0 >> 8 & 255) / 255.0f, (c0 & 255) / 255.0f, 0},
+        {(c1 >> 16 & 255) / 255.0f, (c1 >> 8 & 255) / 255.0f, (c1 & 255) / 255.0f, 0}};
+}
+
+/* 粒子流: 和光带同样的参数, 画成沿线流动、闪烁的细粒子 (轨道 / 星轨 / 尾迹 / 连线等都用它) */
+static void
+galaxyglstream(const GalaxyProj *pa, const GalaxyProj *pb, unsigned int c0, unsigned int c1, double a, double hw)
+{
+    GalaxyGLInst *g;
+
+    if (!galaxygl.win || a < 1.0 / 512)
+        return;
+    g = galaxyglpush();
+    *g = (GalaxyGLInst){{pa->x, pa->y, pb->x, pb->y}, {hw, a, GalaxyGLStream, -1},
         {(c0 >> 16 & 255) / 255.0f, (c0 >> 8 & 255) / 255.0f, (c0 & 255) / 255.0f, 0},
         {(c1 >> 16 & 255) / 255.0f, (c1 >> 8 & 255) / 255.0f, (c1 & 255) / 255.0f, 0}};
 }
