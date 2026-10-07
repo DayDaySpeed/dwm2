@@ -947,6 +947,7 @@ galaxyfxpick(int populated, int not, unsigned int seed)
 }
 
 static double galaxyprand(void);
+static GalaxyVec galaxyprandvec(double len);
 static void galaxyemit(GalaxyVec pos, GalaxyVec vel, double life, double size, int tint, double alpha, double drag, int screen);
 static int galaxyemitcount(double rate);
 
@@ -1179,11 +1180,11 @@ galaxyupdatereturn(double u)
             s->glow = s->rglow * (1 - galaxysmoothstep(galaxyphase(u, 0, .6)));
             s->brightness = galaxymix(s->rbright, 1, v);
         } else {
-            away = galaxyeaseincubic(galaxyphase(u, 0, .6));
-            s->pos = galaxyadd(s->rpos, galaxyscale(galaxynormalize(galaxysub(s->rpos, r->rcampos)), 2 * F * away));
+            away = galaxyeaseincubic(galaxyphase(u, 0, .5));
+            s->pos = galaxyadd(s->rpos, galaxyscale(galaxynormalize(galaxysub(s->rpos, r->rcampos)), 3 * F * away));
             s->orient = s->rorient;
             s->size = s->rsize;
-            s->alpha = 1 - galaxysmoothstep(galaxyphase(u, 0, .55));
+            s->alpha = 1 - galaxysmoothstep(galaxyphase(u, 0, .5));
             s->vis = s->rvis * s->alpha;
             s->tint = s->rtint * s->alpha;
             s->glow = s->rglow * s->alpha;
@@ -1217,16 +1218,23 @@ galaxyupdateland(double u)
     GalaxyVec ctrl, d;
     GalaxyMat id = {{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
     double F = r->cam.focal, e = galaxyeaseinoutcubic(galaxyphase(u, 0, .8)), fade = 1 - galaxysmoothstep(galaxyphase(u, 0, .45));
-    double v, away, ack;
-    int i, lead;
+    double v, away, ack, pull = galaxyeaseincubic(galaxyphase(u, 0, .5));
+    GalaxyVec out;
+    int i, n, lead;
 
     galaxysetcameraat(galaxyscale(r->rctarget, 1 - e), galaxymix(r->rcdist, F, e), galaxymix(r->rcx, 0, e), galaxymix(r->rcy, 0, e), galaxymix(r->rcz, 0, e));
     for (i = 0; i < r->ntags; i++) {
         g = &r->galaxies[i];
-        g->pos = g->rpos;
+        /* 被吸进去: 核心沿视线加速退向深处, 身后拖出一串快速光尘 (自动画成拉丝) */
+        out = galaxynormalize(galaxysub(g->rpos, r->rcampos));
+        g->pos = galaxyadd(g->rpos, galaxyscale(out, 1.5 * F * pull));
         g->alpha = g->ralpha * (1 - galaxysmoothstep(galaxyphase(u, 0, .35)));
         g->hover = 0;
         g->p = galaxyproject(g->pos);
+        if (u < .4 && g->alpha > .1)
+            for (n = galaxyemitcount(70 * g->alpha); n > 0; n--)
+                galaxyemit(galaxyadd(g->pos, galaxyprandvec(.01 * F)), galaxyscale(out, F * (2 + 2 * galaxyprand())),
+                        .25 + .15 * galaxyprand(), .002 * F, GALAXYTAGTINT(g->tag), .6, 1.5, 0);
     }
     r->ringalpha = r->rring * fade;
     galaxyupdaterings(0);

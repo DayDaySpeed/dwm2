@@ -359,6 +359,16 @@ galaxyrendercardgl(GalaxyStar *s, double q[4][2], double qz[4], double vis, doub
         for (i = 0; i < 3; i++)
             fx.env[i] = fx.rimc[i] * (.03 + .06 * f) + neb[i] * .04 * r->space;
     }
+    /* 回程 / 落位快结束时, 落回原位的卡片上从左上到右下扫过一道细光 (焦点窗口 / 选中的先扫); u=0.96 前结束, 末帧不变 */
+    if (r->mode == GalaxyReturn && (r->rkind == GalaxyLand ? s->land : s->back)) {
+        int lead = r->rkind == GalaxyLand ? s - r->stars == r->rstar : s->focused;
+        double a0 = lead ? .76 : .81, sp = galaxyphase(r->retu, a0, a0 + .14);
+
+        if (sp > 0 && sp < 1) {
+            fx.specat = -.25 + 1.5 * sp;
+            fx.spec = .28 * sin(GALAXYPI * sp) * vis;
+        }
+    }
     /* 点击涟漪: 点中后 0.45s 内从点击处扩散一圈 */
     if (s->clickat > 0 && (t = (galaxynow() - s->clickat) / .45) < 1) {
         fx.ripple[0] = s->clickuv[0];
