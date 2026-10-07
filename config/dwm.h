@@ -277,7 +277,9 @@ static Button buttons[] = {
 };
 
 /* Super+Z 星系 (dwm/galaxy*.c). 不写时用 galaxy.c 里的默认值; 改完按 Super+Shift+R 重新编译生效.
- * 省电模式 (Super+P / 拔电自动) 打开时星系自动进入安静模式: 特效间隔 x2.5, 不显示流星 / 彗星 / 轨道光流, 帧率降低 */
+ * 省电模式 (Super+P / 拔电自动) 打开时星系自动进入安静模式: 特效间隔 x2.5, 不显示流星 / 彗星 / 轨道光流, 帧率降低.
+ * 减弱动效 (对强光 / 闪烁敏感时): touch ~/.cache/galaxy-gentle (或环境变量 GALAXY_GENTLE=1), 下次 Super+Z 生效;
+ * 闪白 / 爆闪 / 收尾闪光只留四分之一, 不做透镜扭曲、镜头光晕、曝光骤降和色差, 星点不闪, 中心双星不爆闪 */
 #define GALAXY_INTRO    1.35    /* 开场时间拉伸: 越大开场越慢 (1.35 约 7.7 秒) */
 #define GALAXY_FXGAP    1.0     /* 驻留特效间隔的倍数: 2 = 特效少一半 */
 #define GALAXY_DIAG     30.0    /* 驻留时镜头翻滚 (度), 轨道盘面沿屏幕对角线铺开; 0 = 水平 */

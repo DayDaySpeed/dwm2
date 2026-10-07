@@ -1,7 +1,7 @@
 #!/bin/bash
 # dwm2 一键安装/编译
 #   ./setup.sh             全部: 依赖 + 链接 + dwm st tabbed picom i3lock
-#   ./setup.sh deps        安装依赖 (i3lock-color + betterlockscreen, picom 编译依赖)
+#   ./setup.sh deps        安装依赖 (i3lock-color + betterlockscreen, picom / 星系 OpenGL 渲染的编译依赖)
 #   ./setup.sh link        建立 ~/.xinitrc 等软链接
 #   ./setup.sh dwm|st|tabbed|picom   只编译安装某一个
 #   ./setup.sh i3lock      编译 i3lock-color (锁屏输入时显示圆点)
@@ -19,7 +19,7 @@ deps() {
     fi
     yay -S --needed betterlockscreen   # 锁屏 (bin/blurlock.sh), 基于 i3lock-color
     yay -S --needed xwinwrap-git       # 动态壁纸 (bin/livewall.sh): 把 mpv 嵌到桌面最底层
-    sudo pacman -S --needed meson ninja uthash libconfig libev libxdg-basedir pcre \
+    sudo pacman -S --needed meson ninja uthash libconfig libev libxdg-basedir pcre2 libepoxy \
         pixman dbus mesa xcb-util-image xcb-util-renderutil libx11 libxext \
         rofi feh mpv ffmpeg xorg-xwininfo xorg-xprop xdotool python dunst \
         gammastep clipmenu autorandr playerctl brightnessctl flameshot xss-lock fcitx5 pamixer x11vnc \
@@ -85,13 +85,14 @@ build_dwm() {
     (cd dwm && make clean && make && mkdir -p ~/.local/bin && install -m755 dwm ~/.local/bin/.dwm.new && mv -f ~/.local/bin/.dwm.new ~/.local/bin/dwm)
 }
 
+# picom v13 源码直接放在本仓库 (带 dwm2 的 _DWM_NOANIM 补丁, 见 picom/README.dwm2.md), 安装到 ~/.local (PATH 中排在系统包前面)
 build_picom() {
-    step "picom (yaocccc 动画分支 -> /usr/local)"
+    step "picom v13 (-> ~/.local/bin/picom)"
     cd picom
     rm -rf build
-    meson setup --buildtype=release -Dprefix=/usr/local build
+    meson setup --buildtype=release -Dprefix="$HOME/.local" build
     ninja -C build
-    sudo ninja -C build install
+    ninja -C build install
     cd "$DWM"
 }
 

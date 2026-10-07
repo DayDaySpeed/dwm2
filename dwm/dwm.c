@@ -4492,6 +4492,7 @@ main(int argc, char *argv[])
         die("pledge");
 #endif /* __OpenBSD__ */
     scan();
+    galaxyspaceprewarm();   /* 星系的深空背景先生成好, 第一次开场不卡 */
     signal(SIGHUP, sighup);
     if (getenv("DWM_RESTARTED")) {
         /* 原地重启: 不重复执行 autostart, 恢复重启前所看的 tag */

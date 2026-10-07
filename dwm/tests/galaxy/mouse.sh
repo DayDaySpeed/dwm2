@@ -56,11 +56,10 @@ pause .2
 
 xdotool click 1
 pause .2
-xdotool key Escape
-waitlog 'galaxy mouse: sleep (Esc)'
-[ "$(overlay)" = 1 ] || fail "Esc collapsed instead of closing interaction"
-xdotool key Escape              # 此时才坍缩
+xdotool key Escape              # 直接开始坍缩, 不再只休眠鼠标
 pause .3
+! grep -q 'galaxy mouse: sleep (Esc)' "$LOG" || fail "Esc only slept the mouse"
+[ "$(overlay)" = 1 ] || fail "collapse destroyed the overlay early"
 xdotool key Escape              # 坍缩中立刻进入壁纸态
 pause .2
 xdotool key super+z             # 恢复桌面

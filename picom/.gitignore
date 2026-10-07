@@ -1,6 +1,6 @@
 # Build files
-make.sh
 .deps
+.direnv
 aclocal.m4
 autom4te.cache
 config.log
@@ -34,14 +34,32 @@ cmake_install.cmake
 CPackSourceConfig.cmake
 install_manifest.txt
 
+# apitrace
+*.trace
 
 # Vim files
 .sw[a-z]
 .*.sw[a-z]
 *~
 
+# Rust
+target
+
+# Python
+*.pyc
+*.py
+!/tools/*.py
+!/tests/testcases/*.py
+
 # Misc files
+.vscode
+*.conf
+!/tests/configs/*.conf
+!/data/*.conf
+perf.data
+perf.data.old
 core.*
+vgcore.*
 .gdb_history
 oprofile_data/
 compton.plist
@@ -57,9 +75,8 @@ doxygen/
 *.orig
 /tests/log
 /tests/testcases/__pycache__/
+*.profraw
 
-# Nix 
-result
-
-# meson
+# Subproject files
+subprojects/libconfig
 subprojects/.wraplock

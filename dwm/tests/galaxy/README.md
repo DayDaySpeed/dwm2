@@ -38,7 +38,7 @@ dwm/tests/galaxy/stop.sh           # 结束会话
 | `jumps.py` | 在录屏里找跳帧: 列出与前后一秒中位数相比变化最突兀的帧 |
 | `grab.sh` | 从录屏抽帧: `grab.sh out.mp4 目录 9.5 12 20` |
 | `xres.c` | 查询 dwm 在 X 服务器上占用的资源 (直接发 X-Resource 请求, 不依赖 libXRes), 由 `start.sh` 编译 |
-| `xrbench.c` | 在当前显示上对 XRender 各合成路径计时 (离屏, 不显示任何东西)。正式桌面上运行: `DISPLAY=:0 ./xrbench` |
+| `xrbench.c` | 在当前显示上对 XRender 各合成路径计时 (离屏, 不显示任何东西), 只覆盖底层 (卡片 / 背景)。正式桌面上运行: `DISPLAY=:0 ./xrbench`; 光层的 GPU 耗时看日志的 `gl` 字段或 F12 面板 |
 
 ## 测试用的环境变量
 
@@ -50,6 +50,7 @@ dwm/tests/galaxy/stop.sh           # 结束会话
 
 ## 注意
 
-- Xvfb 是纯软件渲染, 帧率只用来对比前后变化; 真实帧率以 :0 日志的 `galaxy orbit:` / `galaxy dive:` 行为准。
+- Xvfb 是纯软件渲染 (OpenGL 由 Mesa llvmpipe 在 CPU 上模拟, 每帧合成约 60ms), 帧率只用来对比前后变化; 真实帧率以 :0 日志的 `galaxy orbit:` / `galaxy dive:` 行为准 (`gl` 字段是 GPU 合成耗时)。
+- llvmpipe 会让测试 dwm 的内存 (RSS) 到 280MB 左右, 这是软件 GL 的缓冲, 不是泄漏; `loop.sh` 看的是前后是否增长。
 - 软件渲染偶尔慢一帧, 在 `jumps.py` 里也会表现为单帧高值, 需要抽帧看画面确认。
 - 测试窗口里有 987x121 这样的细长窗口, 用 `clickstar.py` 按颜色找时可能找不到, 换一个颜色即可。

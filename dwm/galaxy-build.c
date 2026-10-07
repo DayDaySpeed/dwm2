@@ -37,64 +37,6 @@ galaxyupload(int w, int h, unsigned int *data, Pixmap *pix)
     return p;
 }
 
-/* 光晕 / 圆点 / 衍射芒 sprite, 每种色调一套. 白芯彩晕: 颜色 = mix(白, 色调, smoothstep(d / .45)),
- * 中心过曝成白, 颜色只出现在衰减部分 (加了颜色也不刺眼). 每种形状的 alpha 只算一次, 再逐色调着色 */
-static void
-galaxybuildsprites(void)
-{
-    GalaxyScene *r = &galaxyscene;
-    unsigned int *data;
-    float *alpha, *mixk;
-    double x, y, d, a, c, col[GalaxyTints][3];
-    int shape, tint, lvl, n, i, j, k;
-
-    for (tint = 0; tint < GalaxyTints; tint++)
-        galaxytintcolor(tint, -1, col[tint]);
-    for (lvl = 0; lvl < GALAXYSPRITES; lvl++) {
-        n = galaxyspritesize[lvl];
-        alpha = malloc(n * n * sizeof *alpha);
-        mixk = malloc(n * n * sizeof *mixk);
-        if (!alpha || !mixk) {
-            free(alpha);
-            free(mixk);
-            continue;
-        }
-        for (shape = 0; shape < GalaxyShapes; shape++) {
-            for (j = 0; j < n; j++)
-                for (i = 0; i < n; i++) {
-                    x = (i + .5) / n * 2 - 1;
-                    y = (j + .5) / n * 2 - 1;
-                    d = sqrt(x * x + y * y);
-                    if (shape == GalaxyHalo)  /* 多层高斯叠加的柔光, 没有硬边 */
-                        a = (.55 * exp(-d * d / .0288) + .3 * exp(-d * d / .1568) + .15 * exp(-d * d / .5))
-                            * (1 - galaxysmoothstep((d - .75) / .25));
-                    else if (shape == GalaxySpike)  /* 望远镜衍射芒: 横竖两条主芒 + 两条更弱的斜芒, 中间一个亮核 */
-                        a = MAX(MAX(exp(-y * y / .0006) * pow(1 - fabs(x), 3), exp(-x * x / .0006) * pow(1 - fabs(y), 3)),
-                                .35 * MAX(exp(-(x - y) * (x - y) / .0008), exp(-(x + y) * (x + y) / .0008)) * pow(galaxyclamp(1 - d), 3))
-                            + .6 * exp(-d * d / .004);
-                    else
-                        a = 1 - galaxysmoothstep((d - .4) / .6);
-                    alpha[j * n + i] = galaxyclamp(a);
-                    mixk[j * n + i] = galaxysmoothstep(d / .45);
-                }
-            for (tint = 0; tint < GalaxyTints; tint++) {
-                if (!(data = malloc(n * n * 4)))
-                    continue;
-                for (k = 0; k < n * n; k++) {
-                    c = alpha[k] * 255;
-                    data[k] = (unsigned int)(c + .5) << 24
-                        | (unsigned int)(c * (1 + (col[tint][0] - 1) * mixk[k]) + .5) << 16
-                        | (unsigned int)(c * (1 + (col[tint][1] - 1) * mixk[k]) + .5) << 8
-                        | (unsigned int)(c * (1 + (col[tint][2] - 1) * mixk[k]) + .5);
-                }
-                r->sprite[shape][tint][lvl] = galaxyupload(n, n, data, &r->spritepix[shape][tint][lvl]);
-            }
-        }
-        free(alpha);
-        free(mixk);
-    }
-}
-
 static void
 galaxybuildvignette(void)
 {
@@ -200,8 +142,7 @@ done:
 
 static void galaxyfreestar(GalaxyStar *s);
 
-/* 驻留时刷新卡片截图: 窗口当前内容合成进已有的 mip, 再逐级缩小; 窗口大小变了就整套重建.
- * 只刷映射着的窗口 (其他 tag 的窗口被移到屏外但仍映射, 合成器里有内容; 隐藏的跳过). 返回是否刷新了 */
+/* 重新截一张卡片 (驻留时轮流刷新): 大小变了整张重截, 否则重画最大一级再缩出 mip; GL 纹理作废, 下次画时重建 */
 static int
 galaxyrefresh(GalaxyStar *s)
 {
@@ -236,6 +177,7 @@ galaxyrefresh(GalaxyStar *s)
     XRenderFreePicture(dpy, src);
     for (l = s->base + 1; l < GALAXYMIPS && s->mip[l]; l++)
         galaxyshrink(s->mip[l - 1], s->mipw[l - 1], s->miph[l - 1], s->mip[l], s->mipw[l], s->miph[l]);
+    s->gldirty = 1;
     return 1;
 }
 
@@ -255,6 +197,7 @@ galaxyfreestar(GalaxyStar *s)
 {
     int l;
 
+    galaxyglfreecard(&s->gltex, &s->glsrc, &s->glpix);
     for (l = 0; l < GALAXYMIPS; l++)
         galaxyfreemip(s, l);
 }
@@ -264,14 +207,14 @@ static void
 galaxyfreescene(void)
 {
     GalaxyScene *r = &galaxyscene;
-    int i, j, k;
+    int i;
 
     for (i = 0; i < r->nstars; i++)
         galaxyfreestar(&r->stars[i]);
     if (r->titledraw)
         XftDrawDestroy(r->titledraw);
     if (r->titlecolorok)
-        XftColorFree(dpy, DefaultVisual(dpy, screen), DefaultColormap(dpy, screen), &r->titlecolor);
+        XftColorFree(dpy, r->argbvisual, r->argbcmap, &r->titlecolor);
     if (r->titlefont)
         XftFontClose(dpy, r->titlefont);
     if (r->queryfont)
@@ -283,16 +226,6 @@ galaxyfreescene(void)
     r->titledraw = NULL;
     r->titlefont = r->queryfont = r->notefont = r->clockfont = NULL;
     r->titlecolorok = 0;
-    for (i = 0; i < GalaxyShapes; i++)
-        for (j = 0; j < GalaxyTints; j++)
-            for (k = 0; k < GALAXYSPRITES; k++) {
-                if (r->sprite[i][j][k])
-                    XRenderFreePicture(dpy, r->sprite[i][j][k]);
-                if (r->spritepix[i][j][k])
-                    XFreePixmap(dpy, r->spritepix[i][j][k]);
-                r->sprite[i][j][k] = 0;
-                r->spritepix[i][j][k] = 0;
-            }
     for (i = 0; i < GALAXYALPHAS; i++) {
         if (r->black[i])
             XRenderFreePicture(dpy, r->black[i]);
@@ -343,41 +276,12 @@ galaxyfreescene(void)
     free(r->streakpts);
     free(r->streakz);
     free(r->popord);
+    free(r->parts);
+    r->parts = NULL;
+    r->nparts = r->partnext = 0;
     r->streakpts = NULL;
     r->streakz = NULL;
     r->popord = NULL;
-    if (r->bandimg)
-        XDestroyImage(r->bandimg);  /* 连同 bandbuf 一起释放 */
-    else
-        free(r->bandbuf);
-    if (r->bandpic)
-        XRenderFreePicture(dpy, r->bandpic);
-    if (r->bandpix)
-        XFreePixmap(dpy, r->bandpix);
-    if (r->bandgc)
-        XFreeGC(dpy, r->bandgc);
-    free(r->banddirty);
-    if (r->colimg)
-        XDestroyImage(r->colimg);   /* 连同 colbuf 一起释放 */
-    else
-        free(r->colbuf);
-    if (r->colpic)
-        XRenderFreePicture(dpy, r->colpic);
-    if (r->colpix)
-        XFreePixmap(dpy, r->colpix);
-    if (r->colgc)
-        XFreeGC(dpy, r->colgc);
-    r->colimg = NULL;
-    r->colbuf = NULL;
-    r->colpic = 0;
-    r->colpix = 0;
-    r->colgc = 0;
-    r->bandimg = NULL;
-    r->bandbuf = r->banddirty = NULL;
-    r->bandpic = 0;
-    r->bandpix = 0;
-    r->bandgc = 0;
-    r->bandn = 0;
     r->stars = NULL;
     r->galaxies = NULL;
     r->dust = NULL;
@@ -399,8 +303,15 @@ galaxyfree(void)
     for (i = 0; i < GALAXYALPHAS; i++)
         if (r->white[i])
             XRenderFreePicture(dpy, r->white[i]);
+    galaxyglend();     /* 先放开纹理并拆掉 GLX pixmap, 再动 X pixmap */
+    if (r->overlay)
+        XUnmapWindow(dpy, r->overlay); /* 合成器先放开遮罩, 再销毁 */
+    XSync(dpy, False);
     if (r->overlaypic) XRenderFreePicture(dpy, r->overlaypic);
     if (r->overlay) XDestroyWindow(dpy, r->overlay);
+    if (r->front) XRenderFreePicture(dpy, r->front);
+    if (r->frontpix) XFreePixmap(dpy, r->frontpix);
+    if (r->argbcmap) XFreeColormap(dpy, r->argbcmap);
     if (r->hand) XFreeCursor(dpy, r->hand);
     if (r->blankcursor) XFreeCursor(dpy, r->blankcursor);
     if (r->back) XRenderFreePicture(dpy, r->back);
@@ -416,8 +327,11 @@ galaxyfree(void)
     for (i = 0; i < r->nlandbar; i++)
         XRenderFreePicture(dpy, r->landbar[i]);
     free(r->gaps);
-    if (r->log)
+    if (r->log) {
+        fprintf(r->log, "galaxy gl: card textures made %d freed %d\n", galaxygl.texmade, galaxygl.texfreed);
         fclose(r->log);
+    }
+    galaxygl.texmade = galaxygl.texfreed = 0;
     memset(r, 0, sizeof *r);
 }
 
@@ -432,6 +346,9 @@ galaxyxerror(Display *d, XErrorEvent *ee)
             || ee->request_code == X_GetWindowAttributes || ee->request_code == X_QueryTree
             || ee->request_code == X_GrabPointer || ee->request_code == X_GrabKeyboard) {
         galaxyscene.errors++;
+        if (galaxyscene.log)    /* 记下是哪个请求出的错, 便于排查 */
+            fprintf(galaxyscene.log, "galaxy xerror: code %d request %d.%d resource 0x%lx\n", ee->error_code,
+                    ee->request_code, ee->minor_code, ee->resourceid);
         return 0;
     }
     return xerror(d, ee);
@@ -741,9 +658,13 @@ galaxylogstart(void)
         snprintf(path, sizeof path, "%s/.cache/dwm-galaxy%s.log", home ? home : "/tmp", DisplayString(dpy));
     if (!(r->log = fopen(path, "w")))
         return;
-    fprintf(r->log, "galaxy start: screen %dx%d tags %d windows %d dust %d trail %d focal %.0f timescale %.2f dpms %d wallpaper 0x%lx%s quiet %d fxgap %.2f\n",
+    fprintf(r->log, "galaxy start: screen %dx%d tags %d windows %d dust %d trail %d focal %.0f timescale %.2f dpms %d wallpaper 0x%lx%s quiet %d gentle %d fxgap %.2f refresh %.0fHz\n",
             r->w, r->h, r->ntags, r->nstars, r->ndust, r->ntrail, r->cam.focal, r->tscale, r->dpms,
-            r->wallwin, r->live ? " (live)" : "", r->quiet, r->fxgap);
+            r->wallwin, r->live ? " (live)" : "", r->quiet, r->gentle, r->fxgap, r->refresh);
+    fprintf(r->log, "galaxy far: galaxies");    /* 远景元素的位置 (像素), 方便对着截图找 */
+    for (i = 0; i < 2; i++)
+        fprintf(r->log, " %.0f,%.0f/%.0f", r->vx + r->farg[i][0] * r->vw, r->vy + r->farg[i][1] * r->vw, r->farg[i][2] * r->vw);
+    fprintf(r->log, "\n");
     for (i = 0; i < r->ntags; i++)
         if (r->galaxies[i].nstars)
             fprintf(r->log, "galaxy %d: windows %d rings %d radius %.0f home %.0f %.0f %.0f\n", i + 1,
@@ -777,15 +698,14 @@ galaxylogseg(const char *how)
             qsort(r->gaps, r->ngaps, sizeof *r->gaps, galaxygapcmp);
             low = r->gaps[(size_t)(r->ngaps * .99)];
         }
-        fprintf(r->log, "galaxy %s: at %.2fs frames %lu time %.3fs avg %.1f fps min %.1f fps 1%%low %.1f fps render avg %.2fms max %.2fms update %.2fms background %.2fms trails %.2fms items %.2fms present %.2fms XSync %.2fms bands %.2f+%.2fms (%.0f tiles in %.1f flushes) quality %d%s xerrors %lu\n",
+        fprintf(r->log, "galaxy %s: at %.2fs frames %lu time %.3fs avg %.1f fps min %.1f fps 1%%low %.1f fps render avg %.2fms max %.2fms update %.2fms background %.2fms trails %.2fms items %.2fms present %.2fms XSync %.2fms gl %.2fms quality %d%s xerrors %lu\n",
                 how, now, r->frames, span, r->frames / MAX(span, 1e-3),
                 r->ngaps ? 1 / r->gaps[r->ngaps - 1] : 0, low > 0 ? 1 / low : 0,
                 r->rendersum / r->frames * 1000, r->rendermax * 1000,
                 r->phasecost[0] / r->frames * 1000, r->phasecost[1] / r->frames * 1000,
                 r->phasecost[2] / r->frames * 1000, r->phasecost[3] / r->frames * 1000,
                 r->phasecost[4] / r->frames * 1000, r->phasecost[5] / r->frames * 1000,
-                r->bandraster / r->frames * 1000, r->bandflush / r->frames * 1000,
-                (double)r->bandtiles / r->frames, (double)r->bandflushes / r->frames, r->quality,
+                galaxygl.gputime / r->frames * 1000, r->quality,
                 r->mode == GalaxyOrbit && now - r->lastinput > GALAXYIDLE ? " (idle)" : "", r->errors);
         if (r->refreshn || r->heatcost > 0) {
             int i, hot = -1;
@@ -796,13 +716,15 @@ galaxylogseg(const char *how)
                     r->refreshn ? r->refreshsum / r->refreshn * 1000 : 0, r->refreshmax * 1000, r->heatcost / r->frames * 1000,
                     hot >= 0 ? r->stars[hot].title : "-", hot >= 0 ? r->stars[hot].heat : 0);
         }
+        fprintf(r->log, "galaxy %s: light avg %.3f max %.3f, exposure min %.2f\n", how,
+                r->lumsum / r->frames, r->lummax, r->expomin > 0 ? r->expomin : 1);
         fflush(r->log);
     }
+    r->lumsum = r->lummax = r->expomin = 0;
     r->frames = r->ngaps = 0;
     r->rendersum = r->rendermax = 0;
     memset(r->phasecost, 0, sizeof r->phasecost);
-    r->bandraster = r->bandflush = 0;
-    r->bandtiles = r->bandflushes = 0;
+    galaxygl.gputime = 0;
     r->refreshn = 0;
     r->refreshsum = r->refreshmax = r->heatcost = 0;
     r->segstart = now;

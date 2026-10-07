@@ -2,22 +2,25 @@
 // Copyright (c) 2018 Yuxuan Shui <yshuiv7@gmail.com>
 
 #include <stdio.h>
-#include <xcb/xcb.h>
 #include <xcb/composite.h>
+#include <xcb/xcb.h>
 
+#include "backend/backend.h"
 #include "backend/driver.h"
-#include "diagnostic.h"
-#include "config.h"
-#include "picom.h"
 #include "common.h"
+#include "config.h"
+#include "diagnostic.h"
+#include "picom.h"
 
 void print_diagnostics(session_t *ps, const char *config_file, bool compositor_running) {
-	printf("**Version:** " COMPTON_VERSION "\n");
-	//printf("**CFLAGS:** %s\n", "??");
-	printf("\n### Extensions:\n\n");
-	printf("* Shape: %s\n", ps->shape_exists ? "Yes" : "No");
-	printf("* XRandR: %s\n", ps->randr_exists ? "Yes" : "No");
-	printf("* Present: %s\n", ps->present_exists ? "Present" : "Not Present");
+	printf("**Version:** " PICOM_FULL_VERSION "\n");
+	// printf("**CFLAGS:** %s\n", "??");
+	printf("\n### X extensions:\n\n");
+	printf("* GLX: %s\n", ps->c.e.has_glx ? "present" : "absent");
+	printf("* Present: %s\n", ps->c.e.has_present ? "present" : "absent");
+	printf("* RandR: %s\n", ps->c.e.has_randr ? "present" : "absent");
+	printf("* Shape: %s\n", ps->c.e.has_shape ? "present" : "absent");
+	printf("* Sync: %s\n", ps->c.e.has_sync ? "present" : "absent");
 	printf("\n### Misc:\n\n");
 	printf("* Use Overlay: %s\n", ps->overlay != XCB_NONE ? "Yes" : "No");
 	if (ps->overlay == XCB_NONE) {
@@ -32,21 +35,29 @@ void print_diagnostics(session_t *ps, const char *config_file, bool compositor_r
 #ifdef __FAST_MATH__
 	printf("* Fast Math: Yes\n");
 #endif
-	printf("* Config file used: %s\n", config_file ?: "None");
+	printf("* Config file specified: %s\n", config_file ?: "None");
+	printf("* Config file used: %s\n", ps->o.config_file_path ?: "None");
+	if (!list_is_empty(&ps->o.included_config_files)) {
+		printf("* Included config files:\n");
+		list_foreach(struct included_config_file, i, &ps->o.included_config_files,
+		             siblings) {
+			printf("  - %s\n", i->path);
+		}
+	}
 	printf("\n### Drivers (inaccurate):\n\n");
 	print_drivers(ps->drivers);
 
-	for (int i = 0; i < NUM_BKEND; i++) {
-		if (backend_list[i] && backend_list[i]->diagnostics) {
-			printf("\n### Backend: %s\n\n", BACKEND_STRS[i]);
-			auto data = backend_list[i]->init(ps);
-			if (!data) {
-				printf(" Cannot initialize this backend\n");
-			} else {
-				backend_list[i]->diagnostics(data);
-				backend_list[i]->deinit(data);
-			}
+	for (auto i = backend_iter(); i; i = backend_iter_next(i)) {
+		auto backend_data = backend_init(i, ps, session_get_target_window(ps));
+		if (!backend_data) {
+			printf(" Cannot initialize backend %s\n", backend_name(i));
+			continue;
 		}
+		if (backend_data->ops.diagnostics) {
+			printf("\n### Backend: %s\n\n", backend_name(i));
+			backend_data->ops.diagnostics(backend_data);
+		}
+		backend_data->ops.deinit(backend_data);
 	}
 }
 

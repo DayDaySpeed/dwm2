@@ -1,48 +1,107 @@
 # dwm2
 
-基于 [yaocccc](https://github.com/yaocccc) 的 dwm 桌面环境, 所有配置集中在本仓库。
+我在 Arch Linux 上自用的一套 dwm 桌面环境。窗口管理器、终端、合成器、锁屏、壁纸、状态栏和各种脚本都在这一个仓库里，`./setup.sh` 一条命令装好。
+
+dwm 本体加了不少东西，最大的是 **Super+Z 3D 工作空间星系**：所有 tag 和窗口变成一个用 OpenGL 渲染的三维星系群，可以在里面浏览、搜索、切换窗口，也可以当屏保。
+
+![星系驻留](docx/images/galaxy-orbit.jpg)
+
+| 开场：桌面碎成星尘被吸进中心 | Super+A 窗口总览 |
+|---|---|
+| ![星系开场](docx/images/galaxy-opening.jpg) | ![窗口总览](docx/images/overview.jpg) |
+
+<sub>截图来自 `dwm/tests/galaxy/` 的测试会话（Xvfb 软件渲染，测试窗口是彩色 xterm），真机效果更细腻。</sub>
+
+## 特色
+
+- **Super+Z 星系**：每个 tag 是一颗粒子恒星，每个窗口是绕它公转的截图卡片，所有 tag 沿三条开普勒椭圆轨道绕中央双星运行。三套开场随机轮换（桌面碎成星尘 / 穿过星门 / 大爆炸）；驻留时镜头自动巡游，打字可按标题过滤，点卡片或按 Enter 就无缝落到那个窗口；新开、关闭窗口和收到通知会变成天象（新星、流星、彗星）；`Esc` 坍缩回壁纸，`Super+Z` 飞回桌面。无操作 10 分钟自动以屏保方式进入。详见 [星系使用说明](docx/星系使用说明.md)。
+- **Super+A 窗口总览**：窗口从原位置飞进网格，悬停浮起，可打字过滤，选中后无缝落位。和星系共用同一套渲染。
+- **Super+Shift+R 原地重启**：自动编译安装 dwm 并原地重启，窗口和 tag 都保留；编译失败时弹通知，旧的 dwm 不受影响。
+- **窗口管理**：彩虹色的 tag 下划线，全局窗口用图钉徽章标出，``Super+` `` 在最近两个 tag 间切换，`Super+=` 平铺层和浮动层交替置顶，焦点留在当前层。见 [dwm 使用说明](docx/dwm使用说明.md)。
+- **壁纸**：静态壁纸每 5 分钟随机轮换，也能用动态壁纸（xwinwrap + mpv 播放视频，低分辨率视频用 Anime4K 放大）；切换时用 GPU 播放转场动画（`bin/transition.py`，着色器在 `config/transitions/`）。
+- **Super+P 菜单**：动态 / 静态壁纸、省电模式（静态壁纸 + 60Hz + CPU 节能，拔电自动打开）、护眼、勿扰、暂停自动锁屏；接外接屏时多出显示器布局、分辨率和缩放，插拔自动套用上次的布局（`bin/monitor.sh`）。
+- **远程桌面**：Sunshine + Moonlight，Tailscale 提供固定 IP，远程时 Alt 当作 Super 用；x11vnc 备用。见 [远程桌面使用说明](docx/远程桌面使用说明.md)。
+- **其余**：betterlockscreen + i3lock-color 锁屏（输入时显示圆点）、flameshot 截图、dunst 通知、熄屏前调暗、低电量提醒、`Super+/` 快捷键速查、`Super+Shift+Esc` 电源菜单。
+
+## 目录结构
 
 ```
 config/   所有配置 (只改这里)
-  dwm.h  st.h  tabbed.h      编译时使用的 config.h
+  dwm.h  st.h  tabbed.h      编译时使用的 config.h (星系参数在 dwm.h 末尾「Super+Z 星系」一节)
   picom.conf  dunst.conf     由 bin/autostart.sh 加载
   ranger/                    终端文件管理器, ~/.config/ranger 软链接到这里
   sunshine.conf              远程桌面串流, ~/.config/sunshine/sunshine.conf 软链接到这里
   betterlockscreenrc         锁屏主题, ~/.config/betterlockscreen/betterlockscreenrc 软链接到这里
-  rofi/                      rofi 主题 (adi1090x style-5) 与配色, ~/.config/rofi 软链接到这里
+  rofi/                      rofi 主题与配色, ~/.config/rofi 软链接到这里
+  transitions/               壁纸切换的 GPU 转场着色器 (gl-transitions)
+  anime4k/                   动态壁纸放大用的 Anime4K 着色器
   xinitrc                    环境变量与会话服务, ~/.xinitrc 软链接到这里
   Xresources                 Xft.dpi 等, ~/.Xresources 软链接到这里
 bin/      dwm 调用的脚本 (快捷键、状态栏、自启动)
   autostart.sh               dwm 启动时执行, 所有开机启动项都在这里
   statusbar/                 状态栏
-  livewall.sh                动态 / 静态壁纸 (xwinwrap + mpv 播放视频)
-  powersave.sh               省电模式: 静态壁纸 + 60Hz + CPU 节能 (Super+P 开关)
+  reload.sh                  Super+Shift+R: 编译安装 dwm 并原地重启
+  galaxysaver.py             星系屏保 (无操作 10 分钟进入星系)
+  galaxynote.sh              把 dunst 通知转成星系里的彗星
+  livewall.sh transition.py  动态 / 静态壁纸, 壁纸切换转场
+  monitor.sh                 显示器布局、分辨率、缩放, 插拔检测
+  powersave.sh nightlight.sh 省电模式, 护眼暖色 (Super+P 菜单)
   power.sh keys.sh           电源菜单 (Super+Shift+Esc), 快捷键速查 (Super+/)
+  sunshine.sh vnc.sh         远程桌面
   batalert.sh dimscreen.sh   低电量提醒, 锁屏前调暗提醒
-  nightlight.sh              护眼暖色 (Super+P 开关)
-  blurlock.sh rofi.sh set_vol.sh dpms.sh ...
+  blurlock.sh rofi.sh set_vol.sh dpms.sh translate.sh ...
+dwm/                         dwm 源码, 直接修改, ./setup.sh dwm 编译安装
+  galaxy*.c                  Super+Z 星系 (场景、镜头、OpenGL 渲染、交互)
+  overview.c                 Super+A 窗口总览
+  tests/galaxy/              星系的测试工具 (独立的 Xvfb 会话, 不影响当前桌面)
+st/ tabbed/                  终端和标签容器源码, ./setup.sh st | tabbed
+picom/                       上游 picom v13 加一个 _DWM_NOANIM 补丁, 见 picom/README.dwm2.md
+i3lock-color/                锁屏用的 i3lock-color 源码, ./setup.sh i3lock
 scripts/                     手动运行的工具脚本 (music_covers.py 补专辑封面)
-docx/                        使用说明 (dwm、终端、picom、rofi、通知、锁屏截图), 入口 docx/README.md
+docx/                        使用说明, 入口 docx/README.md
 wallpaper/                   壁纸, 私有仓库 dwm2-wallpaper 的 Git 子模块 (Git LFS); ~/Pictures/wallpaper 软链接到这里
-  static/                    静态图片, 每 5 分钟随机轮换
+  static/                    静态图片 (按题材分子目录)
   live/                      动态壁纸 (mp4、Wallpaper Engine 场景)
-dwm/ st/ tabbed/ picom/      源码 (基于 yaocccc 的版本, 已含本仓库的改动), 直接修改, ./setup.sh <名字> 编译安装
-i3lock-color/                锁屏用的 i3lock-color 源码 (输入密码时显示圆点), ./setup.sh i3lock 编译安装
 setup.sh                     安装/编译入口
 ```
 
 `$DWM` 指向本仓库根目录 (在 `config/xinitrc` 中导出)。
 
-## 使用
+## 安装与使用
+
+需要 Arch Linux 和 yay (依赖用 pacman / yay 安装)。
 
 ```sh
-git clone --recursive <本仓库> ~/projs/dwm2   # wallpaper/ 是私有子模块, 需要 dwm2-wallpaper 的访问权限和 git-lfs
+git clone --recursive <本仓库> ~/projs/dwm2   # wallpaper/ 是私有子模块, 需要 dwm2-wallpaper 的访问权限和 git-lfs; 没有权限时跳过, 目录留空
 cd ~/projs/dwm2 && ./setup.sh          # 依赖 + 链接 + 编译全部
 
-# 改了 config/dwm.h 后: 按 Super + Shift + R (自动编译安装并原地重启)
-./setup.sh st | tabbed | picom         # 改了对应配置后
+./setup.sh deps | link                 # 只装依赖 / 只建软链接
+./setup.sh st | tabbed | picom | i3lock   # 改了对应源码或配置后单独编译安装
 ```
 
-脚本和 picom/dunst 配置修改后无需编译; 改 dwm/st/tabbed 后需重新编译并重启 dwm。
+改了 `config/dwm.h` 或 `dwm/` 源码后按 `Super + Shift + R` 生效 (自动编译安装并原地重启)。脚本和 picom / dunst 配置修改后无需编译。
 
-`Super + Z` 进入 DWM 内的 3D 工作空间星系：约 8 秒开场，开头随机轮换三套（不连续重复）——桌面碎成上百块、旋涡状被吸进屏幕中心化成星尘 / 一座带跑动光点的环形星门迎面而来、镜头穿门而过白光一闪 / 焦点窗口处大爆炸、冲击波和粒子四散、各星系核心从爆心飞出后依次点火；之后共用的节拍（窗口截图带着一圈冲击波脱离桌面，其他 tag 的窗口在超空间跃迁的光线中飞来，各 tag 核心依次点火并放出冲击环，轨道像光笔一样被画出；整个星系群高速旋转并被拧成螺旋，转速最高时中心光源爆闪；旋转结束后轨道盘面短暂立起再回落，随后镜头俯冲进星系群内部铺满全屏，各星系逐个点名闪亮，再沿弧线拉回，星轨从核心向后拉出，窗口卡片依次翻面亮相，落定时中心光源发出一圈大涟漪），桌面壁纸在开场中溶解成自动生成的深空背景（幂律分布、带色温的星点，沿对角线的银河带和暗尘带，配色取自壁纸并随时间缓慢变化的星云，三层视差星空，亮星带十字衍射芒），然后**停在星系轨道态**，不限时（镜头带一定翻滚，压扁的轨道盘面沿屏幕对角线铺满全屏，有窗口的星系分布在三条轨道上，远景星空、盘面尘带和前景浮尘构成空间层次，窗口卡片仍保持正立）：tag 核心带着窗口星绕中心光源沿三条倾角、偏心率各不相同的开普勒椭圆轨道公转（近点快、远点慢，每个核心身后拖一段渐隐的长曝光星轨），窗口星还会沿各自核心周围的 3D 轨道运行；星系不时整体翻转、轨道环缓慢呼吸，中心光源周期性发出沿轨道扩散的涟漪，两个核心交会时同时闪光、前方核心短暂掩住后方光晕；中心是一冷一暖互绕的双星；一个空 tag 的核心是脉冲星，两道光柱每 14 秒扫一圈；尘埃按开普勒速度绕中心流动（内快外慢），细碎的尘埃流沿三条群轨道流淌；桌面事件会变成天象：星系运行时新开的窗口在所在 tag 的轨道上诞生一颗新星（可以点），关闭的窗口缩成光点、拖着长尾化作流星飞走，收到通知（dunst，见 `bin/galaxynote.sh`）时一颗彗星带着通知标题划过，整点时双星爆闪、一圈光波扫过所有轨道并显示时间，这时随机特效让位几秒；另有流星沿对角线划过、彗星穿过星系群、光点沿轨道流动、同一 tag 的窗口连成星座、两个核心之间亮起光桥、远景星空闪烁、偶尔一个核心爆发成超新星，平均每一两秒就有一个特效；镜头像在星轨中遨游：在全景、侧掠、仰视、穿越盘面、俯瞰等机位之间，穿插飞到各个星系身边绕着它转、再飞越到下一个星系的巡游镜头，全景时也会缓慢推拉，唤醒鼠标后移动或滚动滚轮时镜头停住、轨道放慢，停手后继续；局部轨道与核心、窗口星按短弧深度穿插；窗口近处显示有尺寸上限的清晰截图，中景使用缩略图，远处退为光点。驻留默认隐藏并休眠鼠标，移动和滚轮不会干扰自动巡游；第一次左键点击只唤醒鼠标，随后移动可悬停并产生视差、右键拖动可绕星系群转动视角、滚轮可推拉镜头（默认最近，向下滚拉远），再次点击窗口星时进入它：dwm 先在遮罩下切好 tag，卡片沿弧线飞到窗口真实的位置和大小，同 tag 的其他窗口一起归位，其余淡出，深空褪回壁纸、状态栏淡入，约 1 秒后与真实桌面逐像素重合，无缝交接（隐藏窗口会被恢复）；点击星系核心时该 tag 的窗口一起落位。`Super + A` 窗口总览与星系共用这套渲染：窗口从原位置飞进网格，悬停浮起发光、可打字过滤，选中后同样无缝落位。鼠标唤醒后闲置 8 秒自动休眠，`Esc` 可立即关闭鼠标交互（若正在过滤标题则先清空过滤）；驻留时按 `Super + Z` 回程：窗口沿 3D 曲线飞回原位置，无缝露出原桌面；开场或驻留时按 `Esc`：各 tag 星系沿共用轨道划过一段弧线，再向中心收束成一个光点，整段约 2.35 秒，之后只剩壁纸；再按 `Super + Z`（或任意键 / 点击）恢复原桌面。退场时再按 `Esc` 可立即进入壁纸态。开场鼠标默认休眠，移动和点击不打断演出；其他键仍快进到驻留态，唤醒后点击才快进。动画只使用开始时截的一次窗口图，期间不移动、隐藏或聚焦任何真实窗口；驻留时不独占键盘鼠标，锁屏照常；渲染超预算时逐级减去远景尘埃、尾迹和次要轨道柔光，保留主轨道与窗口；无操作 90 秒降到 30 帧，熄屏时暂停渲染。驻留时也能用键盘：方向键在窗口卡片之间移动选中，直接打字按窗口标题过滤（不匹配的变暗），Tab 切换匹配项，Enter 跳到该窗口，Esc 先清空过滤、再关闭鼠标交互、最后坍缩。省电模式打开时（拔电自动）进入安静模式：特效更少更稀、不显示流星彗星和轨道光流、帧率 30。无操作 10 分钟自动以屏保方式进入星系（`bin/galaxysaver.py`；任何输入飞回桌面），20 分钟锁屏。多显示器时星系以按下 Super+Z 的那块屏为中心，其他屏显示延伸出去的空间。开场时长、特效间隔、对角线倾角、巡游距离等参数在 `config/dwm.h` 末尾的「Super+Z 星系」一节（实现见 `dwm/galaxy*.c`，测试工具见 `dwm/tests/galaxy/`）。`Super + P` 仍为原有 rofi 自定义菜单。
+## 文档
+
+使用说明都在 [docx/](docx/README.md)：
+
+| 文档 | 内容 |
+|---|---|
+| [dwm使用说明](docx/dwm使用说明.md) | 快捷键、鼠标、tag、状态栏、窗口规则、修改配置 |
+| [星系使用说明](docx/星系使用说明.md) | Super+Z 星系的操作、天象、屏保、减弱动效、参数 |
+| [终端使用说明](docx/终端使用说明.md) | st + tabbed |
+| [picom使用说明](docx/picom使用说明.md) | 透明、圆角、模糊、动画 |
+| [rofi使用说明](docx/rofi使用说明.md) | 启动器、切换窗口、Super+P 菜单 |
+| [通知使用说明](docx/通知使用说明.md) | dunst |
+| [锁屏与截图使用说明](docx/锁屏与截图使用说明.md) | 锁屏、自动锁屏、flameshot |
+| [远程桌面使用说明](docx/远程桌面使用说明.md) | Sunshine + Moonlight, x11vnc |
+
+## 致谢
+
+- dwm / st / tabbed 最初取自 [yaocccc](https://github.com/yaocccc) 的版本 (再往上是 [suckless](https://suckless.org/))，之后在本仓库里改动了很多
+- [picom](https://github.com/yshui/picom) v13 (yshui)
+- rofi 主题来自 [adi1090x/rofi](https://github.com/adi1090x/rofi) (type-1 / style-5)
+- [i3lock-color](https://github.com/Raymo111/i3lock-color)、[betterlockscreen](https://github.com/betterlockscreen/betterlockscreen)
+- 壁纸转场着色器来自 [gl-transitions](https://github.com/gl-transitions/gl-transitions)，动态壁纸放大用 [Anime4K](https://github.com/bloc97/Anime4K)
+
+各部分沿用原有的许可证，见各目录下的 LICENSE 文件。
