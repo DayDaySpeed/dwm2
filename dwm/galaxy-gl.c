@@ -279,7 +279,9 @@ static const char *galaxyglfsnebula2 =
     "    float tail = al > 0.0 ? exp(-al / .042) * exp(-pr * pr / (sg * sg)) * (1.0 - smoothstep(.1, .14, al)) : 0.0;\n"
     "    float d2 = dot(dv, dv) * view.z * view.z;\n"
     "    float head = exp(-d2 / 16.0) + .3 * exp(-d2 / 400.0);\n"
-    "    far += mix(vec3(.8, .92, 1.0), grey, .2) * (head * .35 + tail * .2) * comet.w / max(cd, .01);\n"
+    /* 彗尾是稀疏、闪烁的光尘 (3px 一格, 约一半的格子亮, 各自闪烁) */
+    "    vec2 cg = floor(px / 3.0); float sp = step(.5, h(cg)) * (.5 + .5 * sin(t * (3.0 + 4.0 * h(cg + 2.3)) + 6.28 * h(cg + 5.1)));\n"
+    "    far += mix(vec3(.8, .92, 1.0), grey, .2) * (head * .35 + tail * .45 * sp) * comet.w / max(cd, .01);\n"
     "  }\n"
     "  col += far * edge * cd * k;\n"
     "  o = vec4(col, 0.0);\n"
