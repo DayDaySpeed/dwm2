@@ -247,7 +247,18 @@ static const char *galaxyglvspart =
     "  vec2 c = vec2(gl_VertexID & 1, gl_VertexID >> 1) * 2.0 - 1.0;\n"
     "  float h1 = hs(fi * 1.37 + .1), h2 = hs(fi * 2.71 + .3), h3 = hs(fi * 3.13 + .7), h4 = hs(fi * 5.17 + .9);\n"
     "  vec3 wp, col;\n"
-    "  if (mode < .5) {\n"
+    "  if (mode > 1.5) {\n"
+    /* 粒子恒星: 球形分布, 中心密外围疏, 略扁; 绕自转轴内快外慢地转, 每颗粒子还有一点缓慢的涌动; 中心暖白, 外圈 tag 色 */
+    "    float u = pow(h1, .9), rr = disk.x * u;\n"
+    "    float z = h2 * 2.0 - 1.0, ph = 6.2832 * h3, s = sqrt(1.0 - z * z);\n"
+    "    ph += disk.z * time / (.35 + u);\n"
+    "    vec3 lp = vec3(s * cos(ph), s * sin(ph), z * disk.w) * rr;\n"
+    "    lp += .06 * disk.x * vec3(sin(time * .7 + fi), sin(time * .6 + fi * 1.7), sin(time * .8 + fi * .9));\n"
+    "    wp = cpos + plane * lp;\n"
+    "    col = mix(vec3(1.0, .93, .82), tint, smoothstep(.1, .7, u));\n"
+    "    a = alpha * (.25 + .75 * pow(h4, 3.0)) * (1.0 - .7 * u);\n"
+    "    sz = psize * (.5 + .9 * h4);\n"
+    "  } else if (mode < .5) {\n"
     "    float u = pow(h1, 1.6), rr = mix(disk.x, disk.y, u);\n"
     "    float th = 6.2832 * h2 + disk.z * pow(disk.x / rr, 1.5) * time;\n"
     "    float arm = .55 + .45 * cos(2.0 * th - 5.0 * log(rr / disk.x));\n"
@@ -1005,6 +1016,26 @@ galaxygldisk(GalaxyVec pos, const GalaxyMat *plane, double rin, double rout, dou
     glUniform3f(glGetUniformLocation(p, "tint"), rgb[0], rgb[1], rgb[2]);
     glUniform4f(glGetUniformLocation(p, "disk"), rin, rout, omega, .05);
     glUniform1f(glGetUniformLocation(p, "mode"), 0);
+    glUniform1f(glGetUniformLocation(p, "seed"), seed);
+    glUniform1f(glGetUniformLocation(p, "alpha"), alpha);
+    glUniform1f(glGetUniformLocation(p, "psize"), psize);
+    glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, n);
+    glDisable(GL_DEPTH_TEST);
+}
+
+/* 粒子恒星: 半径 rad (世界), 自转角速度 omega, n 颗粒子; alpha 是单颗粒子的亮度 */
+static void
+galaxyglstarball(GalaxyVec pos, const GalaxyMat *plane, double rad, double omega, const double rgb[3], double alpha, double psize, int n, double seed)
+{
+    GLuint p = galaxyglpartbegin();
+
+    if (!p || n < 1 || alpha < .002 || rad <= 0)
+        return;
+    galaxyglmat(p, "plane", plane);
+    glUniform3f(glGetUniformLocation(p, "cpos"), pos.x, pos.y, pos.z);
+    glUniform3f(glGetUniformLocation(p, "tint"), rgb[0], rgb[1], rgb[2]);
+    glUniform4f(glGetUniformLocation(p, "disk"), rad, 0, omega, .8);
+    glUniform1f(glGetUniformLocation(p, "mode"), 2);
     glUniform1f(glGetUniformLocation(p, "seed"), seed);
     glUniform1f(glGetUniformLocation(p, "alpha"), alpha);
     glUniform1f(glGetUniformLocation(p, "psize"), psize);

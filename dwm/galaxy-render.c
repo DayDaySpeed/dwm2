@@ -712,22 +712,24 @@ galaxyrendersun(void)
     double chime = r->chimeat > 0 && r->mode == GalaxyOrbit ? galaxyflash(galaxynow() - r->chimeat, .3, 1.1) : 0;
     int i;
 
-    /* 双星: 一冷一暖两颗恒星绕共同质心 (群轨道的焦点) 互转, 光晕随相位轻微脉动, 各带衍射芒 */
+    /* 双星: 一冷一暖两颗粒子恒星绕共同质心 (群轨道的焦点) 互转, 随相位轻微脉动 */
     for (i = 0; i < 2; i++) {
         p = galaxyproject(galaxyapply(r->world, galaxyv((i ? -1 : 1) * rad * cos(th), 0, (i ? -1 : 1) * rad * sin(th))));
         if (!p.ok)
             continue;
         w = 1 + .12 * sin(th * 2 + i * GALAXYPI);
-        /* 脉冲时只让光晕稍微加强 (气势交给涟漪光环), 不再鼓成一个白色大球 */
-        galaxyrenderglow(i ? GalaxyWarm : GalaxyCool, p, (i ? 14 : 17) * r->starscale * w * (1 + .2 * r->sunpulse), MIN(1, .5 * a),
-                galaxydepthblur(p.z), .55 * (1 + .3 * r->sunpulse), .25 * r->glowscale * (1 + .5 * r->sunpulse));
-        galaxysprite(GalaxySpike, i ? GalaxyWarm : GalaxyCool, p.x, p.y, MIN(220, (90 + 60 * r->sunpulse) * w * MAX(.5, p.scale)),
-                MIN(1, .55 * a) * galaxynearfade(p.z));
-        if (chime > .01)    /* 整点报时: 双星金色爆闪 */
-            galaxysprite(GalaxyHalo, GalaxyGold, p.x, p.y, MIN(400, 160 * MAX(.5, p.scale)), MIN(1, .8 * chime * r->sunalpha));
+        /* 粒子恒星 (一冷一暖); 脉冲 / 整点报时只让粒子团亮一点、胀一点, 不出现白光大球 */
+        {
+            double rgb[3], e = MIN(2, r->sunpulse + 1.5 * chime);
+            GalaxyVec c = galaxyapply(r->world, galaxyv((i ? -1 : 1) * rad * cos(th), 0, (i ? -1 : 1) * rad * sin(th)));
+
+            galaxytintcolor(i ? GalaxyWarm : GalaxyCool, -1, rgb);
+            galaxyglstarball(c, &r->world, (i ? 14 : 17) * 2.4 * r->starscale * w * (1 + .2 * e), 1.1, rgb,
+                    .1 * MIN(1, a) * (1 + .5 * e), r->starscale, (int)(2200 * (r->quiet ? .5 : 1)), i ? 77.1 : 53.9);
+            galaxysprite(GalaxyHalo, i ? GalaxyWarm : GalaxyCool, p.x, p.y, MIN(160, (i ? 14 : 17) * 6 * p.scale),
+                    .12 * MIN(1, a) * (1 + .5 * e) * galaxynearfade(p.z));
+        }
     }
-    if ((p = galaxyproject(galaxyapply(r->world, galaxyv(0, 0, 0)))).ok)
-        galaxylensflare(p.x, p.y, .45 * MIN(1, a) * galaxynearfade(p.z) + chime * r->sunalpha);
 }
 
 /* CPU 色温: 闲时是所在 tag 的颜色 -> 暖白 (约 30%) -> 橙红 (80% 以上). w[0..2] 对应 tint[0..2] */
@@ -837,18 +839,17 @@ galaxyrenderitems(void)
             /* 近点 / 交会 / 涟漪 / 翻转时核心更亮, 光晕更大 */
             a = .35 * g->peri + .6 * g->flare + .7 * g->ripple + .25 * g->flip + 1.5 * g->ignite + 1.2 * g->callout
                 + 1.5 * g->nova + 1.2 * g->bridge;
-            galaxyrenderglow(GALAXYTAGTINT(g->tag), g->p, g->size * (1 + .15 * g->hover + .12 * g->peri + .2 * g->flare + .12 * g->ripple
-                        + .4 * (g->ignite + g->callout) + .3 * g->nova + .2 * g->bridge),
-                    .7 * MIN(1, g->alpha * galaxydepthlight(g->p.z) * (1 + a)) * galaxynearfade(g->p.z)   /* 光层是加法叠加: 比原来压暗一些 */
-                    * (1 - .78 * g->eclipse),
-                    galaxydepthblur(g->p.z), .4 * (1 + .4 * g->hover + a), .16 * r->glowscale * (1 + 1.5 * a)
-                    * (r->mode == GalaxyOrbit ? 1 - galaxyclamp(r->qualityvisual - 2) : 1));
-            /* 衍射芒: 平时淡淡一层, 近点 / 交会 / 超新星 / 点名 / 悬停时变大变亮 */
-            galaxysprite(GalaxySpike, GALAXYTAGTINT(g->tag), g->p.x, g->p.y,
-                    MIN(260, g->size * MAX(.4, g->p.scale) * (3.2 + 2 * a + 1.5 * g->hover)),
-                    MIN(1, g->alpha * (.1 + .4 * a + .4 * g->hover)) * galaxynearfade(g->p.z) * (1 - .78 * g->eclipse));
-            if (g->nova > .05)   /* 超新星: 镜头光晕 */
-                galaxylensflare(g->p.x, g->p.y, .8 * g->nova * galaxynearfade(g->p.z));
+            /* 粒子恒星 (不再是明亮光斑 / 星芒): 事件发生时粒子团更亮、略微胀大; 外面只留一层很淡的光晕 */
+            {
+                double rgb[3], k = MIN(1, g->alpha) * (1 - .78 * g->eclipse) * galaxydepthlight(g->p.z);
+
+                galaxytintcolor(GALAXYTAGTINT(g->tag), -1, rgb);
+                galaxyglstarball(g->pos, &g->plane, g->size * 2.4 * (1 + .12 * g->hover + .25 * MIN(2, a)), .8, rgb,
+                        .09 * k * (1 + .6 * MIN(2, a) + .5 * g->hover), r->starscale,
+                        (int)(2600 * (r->quiet ? .5 : 1)), 31.7 * (g->tag + 1));
+                galaxysprite(GalaxyHalo, GALAXYTAGTINT(g->tag), g->p.x, g->p.y, MIN(160, g->size * 6 * g->p.scale),
+                        .12 * k * (1 + .5 * MIN(2, a)) * galaxynearfade(g->p.z));
+            }
             if (g->alpha > .2) {
                 g->hx = g->p.x;
                 g->hy = g->p.y;
