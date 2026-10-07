@@ -20,7 +20,6 @@ static Picture galaxywhite(double a);
 /* 进程级缓存 (galaxyscene 每次启动都会清零, 这里不会) */
 static struct {
     int ready, steps, w, h, vw, vh;
-    unsigned long wall;               /* 生成时的壁纸 (_XROOTPMAP_ID), 变了就重新生成 */
     Pixmap starpix[GALAXYSPACELAYERS], maskpix[GALAXYSPACEMASKS];
     Picture star[GALAXYSPACELAYERS], mask[GALAXYSPACEMASKS];
     int starsize[GALAXYSPACELAYERS], mw, mh;
@@ -172,19 +171,10 @@ static void
 galaxyspacebegin(void)
 {
     GalaxyScene *r = &galaxyscene;
-    Atom type;
-    int fmt;
-    unsigned long n, after, wall = 0;
-    unsigned char *p = NULL;
 
-    if (XGetWindowProperty(dpy, root, XInternAtom(dpy, "_XROOTPMAP_ID", False), 0, 1, False, XA_PIXMAP,
-                &type, &fmt, &n, &after, &p) == Success && p) {
-        if (n)
-            wall = *(unsigned long *)p;
-        XFree(p);
-    }
+    /* 星点 / 银河与壁纸无关 (星云在 GPU 上), 只看尺寸 */
     if (galaxyspace.ready && galaxyspace.w == r->w && galaxyspace.h == r->h && galaxyspace.vw == r->vw
-            && galaxyspace.vh == r->vh && galaxyspace.wall == wall) {
+            && galaxyspace.vh == r->vh) {
         galaxyspace.readyat = -1;
         return;
     }
@@ -193,7 +183,6 @@ galaxyspacebegin(void)
     galaxyspace.h = r->h;
     galaxyspace.vw = r->vw;
     galaxyspace.vh = r->vh;
-    galaxyspace.wall = wall;
     galaxyspace.mw = GALAXYSPACEMW;
     galaxyspace.mh = MAX(8, GALAXYSPACEMW * r->vh / MAX(1, r->vw));
 }
@@ -335,4 +324,28 @@ galaxyrendernebula(void)
     double q = r->mode == GalaxyOrbit ? r->qualityvisual : 0;
 
     galaxyglnebula(.5 * r->space * (1 - r->reveal), galaxynow(), q > 2 ? 3 : r->quiet ? 4 : 5, r->nebseed);
+}
+
+/* dwm 启动 (含原地重启) 时预先按当前显示器生成好 (约 85ms), 第一次按 Super+Z 时开场不再卡一下.
+ * 星系没在运行时 galaxyscene 是空的: 临时填上生成要用的尺寸和格式, 生成完清空 */
+static void
+galaxyspaceprewarm(void)
+{
+    GalaxyScene *r = &galaxyscene;
+
+    if (r->mode || !selmon)
+        return;
+    r->w = sw;
+    r->h = sh;
+    r->vw = selmon->mw;
+    r->vh = selmon->mh;
+    r->argb = XRenderFindStandardFormat(dpy, PictStandardARGB32);
+    r->a8 = XRenderFindStandardFormat(dpy, PictStandardA8);
+    r->stage = 1;
+    if (r->argb && r->a8) {
+        galaxyspacebegin();
+        while (!galaxyspace.ready && galaxyspace.steps < 8)
+            galaxyspacestep();
+    }
+    memset(r, 0, sizeof *r);
 }
