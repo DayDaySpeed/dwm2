@@ -1676,10 +1676,10 @@ galaxyrenderparticles(void)
             rad = p->size * (1 - .5 * u);
             len = sqrt(galaxydot(p->vel, p->vel)) / 60;
             if (len > 2.5 * rad)
-                galaxyglpartline(p->pos.x - p->vel.x / 60, p->pos.y - p->vel.y / 60, p->pos.x, p->pos.y, 0, MAX(.5, .45 * rad), col, .15,
+                galaxyglpartline(p->pos.x - p->vel.x / 60, p->pos.y - p->vel.y / 60, p->pos.x, p->pos.y, p->pos.z, MAX(.5, .45 * rad), col, .15,
                         a * MAX(.2, MIN(1, 2.5 * rad / len)));
             else
-                galaxyglparticle(p->pos.x, p->pos.y, 0, rad, col, .7, a, 0);
+                galaxyglparticle(p->pos.x, p->pos.y, p->pos.z, rad, col, .7, a, 0);   /* z: 0 最前, 远景流星放在最远处 (被卡片挡住) */
             continue;
         }
         pr = galaxyproject(p->pos);

@@ -1031,23 +1031,42 @@ galaxyupdateholdfx(double motion)
         if (r->brj >= 0 && local > 1.15)
             r->galaxies[r->brj].bridge = .7 * f * galaxyflash(local - .9, .4, 2.5);
     }
-    /* 流星雨: 约每 31s 一次, 1.5s 内从视口上方射出十来颗 (屏幕粒子, 速度快, 自动画成拉丝) */
+    /* 流星雨: 约每 31s 一次, 1.5s 内从画面一侧上方斜着射出十来颗; 放在最远处 (被卡片挡住), 细而淡, 不穿过画面中央 */
     if (galaxycycle(motion, 20, 31, &k, &local) && local < 1.5 && f > .3) {
-        double side = galaxyhash(k * 13 + 7) < .5 ? -1 : 1, x0 = r->vx + r->vw * (.25 + .5 * galaxyhash(k * 13 + 3)), sp, ang;
+        double side = galaxyhash(k * 13 + 7) < .5 ? -1 : 1, x0, sp, ang;
         int n;
 
+        x0 = r->vx + r->vw * (side > 0 ? .05 + .2 * galaxyhash(k * 13 + 3) : .75 + .2 * galaxyhash(k * 13 + 3));
         if (k != r->meteork) {
             r->meteork = k;
             if (r->log && r->mode == GalaxyOrbit)
                 fprintf(r->log, "galaxy meteors at %.1fs\n", motion);
         }
         for (n = galaxyemitcount(8 * f); n > 0; n--) {
-            sp = r->vw * (.55 + .35 * galaxyprand());
-            ang = (55 + 20 * galaxyprand()) * GALAXYPI / 180;
-            galaxyemit(galaxyv(x0 + (galaxyprand() - .5) * .5 * r->vw, r->vy - 10 + galaxyprand() * .2 * r->vh, 0),
-                    galaxyv(side * cos(ang) * sp, sin(ang) * sp, 0), .5 + .4 * galaxyprand(), 1.6,
-                    galaxyprand() < .6 ? GalaxyCool : GalaxyGold, .9, 0, 1);
+            sp = r->vw * (.45 + .3 * galaxyprand());
+            ang = (25 + 15 * galaxyprand()) * GALAXYPI / 180;
+            galaxyemit(galaxyv(x0 + (galaxyprand() - .5) * .15 * r->vw, r->vy - 10 + galaxyprand() * .12 * r->vh, .95 * r->cam.far),
+                    galaxyv(side * cos(ang) * sp, sin(ang) * sp, 0), .45 + .3 * galaxyprand(), 1.1,
+                    galaxyprand() < .6 ? GalaxyCool : GalaxyGold, .45, 0, 1);
         }
+    }
+    /* 零星流星: 每 3~8s 一颗 (安静模式间隔加倍), 从视口外圈沿切线略朝外划过, 不经过中央; 细、淡、在最远处 */
+    if (f > .3 && galaxynow() >= r->meteorat) {
+        double a = 2 * GALAXYPI * galaxyprand(), tx = -sin(a), ty = cos(a), dx, dy, len, sp = r->vw * (.35 + .15 * galaxyprand());
+
+        if (r->meteorat > 0) {
+            if (galaxyprand() < .5) {
+                tx = -tx;
+                ty = -ty;
+            }
+            dx = tx + .35 * cos(a);
+            dy = ty + .35 * sin(a);
+            len = hypot(dx, dy);
+            galaxyemit(galaxyv(r->vx + r->vw * (.5 + .42 * cos(a)), r->vy + r->vh * (.5 + .42 * sin(a)), .95 * r->cam.far),
+                    galaxyv(dx / len * sp, dy / len * sp, 0), .35 + .2 * galaxyprand(), 1.0,
+                    galaxyprand() < .7 ? GalaxyCool : GalaxyGold, .35, 0, 1);
+        }
+        r->meteorat = galaxynow() + (3 + 5 * galaxyprand()) * (r->quiet ? 2 : 1);
     }
 }
 
