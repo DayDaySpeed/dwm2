@@ -311,9 +311,11 @@ galaxyrendercardgl(GalaxyStar *s, double q[4][2], double qz[4], double vis, doub
         double left, double top, double rw, double rh, double snap)
 {
     GalaxyScene *r = &galaxyscene;
-    double rimc[3], qe[4][2], spec = 0, specat = 0, rim = 0, d;
-    int orbit = r->mode == GalaxyOrbit, exact, i;
+    static const double neb[3] = {.38, .32, .62};
+    double qe[4][2], d, f, t;
+    int orbit = r->mode == GalaxyOrbit, exact, i, moving;
     GalaxyVec normal, lightdir = galaxyv(-.35, -.55, -.76);
+    GalaxyCardFx fx = {0};
 
     if (!galaxygl.win || s->glfail || !s->mippix[s->base])
         return 0;
@@ -342,21 +344,49 @@ galaxyrendercardgl(GalaxyStar *s, double q[4][2], double qz[4], double vis, doub
         q = qe;
     }
     galaxyglcutout(q, qz, vis);
-    galaxytintcolor(GALAXYTAGTINT(s->galaxy), -1, rimc);
+    galaxytintcolor(GALAXYTAGTINT(s->galaxy), -1, fx.rimc);
+    normal = galaxyapply(s->orient, galaxyv(0, 0, -1));
     if (orbit) {
-        /* 驻留: 卡片边缘一圈 tag 色的光, 转动时一道高光从卡面扫过 */
-        rim = .3 * vis * (1 + 1.5 * s->hover);
-        normal = galaxyapply(s->orient, galaxyv(0, 0, -1));
+        /* 驻留: 卡片边缘一圈 tag 色的光 (悬停时更亮), 转动时一道高光从卡面扫过 */
+        fx.rim = .3 * vis * (1 + 3 * s->hover);
         d = galaxydot(normal, lightdir);
-        specat = .5 + 1.4 * d;
-        spec = .1 * vis;
+        fx.specat = .5 + 1.4 * d;
+        fx.spec = .1 * vis;
+    }
+    /* 环境光: 卡面映出星云的紫和所属核心的 tag 色, 朝向核心的一面更亮 (驻留 / 坍缩) */
+    if ((orbit || r->mode == GalaxyCollapse) && s->galaxy >= 0 && s->galaxy < r->ntags) {
+        f = .5 + .5 * galaxydot(normal, galaxynormalize(galaxysub(r->galaxies[s->galaxy].pos, s->pos)));
+        for (i = 0; i < 3; i++)
+            fx.env[i] = fx.rimc[i] * (.03 + .06 * f) + neb[i] * .04 * r->space;
+    }
+    /* 点击涟漪: 点中后 0.45s 内从点击处扩散一圈 */
+    if (s->clickat > 0 && (t = (galaxynow() - s->clickat) / .45) < 1) {
+        fx.ripple[0] = s->clickuv[0];
+        fx.ripple[1] = s->clickuv[1];
+        fx.ripple[2] = MAX(.001, t);
     }
     for (i = 0; i < 4 && !exact; i++)
         if (qz[i] <= 0)
             return 1;
-    galaxyglcard(s->gltex, q, qz, orbit ? vis * (.9 + .1 * MIN(1, light)) : vis, tint * MIN(1, light * 1.1),
-            orbit ? 0 : (1 - MIN(1, light)) * vis, rim, rimc, spec, specat, galaxydepthblur(s->p.z) > .55 ? 1 : 0,
-            (double)s->w / MAX(1, s->h), exact);
+    fx.vis = orbit ? vis * (.9 + .1 * MIN(1, light)) : vis;
+    fx.tint = tint * MIN(1, light * 1.1);
+    fx.dark = orbit ? 0 : (1 - MIN(1, light)) * vis;
+    fx.bias = galaxydepthblur(s->p.z) > .55 ? 1 : 0;
+    fx.aspect = (double)s->w / MAX(1, s->h);
+    fx.exact = exact;
+    /* 运动模糊: 只在开场 / 坍缩 / 回程这些快速段做 (驻留时卡片移动慢, 糊不出来还要多画几遍);
+     * 只用上一帧也画过的四角, 模糊长度最多相当于 1/60s 的运动 (帧率低时不糊成一片) */
+    moving = !orbit && s->pqframe + 1 == galaxygl.frameid;
+    if (moving && r->pdt > 1.0 / 60) {
+        f = 1.0 / 60 / r->pdt;
+        for (i = 0; i < 4; i++) {
+            s->pq[i][0] = q[i][0] + (s->pq[i][0] - q[i][0]) * f;
+            s->pq[i][1] = q[i][1] + (s->pq[i][1] - q[i][1]) * f;
+        }
+    }
+    galaxyglcard(s->gltex, q, qz, &fx, moving ? s->pq : NULL);
+    memcpy(s->pq, q, sizeof s->pq);
+    s->pqframe = galaxygl.frameid;
     return 1;
 }
 
@@ -366,7 +396,7 @@ galaxyrenderwindow(GalaxyStar *s, double vis, double tint, double light)
     GalaxyScene *r = &galaxyscene;
     static const double sx[4] = {-1, 1, 1, -1}, sy[4] = {-1, -1, 1, 1};
     double q[4][2], minx = 1e9, miny = 1e9, maxx = -1e9, maxy = -1e9, edge, hw, hh, dark;
-    double left = 0, top = 0, rw = 0, rh = 0, persp, snap, qa[4][2], qz[4], qp[4][2];
+    double left = 0, top = 0, rw = 0, rh = 0, persp, snap, qa[4][2], qz[4], qp[4][2], tx = 0, ty = 0;
     GalaxyVec corner, normal, tocam;
     GalaxyProj p;
     Picture mask;
@@ -376,8 +406,14 @@ galaxyrenderwindow(GalaxyStar *s, double vis, double tint, double light)
         return;
     hw = s->w * .5 * s->size * s->kw;
     hh = s->h * .5 * s->size * s->kh;
+    if (r->mode == GalaxyOrbit && s->hover > .001 && s->bx1 > s->bx0 && s->by1 > s->by0) {
+        ty = 8 * GALAXYPI / 180 * s->hover * MAX(-1, MIN(1, (r->mx - (s->bx0 + s->bx1) * .5) / ((s->bx1 - s->bx0) * .5)));
+        tx = 8 * GALAXYPI / 180 * s->hover * MAX(-1, MIN(1, (r->my - (s->by0 + s->by1) * .5) / ((s->by1 - s->by0) * .5)));
+    }
     for (i = 0; i < 4; i++) {
-        corner = galaxyadd(s->pos, galaxyapply(s->orient, galaxyv(sx[i] * hw, sy[i] * hh, 0)));
+        /* 悬停: 指针所在的一侧略微往里压 (最多约 8°) */
+        corner = galaxyadd(s->pos, galaxyapply(s->orient, galaxyv(sx[i] * hw * cos(ty), sy[i] * hh * cos(tx),
+                        sx[i] * hw * sin(ty) + sy[i] * hh * sin(tx))));
         p = galaxyproject(corner);
         if (!p.ok || p.z < r->cam.focal * .25)
             return;

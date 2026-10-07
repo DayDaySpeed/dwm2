@@ -31,9 +31,10 @@ static struct {
     Colormap cmap;
     GLXContext ctx;
     GLuint proglight, progcut, progdown, progup, progcomp, progprobe, prognebula, progcopy, progcard;
-    GLuint cardfbo, cardtex, cardvao, cardvbo, copyfbo;
+    GLuint cardfbo, cardtex, cardvao, cardvbo, copyfbo, blurfbo, blurtex;
     float aniso;                      /* 各向异性过滤上限 (不支持时为 0) */
     int ncards;                       /* 这一帧画进卡片层的卡片数 (0 时合成不读卡片层) */
+    unsigned long frameid;            /* 帧编号 (每帧 galaxyglframe 加一) */
     int cardups;                      /* 这一帧新建的卡片纹理数 (分摊到多帧, 避免开场卡顿) */
     int texmade, texfreed;            /* 本次 Super+Z 建 / 删的卡片纹理数 (写进日志, 查泄漏) */
     GLuint vao, vbo, fullvao;
@@ -206,7 +207,7 @@ static const char *galaxyglvscard =
 static const char *galaxyglfscard =
     "#version 330 core\n"
     "in vec2 uv; out vec4 o;\n"
-    "uniform sampler2D tex; uniform float vis, tint, dark, rim, spec, specat, bias, aspect, exact; uniform vec3 rimc;\n"
+    "uniform sampler2D tex; uniform float vis, tint, dark, rim, spec, specat, bias, aspect, exact, weight; uniform vec3 rimc, ripple, envc;\n"
     "void main() {\n"
     "  vec4 c = exact > .5 ? textureLod(tex, uv, 0.0) : texture(tex, uv, bias);\n"
     "  float m = c.a;\n"
@@ -218,7 +219,14 @@ static const char *galaxyglfscard =
     "    c.rgb += rimc * rim * m * (1.0 - smoothstep(0.0, .035, e));\n"
     "  }\n"
     "  if (spec > .001) c.rgb += vec3(spec * m * exp(-pow((uv.x * .75 + uv.y * .25 - specat) / .09, 2.0)));\n"
-    "  o = c;\n"
+    /* 环境光: 卡面映出星云 / 所属核心的颜色 */
+    "  c.rgb += envc * m * vis;\n"
+    /* 点击涟漪: 从点击处扩散的一圈亮环 (ripple.z 是进度 0..1) */
+    "  if (ripple.z > 0.0 && ripple.z < 1.0) {\n"
+    "    float d = length((uv - ripple.xy) * vec2(aspect, 1.0)), r = ripple.z * 1.4 * max(aspect, 1.0);\n"
+    "    c.rgb += vec3(.85, .95, 1.0) * m * (1.0 - ripple.z) * .7 * exp(-pow((d - r) / .03, 2.0));\n"
+    "  }\n"
+    "  o = c * weight;\n"
     "}\n";
 
 /* 合成: 底层 滤色 光层 (软拐点压缩, 轻微色差和颗粒只作用在光上), 再盖前景层 */
@@ -500,6 +508,8 @@ galaxyglbuffers(int w, int h)
         glDeleteTextures(GALAXYBLOOM, galaxygl.bloomtex);
         glDeleteFramebuffers(1, &galaxygl.cardfbo);
         glDeleteTextures(1, &galaxygl.cardtex);
+        glDeleteFramebuffers(1, &galaxygl.blurfbo);
+        glDeleteTextures(1, &galaxygl.blurtex);
         if (galaxygl.pbo[0])
             glDeleteBuffers(3, galaxygl.pbo);
         memset(galaxygl.pbo, 0, sizeof galaxygl.pbo);
@@ -525,6 +535,11 @@ galaxyglbuffers(int w, int h)
     glGenFramebuffers(1, &galaxygl.cardfbo);
     glBindFramebuffer(GL_FRAMEBUFFER, galaxygl.cardfbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, galaxygl.cardtex, 0);
+    /* 运动模糊的累加层 (半精度, 多份 1/n 相加不出色带) */
+    galaxygl.blurtex = galaxygltex(w, h, GL_RGBA16F);
+    glGenFramebuffers(1, &galaxygl.blurfbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, galaxygl.blurfbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, galaxygl.blurtex, 0);
     glGenFramebuffers(GALAXYBLOOM, galaxygl.bloomfbo);
     for (i = 0; i < GALAXYBLOOM; i++) {
         galaxygl.bw[i] = MAX(1, w >> (i + 1));
@@ -675,6 +690,7 @@ galaxyglframe(void)
     glClear(GL_COLOR_BUFFER_BIT);
     glBindFramebuffer(GL_FRAMEBUFFER, galaxygl.fbo);
     galaxygl.ncards = galaxygl.cardups = 0;
+    galaxygl.frameid++;
     memset(galaxygl.lens, 0, sizeof galaxygl.lens);
     memset(galaxygl.shock, 0, sizeof galaxygl.shock);
     galaxygl.glow = 0;
@@ -981,10 +997,15 @@ galaxyglfreecard(unsigned int *t, unsigned int *src, unsigned long *gp)
     *gp = 0;
 }
 
-/* 画一张卡片进卡片层: q 屏幕四角 (左上 右上 右下 左下), z 镜头深度 (透视校正); exact: 与像素对齐的原尺寸, 逐像素采样 */
+/* 卡片的着色参数: 不透明度 / 发白 / 压暗 / 边缘光 (颜色) / 高光 (位置) / mip 偏移 / 宽高比 / 点击涟漪 (uv + 进度) / 环境光颜色 */
+typedef struct {
+    double vis, tint, dark, rim, rimc[3], spec, specat, bias, aspect, ripple[3], env[3];
+    int exact;
+} GalaxyCardFx;
+
+/* 卡片四边形 -> 顶点 (裁剪坐标 xyzw + uv) 并画出; weight 乘在输出上 (运动模糊的每一份) */
 static void
-galaxyglcard(GLuint tex, double q[4][2], double z[4], double vis, double tint, double dark, double rim, const double rimc[3],
-        double spec, double specat, double bias, double aspect, int exact)
+galaxyglcardquad(GLuint tex, double q[4][2], double z[4], const GalaxyCardFx *fx, double weight)
 {
     static const float uvs[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
     static const int order[4] = {0, 1, 3, 2};
@@ -992,11 +1013,9 @@ galaxyglcard(GLuint tex, double q[4][2], double z[4], double vis, double tint, d
     GLuint p = galaxygl.progcard;
     int i, k;
 
-    if (!galaxygl.win || !p || !tex)
-        return;
     for (i = 0; i < 4; i++) {
         k = order[i];
-        w = exact ? 1 : (float)MAX(1e-3, z[k]);
+        w = fx->exact ? 1 : (float)MAX(1e-3, z[k]);
         v[i][0] = (float)(q[k][0] / galaxygl.fw * 2 - 1) * w;
         v[i][1] = (float)(1 - q[k][1] / galaxygl.fh * 2) * w;
         v[i][2] = 0;
@@ -1004,29 +1023,89 @@ galaxyglcard(GLuint tex, double q[4][2], double z[4], double vis, double tint, d
         v[i][4] = uvs[k][0];
         v[i][5] = uvs[k][1];
     }
-    glBindFramebuffer(GL_FRAMEBUFFER, galaxygl.cardfbo);
-    glViewport(0, 0, galaxygl.fw, galaxygl.fh);
     glUseProgram(p);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, tex);
     glUniform1i(glGetUniformLocation(p, "tex"), 0);
-    glUniform1f(glGetUniformLocation(p, "vis"), (float)vis);
-    glUniform1f(glGetUniformLocation(p, "tint"), (float)tint);
-    glUniform1f(glGetUniformLocation(p, "dark"), (float)dark);
-    glUniform1f(glGetUniformLocation(p, "rim"), (float)rim);
-    glUniform3f(glGetUniformLocation(p, "rimc"), (float)rimc[0], (float)rimc[1], (float)rimc[2]);
-    glUniform1f(glGetUniformLocation(p, "spec"), (float)spec);
-    glUniform1f(glGetUniformLocation(p, "specat"), (float)specat);
-    glUniform1f(glGetUniformLocation(p, "bias"), (float)bias);
-    glUniform1f(glGetUniformLocation(p, "aspect"), (float)aspect);
-    glUniform1f(glGetUniformLocation(p, "exact"), exact ? 1 : 0);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    glUniform1f(glGetUniformLocation(p, "vis"), (float)fx->vis);
+    glUniform1f(glGetUniformLocation(p, "tint"), (float)fx->tint);
+    glUniform1f(glGetUniformLocation(p, "dark"), (float)fx->dark);
+    glUniform1f(glGetUniformLocation(p, "rim"), (float)fx->rim);
+    glUniform3f(glGetUniformLocation(p, "rimc"), (float)fx->rimc[0], (float)fx->rimc[1], (float)fx->rimc[2]);
+    glUniform1f(glGetUniformLocation(p, "spec"), (float)fx->spec);
+    glUniform1f(glGetUniformLocation(p, "specat"), (float)fx->specat);
+    glUniform1f(glGetUniformLocation(p, "bias"), (float)fx->bias);
+    glUniform1f(glGetUniformLocation(p, "aspect"), (float)fx->aspect);
+    glUniform1f(glGetUniformLocation(p, "exact"), fx->exact ? 1 : 0);
+    glUniform3f(glGetUniformLocation(p, "ripple"), (float)fx->ripple[0], (float)fx->ripple[1], (float)fx->ripple[2]);
+    glUniform3f(glGetUniformLocation(p, "envc"), (float)fx->env[0], (float)fx->env[1], (float)fx->env[2]);
+    glUniform1f(glGetUniformLocation(p, "weight"), (float)weight);
     glDisable(GL_DEPTH_TEST);
     glBindVertexArray(galaxygl.cardvao);
     glBindBuffer(GL_ARRAY_BUFFER, galaxygl.cardvbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof v, v, GL_STREAM_DRAW);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+}
+
+/* 画一张卡片进卡片层: q 屏幕四角 (左上 右上 右下 左下), z 镜头深度 (透视校正).
+ * pq: 上一帧的四角 (NULL 表示没有); 位移大时沿 上一帧 -> 这一帧 画 n 份做运动模糊 (先加进模糊层再合上来) */
+static void
+galaxyglcard(GLuint tex, double q[4][2], double z[4], const GalaxyCardFx *fx, double pq[4][2])
+{
+    double qi[4][2], d = 0, x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, t;
+    int i, k, n = 1;
+
+    if (!galaxygl.win || !galaxygl.progcard || !tex)
+        return;
+    if (pq && !fx->exact && galaxygl.blurfbo)
+        for (i = 0; i < 4; i++)
+            d = MAX(d, hypot(q[i][0] - pq[i][0], q[i][1] - pq[i][1]));
+    if (d > 8)
+        n = MIN(6, (int)ceil(d / 8));
+    glEnable(GL_BLEND);
+    glViewport(0, 0, galaxygl.fw, galaxygl.fh);
+    if (n == 1) {
+        glBindFramebuffer(GL_FRAMEBUFFER, galaxygl.cardfbo);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        galaxyglcardquad(tex, q, z, fx, 1);
+    } else {
+        for (i = 0; i < 4; i++) {
+            x0 = MIN(x0, MIN(q[i][0], pq[i][0]));
+            x1 = MAX(x1, MAX(q[i][0], pq[i][0]));
+            y0 = MIN(y0, MIN(q[i][1], pq[i][1]));
+            y1 = MAX(y1, MAX(q[i][1], pq[i][1]));
+        }
+        x0 = MAX(0, floor(x0) - 2);
+        y0 = MAX(0, floor(y0) - 2);
+        x1 = MIN(galaxygl.fw, ceil(x1) + 2);
+        y1 = MIN(galaxygl.fh, ceil(y1) + 2);
+        if (x1 <= x0 || y1 <= y0)
+            return;
+        glEnable(GL_SCISSOR_TEST);
+        glScissor((int)x0, (int)(galaxygl.fh - y1), (int)(x1 - x0), (int)(y1 - y0));
+        glBindFramebuffer(GL_FRAMEBUFFER, galaxygl.blurfbo);
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glBlendFunc(GL_ONE, GL_ONE);
+        for (k = 0; k < n; k++) {
+            t = (k + .5) / n;
+            for (i = 0; i < 4; i++) {
+                qi[i][0] = pq[i][0] + (q[i][0] - pq[i][0]) * t;
+                qi[i][1] = pq[i][1] + (q[i][1] - pq[i][1]) * t;
+            }
+            galaxyglcardquad(tex, qi, z, fx, 1.0 / n);
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, galaxygl.cardfbo);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        glUseProgram(galaxygl.progcopy);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, galaxygl.blurtex);
+        glUniform1i(glGetUniformLocation(galaxygl.progcopy, "src"), 0);
+        glUniform1f(glGetUniformLocation(galaxygl.progcopy, "flip"), 0);
+        glBindVertexArray(galaxygl.fullvao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glDisable(GL_SCISSOR_TEST);
+    }
     glBindFramebuffer(GL_FRAMEBUFFER, galaxygl.fbo);
     galaxygl.ncards++;
 }

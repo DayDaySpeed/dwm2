@@ -154,6 +154,9 @@ typedef struct {
     unsigned int gltex, glsrc;  /* 截图的 GL 纹理 (带 mip 链), 第一次画时建; glsrc / glpix: 读截图用的纹理和 GLX pixmap */
     unsigned long glpix;
     int glfail, gldirty;        /* 建不了 (走 XRender) / 截图刷新过, 下次画时重拷 */
+    double pq[4][2];            /* 上一帧画出的屏幕四角 (运动模糊), pqframe: 那一帧的编号 */
+    unsigned long pqframe;
+    double clickat, clickuv[2]; /* 点中卡片的时刻和卡面上的位置 (涟漪) */
     GalaxyVec home, detach;      /* 桌面平面 z=0 上的起点 / 脱离桌面后的位置 */
     double drx, dry, drz;       /* 脱离桌面时的卡片旋转 */
     double radius, angle, speed, rock, delay;

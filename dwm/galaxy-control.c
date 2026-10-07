@@ -326,6 +326,12 @@ galaxyreturnstart(int tag, int star)
     galaxylogseg(galaxymodename[r->mode]);
     r->rkind = star >= 0 || tag >= 0 ? GalaxyLand : GalaxyFlyHome;
     r->rstar = star;
+    if (star >= 0) {   /* 点中的卡片从点击处泛起一圈涟漪 (键盘选中时从中心) */
+        s = &r->stars[star];
+        s->clickat = galaxynow();
+        s->clickuv[0] = s->bx1 > s->bx0 && r->mx >= s->bx0 && r->mx <= s->bx1 ? (r->mx - s->bx0) / (s->bx1 - s->bx0) : .5;
+        s->clickuv[1] = s->by1 > s->by0 && r->my >= s->by0 && r->my <= s->by1 ? (r->my - s->by0) / (s->by1 - s->by0) : .5;
+    }
     r->rcore = tag;
     if (r->rkind == GalaxyLand)
         galaxylandprepare(star >= 0 && r->stars[star].valid ? wintoclient(r->stars[star].win) : NULL, star >= 0 ? -1 : tag);
