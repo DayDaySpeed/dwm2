@@ -836,9 +836,9 @@ galaxyrenderitems(void)
             g = &r->galaxies[r->items[i].index];
             /* 近点 / 交会 / 涟漪 / 翻转时核心更亮, 光晕更大 */
             a = .35 * g->peri + .6 * g->flare + .7 * g->ripple + .25 * g->flip + 1.5 * g->ignite + 1.2 * g->callout
-                + 3 * g->nova + 1.2 * g->bridge;
+                + 1.5 * g->nova + 1.2 * g->bridge;
             galaxyrenderglow(GALAXYTAGTINT(g->tag), g->p, g->size * (1 + .15 * g->hover + .12 * g->peri + .2 * g->flare + .12 * g->ripple
-                        + .4 * (g->ignite + g->callout) + .6 * g->nova + .2 * g->bridge),
+                        + .4 * (g->ignite + g->callout) + .3 * g->nova + .2 * g->bridge),
                     .7 * MIN(1, g->alpha * galaxydepthlight(g->p.z) * (1 + a)) * galaxynearfade(g->p.z)   /* 光层是加法叠加: 比原来压暗一些 */
                     * (1 - .78 * g->eclipse),
                     galaxydepthblur(g->p.z), .4 * (1 + .4 * g->hover + a), .16 * r->glowscale * (1 + 1.5 * a)
@@ -1305,7 +1305,7 @@ galaxyrenderholdfx(void)
                     .9 + .5 * galaxyprand(), .0018 * r->cam.focal, galaxyprand() < .6 ? GalaxyBlue : GalaxyCool, .6, .4, 0);
         pts[0] = galaxyproject(head);
         if (pts[0].ok && env * galaxynearfade(pts[0].z) > .01)
-            galaxyrenderglow(GalaxyCool, pts[0], 14, MIN(1, .9 * env) * galaxynearfade(pts[0].z), galaxydepthblur(pts[0].z), 1, .35);
+            galaxyrenderglow(GalaxyCool, pts[0], 10, MIN(1, .9 * env) * galaxynearfade(pts[0].z), galaxydepthblur(pts[0].z), .7, .2);
     }
     /* 流星: 每 2.6s 一颗, 大致沿轨道盘面的对角线方向 (右上 -> 左下) 划过画面 */
     if (!r->quiet && galaxycycle(r->motion, .8, 2.6, &k, &local) && local < 1.1) {
@@ -1490,7 +1490,7 @@ galaxyrenderevents(void)
                     galaxyband(&pts[j], &pts[j + 1], .16 * a, MAX(2.5, 11 * pts[j].scale));
                 }
             galaxybandwhite();
-            galaxyrenderglow(GalaxyOrange, s->p, 14, MIN(1, env) * galaxynearfade(s->p.z), galaxydepthblur(s->p.z), 1, .3);
+            galaxyrenderglow(GalaxyOrange, s->p, 10, MIN(1, env) * galaxynearfade(s->p.z), galaxydepthblur(s->p.z), .7, .2);
             galaxysprite(GalaxySpike, GalaxyOrange, s->p.x, s->p.y, MIN(260, 200 * MAX(.5, s->p.scale)),
                     galaxyflash(t, .12, 3) * galaxynearfade(s->p.z));
         }
@@ -1525,7 +1525,7 @@ galaxyrenderevents(void)
                     1 + .6 * galaxyprand(), .0024 * r->cam.focal, galaxyprand() < .6 ? GalaxyBlue : GalaxyCool, .7, .4, 0);
         pts[0] = galaxyproject(head);
         if (pts[0].ok && env > .01) {
-            galaxyrenderglow(GalaxyCool, pts[0], 22, MIN(1, env), galaxydepthblur(pts[0].z), 1.2, .5);
+            galaxyrenderglow(GalaxyCool, pts[0], 12, MIN(1, env), galaxydepthblur(pts[0].z), .7, .2);
             galaxysprite(GalaxySpike, GalaxyCool, pts[0].x, pts[0].y, 160, .7 * env);
             text[ntext++] = (struct GalaxyText){pts[0].x + 34, pts[0].y + 8, env * galaxysmoothstep((u - .04) / .1), i};
         }
@@ -1639,6 +1639,53 @@ galaxyemitters(void)
     }
 }
 
+/* GPU 粒子: 每个核心一圈吸积盘 (跟轨道环一起显隐), 星系群周围一片被核心 / 中心光源照亮的星尘.
+ * 数量按质量降级 / 安静模式减少; 不存状态, 每帧只是几次实例化绘制 */
+static void
+galaxyrendergpuparticles(void)
+{
+    GalaxyScene *r = &galaxyscene;
+    GalaxyCore *g;
+    double rgb[3], rout, extent = 0, k = r->mode == GalaxyOrbit ? 1 - .4 * galaxyclamp(r->qualityvisual - 1) : 1;
+    float lights[10][4], lcol[10][3];
+    int i, j, nl = 0, n;
+
+    if (r->quiet)
+        k *= .5;
+    for (i = 0; i < r->ntags; i++) {
+        g = &r->galaxies[i];
+        if (g->alpha < .05)
+            continue;
+        rout = g->size * 7;
+        for (j = 0; j < g->nrings; j++)
+            rout = MAX(rout, g->ringr[j] * 1.15);
+        rout *= galaxybreathe(g, r->motion) * galaxyeaseoutcubic(g->fill);
+        extent = MAX(extent, galaxylen(g->pos) + rout);
+        galaxytintcolor(GALAXYTAGTINT(g->tag), -1, rgb);
+        n = (int)((g->nstars ? 9000 : 4000) * k);
+        galaxygldisk(g->pos, &g->plane, g->size * 1.6, rout, .5, rgb, .8 * r->ringalpha * MIN(1, g->alpha),
+                .9 * r->starscale, n, 17.3 * (i + 1));
+        if (nl < 9) {
+            lights[nl][0] = g->pos.x;
+            lights[nl][1] = g->pos.y;
+            lights[nl][2] = g->pos.z;
+            lights[nl][3] = rout * 1.8;
+            for (j = 0; j < 3; j++)
+                lcol[nl][j] = .9 * rgb[j] * MIN(1, g->alpha);
+            nl++;
+        }
+    }
+    if (nl && r->sunalpha > .01) {   /* 中心双星: 暖白, 照得更远 */
+        lights[nl][0] = lights[nl][1] = lights[nl][2] = 0;
+        lights[nl][3] = extent * .35;
+        lcol[nl][0] = .9 * r->sunalpha;
+        lcol[nl][1] = .85 * r->sunalpha;
+        lcol[nl][2] = .75 * r->sunalpha;
+        nl++;
+    }
+    galaxygldust(extent * 1.25, lights, lcol, nl, .45 * r->dustfade, .7, (int)(16000 * k), 91.7);
+}
+
 /* 更新并画出所有粒子: 透视投影, 按年龄淡出、缩小, 交给 GPU (按深度被卡片挡住) */
 static void
 galaxyrenderparticles(void)
@@ -1658,6 +1705,7 @@ galaxyrenderparticles(void)
         ready = 1;
     }
     galaxyemitters();
+    galaxyrendergpuparticles();
     flow = .012 * F * r->holdw;
     for (i = 0; i < r->nparts; i++) {
         p = &r->parts[i];

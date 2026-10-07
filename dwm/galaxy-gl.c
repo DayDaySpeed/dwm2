@@ -30,7 +30,7 @@ static struct {
     XVisualInfo *vi;
     Colormap cmap;
     GLXContext ctx;
-    GLuint proglight, progcut, progdown, progup, progcomp, progprobe, prognebula, progcopy, progcard;
+    GLuint proglight, progcut, progdown, progup, progcomp, progprobe, prognebula, progcopy, progcard, progpart;
     GLuint cardfbo, cardtex, cardvao, cardvbo, copyfbo, blurfbo, blurtex;
     float aniso;                      /* 各向异性过滤上限 (不支持时为 0) */
     int ncards;                       /* 这一帧画进卡片层的卡片数 (0 时合成不读卡片层) */
@@ -231,6 +231,55 @@ static const char *galaxyglfsnebula2 =
     "  col += far * edge * cd * k;\n"
     "  o = vec4(col, 0.0);\n"
     "}\n";
+
+/* GPU 粒子 (不存状态: 位置由编号 + 种子 + 时间解析算出, 数量可以很多). mode 0: 核心的吸积盘 (开普勒转速, 内热外冷,
+ * 两条淡淡的旋臂密度波); mode 1: 星系群周围的星尘, 本身不发光, 只在靠近核心 / 中心光源时被照亮并染上它的颜色.
+ * 投影与 galaxyproject 相同, 深度与 galaxygldepth 相同 (被卡片挡住) */
+static const char *galaxyglvspart =
+    "#version 330 core\n"
+    "uniform mat3 view, plane; uniform vec3 campos, cpos, tint; uniform vec2 center, screen;\n"
+    "uniform float focal, cnear, cfar, fnear, time, mode, seed, alpha, psize, extent; uniform vec4 disk;\n"
+    "uniform vec4 lights[10]; uniform vec3 lcol[10]; uniform int nl;\n"
+    "out vec2 vl; out vec3 vc; out float va;\n"
+    "float hs(float n) { return fract(sin(n * 12.9898 + seed * 78.233) * 43758.5453); }\n"
+    "void main() {\n"
+    "  float fi = float(gl_InstanceID), a, sz;\n"
+    "  vec2 c = vec2(gl_VertexID & 1, gl_VertexID >> 1) * 2.0 - 1.0;\n"
+    "  float h1 = hs(fi * 1.37 + .1), h2 = hs(fi * 2.71 + .3), h3 = hs(fi * 3.13 + .7), h4 = hs(fi * 5.17 + .9);\n"
+    "  vec3 wp, col;\n"
+    "  if (mode < .5) {\n"
+    "    float u = pow(h1, 1.6), rr = mix(disk.x, disk.y, u);\n"
+    "    float th = 6.2832 * h2 + disk.z * pow(disk.x / rr, 1.5) * time;\n"
+    "    float arm = .55 + .45 * cos(2.0 * th - 5.0 * log(rr / disk.x));\n"
+    "    wp = cpos + plane * vec3(cos(th) * rr, sin(th) * rr, (h3 - .5) * disk.w * rr);\n"
+    "    col = mix(vec3(1.0, .94, .86), tint, smoothstep(0.0, .4, u));\n"
+    "    a = alpha * (.12 + .88 * pow(h4, 5.0)) * arm * (1.0 - .75 * u);\n"
+    "    sz = psize * (.6 + .9 * pow(h4, 3.0));\n"
+    "  } else {\n"
+    "    vec3 p0 = vec3(h1, h2, h3) * 2.0 - 1.0;\n"
+    "    p0 += .03 * vec3(sin(time * .05 + fi), sin(time * .04 + fi * 1.3), sin(time * .045 + fi * .7));\n"
+    "    wp = p0 * extent * vec3(1.0, .45, 1.0);\n"
+    "    col = vec3(0.0);\n"
+    "    for (int k = 0; k < 10; k++) {\n"
+    "      if (k >= nl) break;\n"
+    "      vec3 d = wp - lights[k].xyz;\n"
+    "      col += lcol[k] * exp(-dot(d, d) / (lights[k].w * lights[k].w));\n"
+    "    }\n"
+    "    a = alpha * (.4 + .6 * h4);\n"
+    "    sz = psize * (.5 + h4);\n"
+    "  }\n"
+    "  vec3 cv = view * (wp - campos);\n"
+    "  if (cv.z < cnear || cv.z > cfar || a < .002) { gl_Position = vec4(3.0, 3.0, 3.0, 1.0); vl = c; vc = col; va = 0.0; return; }\n"
+    "  float sc = focal / cv.z;\n"
+    "  sz = clamp(sz * sqrt(sc), .6, 3.5);\n"
+    "  vec2 p = center + cv.xy * sc + c * sz * 2.0;\n"
+    "  gl_Position = vec4(p.x / screen.x * 2.0 - 1.0, 1.0 - p.y / screen.y * 2.0, clamp((cv.z - cnear) / (cfar - cnear), 0.0, 1.0) * 2.0 - 1.0, 1.0);\n"
+    "  vl = c; vc = col; va = a * smoothstep(fnear, fnear * 1.8, cv.z);\n"
+    "}\n";
+static const char *galaxyglfspart =
+    "#version 330 core\n"
+    "in vec2 vl; in vec3 vc; in float va; out vec4 o;\n"
+    "void main() { float a = exp(-dot(vl, vl) * 3.0) * va; if (a < .001) discard; o = vec4(vc * a, a); }\n";
 
 /* 截图 pixmap -> 卡片纹理 (逐像素拷贝, 统一成第 0 行在上) */
 static const char *galaxyglfscopy =
@@ -471,7 +520,7 @@ static int
 galaxyglobjects(void)
 {
     GLuint *progs[] = { &galaxygl.proglight, &galaxygl.progcut, &galaxygl.progdown, &galaxygl.progup,
-        &galaxygl.progcomp, &galaxygl.progprobe, &galaxygl.prognebula, &galaxygl.progcopy, &galaxygl.progcard };
+        &galaxygl.progcomp, &galaxygl.progprobe, &galaxygl.prognebula, &galaxygl.progcopy, &galaxygl.progcard, &galaxygl.progpart };
     int i;
 
     if (galaxygl.proglight)
@@ -495,6 +544,7 @@ galaxyglobjects(void)
     }
     galaxygl.progcopy = galaxyglprogram(galaxyglvsfull, galaxyglfscopy);
     galaxygl.progcard = galaxyglprogram(galaxyglvscard, galaxyglfscard);
+    galaxygl.progpart = galaxyglprogram(galaxyglvspart, galaxyglfspart);
     for (i = 0; i < (int)LENGTH(progs); i++)
         if (!*progs[i])
             return 0;
@@ -896,6 +946,90 @@ galaxyglparticle(double x, double y, double z, double radius, const double rgb[3
         return;
     galaxygl.part[galaxygl.npart++] = (GalaxyGLInst){{x, y, radius, 0}, {0, alpha, bokeh ? GalaxyGLBokeh : GalaxyGLDust, galaxygldepth(z)},
         {rgb[0], rgb[1], rgb[2], core}, {0}};
+}
+
+static void
+galaxyglmat(GLuint p, const char *name, const GalaxyMat *m)
+{
+    float f[9];
+    int i, j;
+
+    for (i = 0; i < 3; i++)
+        for (j = 0; j < 3; j++)
+            f[i * 3 + j] = (float)m->m[i][j];
+    glUniformMatrix3fv(glGetUniformLocation(p, name), 1, GL_TRUE, f);
+}
+
+/* GPU 粒子的公共状态: 镜头投影, 加法混合, 按卡片深度测试 (卡片挖洞时已写入) */
+static GLuint
+galaxyglpartbegin(void)
+{
+    GalaxyScene *r = &galaxyscene;
+    GLuint p = galaxygl.progpart;
+
+    if (!galaxygl.win || !p)
+        return 0;
+    galaxyglflush();
+    glBindFramebuffer(GL_FRAMEBUFFER, galaxygl.fbo);
+    glViewport(0, 0, galaxygl.fw, galaxygl.fh);
+    glUseProgram(p);
+    galaxyglmat(p, "view", &r->cam.view);
+    glUniform3f(glGetUniformLocation(p, "campos"), r->cam.pos.x, r->cam.pos.y, r->cam.pos.z);
+    glUniform2f(glGetUniformLocation(p, "center"), r->vx + r->vw * .5, r->vy + r->vh * .5);
+    glUniform2f(glGetUniformLocation(p, "screen"), galaxygl.fw, galaxygl.fh);
+    glUniform1f(glGetUniformLocation(p, "focal"), r->cam.focal);
+    glUniform1f(glGetUniformLocation(p, "cnear"), r->cam.near);
+    glUniform1f(glGetUniformLocation(p, "cfar"), r->cam.far);
+    glUniform1f(glGetUniformLocation(p, "fnear"), r->cam.focal * .25);
+    glUniform1f(glGetUniformLocation(p, "time"), (float)galaxynow());
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_FALSE);
+    glBindVertexArray(galaxygl.fullvao);
+    return p;
+}
+
+/* 一个核心的吸积盘: rin / rout 世界半径, omega 内缘角速度 (rad/s), n 粒子数 */
+static void
+galaxygldisk(GalaxyVec pos, const GalaxyMat *plane, double rin, double rout, double omega, const double rgb[3],
+        double alpha, double psize, int n, double seed)
+{
+    GLuint p = galaxyglpartbegin();
+
+    if (!p || n < 1 || alpha < .004 || rout <= rin)
+        return;
+    galaxyglmat(p, "plane", plane);
+    glUniform3f(glGetUniformLocation(p, "cpos"), pos.x, pos.y, pos.z);
+    glUniform3f(glGetUniformLocation(p, "tint"), rgb[0], rgb[1], rgb[2]);
+    glUniform4f(glGetUniformLocation(p, "disk"), rin, rout, omega, .05);
+    glUniform1f(glGetUniformLocation(p, "mode"), 0);
+    glUniform1f(glGetUniformLocation(p, "seed"), seed);
+    glUniform1f(glGetUniformLocation(p, "alpha"), alpha);
+    glUniform1f(glGetUniformLocation(p, "psize"), psize);
+    glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, n);
+    glDisable(GL_DEPTH_TEST);
+}
+
+/* 星尘: 半径 extent 的扁平区域里 n 颗, 被至多 10 个光源 (位置 + 影响半径, 颜色 * 强度) 照亮 */
+static void
+galaxygldust(double extent, float lights[][4], float lcol[][3], int nl, double alpha, double psize, int n, double seed)
+{
+    GLuint p = galaxyglpartbegin();
+
+    if (!p || n < 1 || alpha < .004 || nl < 1)
+        return;
+    glUniform1f(glGetUniformLocation(p, "mode"), 1);
+    glUniform1f(glGetUniformLocation(p, "seed"), seed);
+    glUniform1f(glGetUniformLocation(p, "alpha"), alpha);
+    glUniform1f(glGetUniformLocation(p, "psize"), psize);
+    glUniform1f(glGetUniformLocation(p, "extent"), extent);
+    glUniform4fv(glGetUniformLocation(p, "lights"), nl, &lights[0][0]);
+    glUniform3fv(glGetUniformLocation(p, "lcol"), nl, &lcol[0][0]);
+    glUniform1i(glGetUniformLocation(p, "nl"), nl);
+    glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, n);
+    glDisable(GL_DEPTH_TEST);
 }
 
 /* 快速粒子的运动拉丝: (x0, y0) 尾 -> (x1, y1) 头, 尾部按 tail 变暗; hw 半宽 */
