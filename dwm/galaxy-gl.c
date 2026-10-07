@@ -148,11 +148,11 @@ static const char *galaxyglfsup =
     "}\n";
 
 /* 程序化星云 (光层最先画的一层, 之后卡片挖洞会把它挡住): 值噪声 fbm + domain warp, 两层不同视差,
- * 集中在银河带上 (左上 -> 右下, 与底层的银河 / 暗尘带同向), 带外只剩很淡的一层; 极慢地流动; 噪声偏移 seed 每次随机. 外加稀疏的闪烁星点. view: 视口 (左上原点像素), cam: 镜头偏航 / 俯仰 */
+ * 小团块均匀铺开, 沿银河带略浓; 作为远景: 颜色偏冷灰、视差小、流动慢, 四边渐隐、画面中央压暗 (不抢焦点); 噪声偏移 seed 每次随机. 外加稀疏的闪烁星点. view: 视口 (左上原点像素), cam: 镜头偏航 / 俯仰 */
 static const char *galaxyglfsnebula =
     "#version 330 core\n"
     "in vec2 uv; out vec4 o;\n"
-    "uniform vec2 screen, cam, seed; uniform vec4 view; uniform float t, k, diag, aurora, still; uniform int oct;\n"
+    "uniform vec2 screen, cam, seed; uniform vec4 view; uniform float t, k, diag, still; uniform int oct;\n"
     "uniform vec3 c0, c1, c2;\n"
     "float h(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }\n"
     "float n(vec2 p) {\n"
@@ -169,46 +169,34 @@ static const char *galaxyglfsnebula =
     "  if (q.x < 0.0 || q.y < 0.0 || q.x > 1.0 || q.y > view.w / view.z) discard;\n"
     "  vec2 d = vec2(cos(diag), sin(diag)), c = q - vec2(.5, .5 * view.w / view.z);\n"
     "  float across = dot(c, vec2(-d.y, d.x)), along = dot(c, d);\n"
-    "  vec3 col = vec3(0.0);\n"
+    "  vec3 col = vec3(0.0), grey = vec3(.55, .6, .7);\n"
+    "  float hh = view.w / view.z;\n"
+    /* 远景: 四边 / 四角渐隐 (不堆在角上), 画面中央压暗 (星系和卡片才是焦点) */
+    "  float ed = min(min(q.x, 1.0 - q.x), min(q.y, hh - q.y));\n"
+    "  float edge = .4 + .6 * smoothstep(0.0, .18, ed), cd = 1.0 - .45 * exp(-dot(c, c) / .05);\n"
     "  for (int l = 0; l < 2; l++) {\n"
-    "    float s = l == 0 ? 2.2 : 3.6, par = l == 0 ? .12 : .3;\n"
+    "    float s = l == 0 ? 3.0 : 4.6, par = l == 0 ? .06 : .15;\n"
     "    vec2 p = q * s + cam * par * s + seed + vec2(3.1 * float(l), 7.7 * float(l));\n"
-    "    vec2 w = vec2(fbm(p + vec2(0.0, t * .012)), fbm(p + vec2(5.2, 1.3) - vec2(t * .009, 0.0)));\n"
-    "    float f = fbm(p + 1.7 * w + vec2(t * .004));\n"
-    "    float band = exp(-across * across / (l == 0 ? .09 : .05)) * (.55 + .45 * fbm(vec2(along * 2.0, 4.0 + float(l))));\n"
-    "    float m = smoothstep(.42, .82, f) * (.08 + .92 * band);\n"
+    "    vec2 w = vec2(fbm(p + vec2(0.0, t * .006)), fbm(p + vec2(5.2, 1.3) - vec2(t * .0045, 0.0)));\n"
+    "    float f = fbm(p + 1.0 * w + vec2(t * .002));\n"
+    "    float band = exp(-across * across / (l == 0 ? .12 : .08)) * (.55 + .45 * fbm(vec2(along * 2.0, 4.0 + float(l))));\n"
+    "    float cover = .6 + .4 * n(q * 1.2 + seed * .37 + float(l) * 2.3);\n"
+    "    float m = smoothstep(.3, .85, f) * (.35 + .65 * band) * cover;\n"
     "    vec3 hue = mix(c0, c1, smoothstep(.3, .75, w.x));\n"
-    "    hue = mix(mix(hue, c2, smoothstep(.55, .9, w.y) * .7), vec3(.5), .35);\n"
-    "    col += hue * m * m * (l == 0 ? .55 : .35);\n"
+    "    hue = mix(mix(hue, c2, smoothstep(.55, .9, w.y) * .7), grey, .5);\n"
+    "    col += hue * m * (l == 0 ? .4 : .25);\n"
     "  }\n"
+    "  col /= 1.0 + 1.5 * dot(col, vec3(.3, .59, .11));\n"
+    "  col *= edge * cd;\n"
     /* 闪烁星点: 每 22px 一格, 约 4% 的格子里有一颗, 亮度按各自的相位慢慢起伏 */
     "  vec2 cell = floor((px + cam * 60.0) / 22.0), fp = fract((px + cam * 60.0) / 22.0);\n"
     "  float r = h(cell);\n"
     "  if (r < .04) {\n"
     "    vec2 sp = vec2(h(cell + 3.1), h(cell + 7.3)) * .7 + .15;\n"
     "    float tw = still > .5 ? .8 : .55 + .45 * sin(t * (1.1 + 2.5 * h(cell + 1.7)) + 6.28 * h(cell + 9.1));\n"
-    "    col += mix(vec3(.75, .85, 1.0), vec3(1.0, .88, .7), h(cell + 5.5)) * exp(-dot(fp - sp, fp - sp) * 22.0 * 22.0 / 1.6) * tw * .5;\n"
+    "    col += mix(vec3(.75, .85, 1.0), vec3(1.0, .88, .7), h(cell + 5.5)) * exp(-dot(fp - sp, fp - sp) * 22.0 * 22.0 / 1.6) * tw * .3 * cd;\n"
     "  }\n"
     "  col *= k;\n"
-    /* 极光飘带: 沿银河带斜穿画面的三条柔和丝带, 中心线缓慢起伏, 外面一层淡晕, 内部只有低对比的细纹, 两端渐隐;
-     * 颜色沿丝带从青到紫 (带一点玫粉), 只做背景点缀 */
-    "  if (aurora > .001) {\n"
-    "    vec3 ac = vec3(0.0);\n"
-    "    for (int i = 0; i < 3; i++) {\n"
-    "      float fi = float(i);\n"
-    "      float off = (fi - 1.0) * .07 + .02 * sin(t * .1 + fi * 2.1 + seed.x);\n"
-    "      float w = .035 * sin(along * (5.0 + fi) + t * (.25 + .07 * fi) + seed.y + fi * 1.7) + .03 * (n(vec2(along * 3.0 + fi * 5.0, t * .05)) - .5);\n"
-    "      float wid = .006 + .005 * n(vec2(along * 4.0 - t * .1, fi * 3.0));\n"
-    "      float x = across - off - w;\n"
-    "      float band = exp(-x * x / (wid * wid)) + .2 * exp(-x * x / (9.0 * wid * wid));\n"
-    "      float fil = .7 + .3 * n(vec2(along * 18.0 - t * .3, fi * 7.0));\n"
-    "      float ends = smoothstep(-.55, -.25, along) * (1.0 - smoothstep(.25, .55, along));\n"
-    "      vec3 rc = mix(c1, c0, smoothstep(-.4, .4, along + .1 * fi));\n"
-    "      rc = mix(rc, c2, smoothstep(.1, .5, along) * .5);\n"
-    "      ac += rc * band * fil * ends * (1.0 - .25 * fi);\n"
-    "    }\n"
-    "    col += ac * aurora * .2;\n"
-    "  }\n"
     "  o = vec4(col, 0.0);\n"
     "}\n";
 
@@ -793,7 +781,7 @@ galaxyglglow(int shape, const double rgb[3], double core, double x, double y, do
 /* 星云: 每帧光层清空后最先画 (加法), 之后卡片挖洞会把卡片后面的部分擦掉.
  * k: 强度; t: 秒 (流动); oct: fbm 倍频数 (降级时减少); 颜色取极光配色的紫 / 青 / 玫粉 */
 static void
-galaxyglnebula(double k, double t, int oct, const double seed[2], double aurora, int still)
+galaxyglnebula(double k, double t, int oct, const double seed[2], int still)
 {
     GalaxyScene *r = &galaxyscene;
     GLuint p = galaxygl.prognebula;
@@ -801,7 +789,7 @@ galaxyglnebula(double k, double t, int oct, const double seed[2], double aurora,
     float c[3][3];
     int i;
 
-    if (!galaxygl.win || !p || (k < .004 && aurora < .004))
+    if (!galaxygl.win || !p || k < .004)
         return;
     for (i = 0; i < 3; i++) {
         unsigned int v = galaxyfxcolor[pick[i]];
@@ -820,7 +808,6 @@ galaxyglnebula(double k, double t, int oct, const double seed[2], double aurora,
     glUniform1f(glGetUniformLocation(p, "diag"), (float)(GALAXYDIAG * GALAXYPI / 180));
     glUniform1i(glGetUniformLocation(p, "oct"), oct);
     glUniform2f(glGetUniformLocation(p, "seed"), (float)seed[0], (float)seed[1]);
-    glUniform1f(glGetUniformLocation(p, "aurora"), (float)aurora);
     glUniform1f(glGetUniformLocation(p, "still"), still ? 1 : 0);
     glUniform3fv(glGetUniformLocation(p, "c0"), 1, c[0]);
     glUniform3fv(glGetUniformLocation(p, "c1"), 1, c[1]);

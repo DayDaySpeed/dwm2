@@ -2165,7 +2165,7 @@ galaxypresent(void)
     r->expomin = r->expomin > 0 ? MIN(r->expomin, expo) : expo;
     /* 体积光束: 从中心光源发出, 跟它的亮度走 */
     sun = galaxyproject(galaxyv(0, 0, 0));
-    rays = sun.ok && r->mode != GalaxyReturn ? .2 * r->sunalpha * (1 + .5 * r->sunpulse) : 0;
+    rays = sun.ok && r->mode != GalaxyReturn ? .12 * r->sunalpha * (1 + .5 * r->sunpulse) : 0;
     galaxyglpostfx(sun.x, sun.y, rays, expo);
 
     /* Esc 收尾: 收束时引力透镜把背景拽向中心; 然后中心爆出冲击波, 圆内露出壁纸, 余晖慢慢散去 */

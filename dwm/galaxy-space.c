@@ -323,7 +323,7 @@ galaxyrendernebula(void)
     GalaxyScene *r = &galaxyscene;
     double q = r->mode == GalaxyOrbit ? r->qualityvisual : 0;
 
-    galaxyglnebula(.5 * r->space * (1 - r->reveal), galaxynow(), q > 2 ? 3 : r->quiet ? 4 : 5, r->nebseed, r->aurora, r->gentle);
+    galaxyglnebula(.35 * r->space * (1 - r->reveal), galaxynow(), q > 2 ? 3 : r->quiet ? 4 : 5, r->nebseed, r->gentle);
 }
 
 /* dwm 启动 (含原地重启) 时预先按当前显示器生成好 (约 85ms), 第一次按 Super+Z 时开场不再卡一下.
