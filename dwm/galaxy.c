@@ -286,6 +286,8 @@ typedef struct {
     double refresh;             /* 遮罩所在显示器的刷新率 (Hz): 驻留态按它出帧 */
     double nebseed[2];          /* 星云噪声的偏移: 每次 Super+Z 随机, 浓淡的位置每次不同 */
     double adapt, adaptat;      /* 曝光适应: 平滑后的光层亮度 / 上次更新的时刻 */
+    double aurora;              /* 极光帘幕的强度 (驻留天象, 0 表示没有); aurorak / meteork: 当前是第几次 */
+    int aurorak, meteork;
     double lumsum, lummax, expomin;   /* 本段统计 (日志): 光层亮度的和 / 最大值, 最低曝光 */
     int trace;                  /* 环境变量 GALAXY_TRACE: 每帧把镜头参数写进日志 */
     int saver;                  /* 屏保模式 (无操作时由 bin/galaxysaver.py 触发): 任何输入都回到桌面 */

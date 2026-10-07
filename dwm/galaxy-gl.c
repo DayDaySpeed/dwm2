@@ -152,7 +152,7 @@ static const char *galaxyglfsup =
 static const char *galaxyglfsnebula =
     "#version 330 core\n"
     "in vec2 uv; out vec4 o;\n"
-    "uniform vec2 screen, cam, seed; uniform vec4 view; uniform float t, k, diag; uniform int oct;\n"
+    "uniform vec2 screen, cam, seed; uniform vec4 view; uniform float t, k, diag, aurora; uniform int oct;\n"
     "uniform vec3 c0, c1, c2;\n"
     "float h(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }\n"
     "float n(vec2 p) {\n"
@@ -189,7 +189,22 @@ static const char *galaxyglfsnebula =
     "    float tw = .55 + .45 * sin(t * (1.1 + 2.5 * h(cell + 1.7)) + 6.28 * h(cell + 9.1));\n"
     "    col += mix(vec3(.75, .85, 1.0), vec3(1.0, .88, .7), h(cell + 5.5)) * exp(-dot(fp - sp, fp - sp) * 22.0 * 22.0 / 1.6) * tw * .5;\n"
     "  }\n"
-    "  o = vec4(col * k, 0.0);\n"
+    "  col *= k;\n"
+    /* 极光帘幕: 底边起伏的一道光幕, 竖向褶皱 (光线), 下绿上紫, 往上渐隐; 随时间缓慢摆动 */
+    "  if (aurora > .001) {\n"
+    "    float base = .64 * view.w / view.z + .05 * sin(q.x * 5.0 + t * .35 + seed.x) + .06 * (n(vec2(q.x * 3.0 + seed.y, t * .08)) - .5);\n"
+    "    float v = (base - q.y) / .3;\n"
+    "    if (v > -.3 && v < 1.4) {\n"
+    "      float folds = .5 + .5 * sin(q.x * 38.0 + 3.0 * n(vec2(q.x * 4.0, t * .12 + seed.x)) + t * .7);\n"
+    "      float fine = .5 + .5 * sin(q.x * 110.0 + 2.0 * n(vec2(q.x * 9.0, t * .2 + seed.y)) - t * .5);\n"
+    "      float ray = (.3 + .7 * folds * folds) * (.55 + .45 * fine) * (.6 + .4 * n(vec2(q.x * 30.0, t * .25)));\n"
+    /* 底边柔和地亮起 (不是一道硬边), 往上指数渐隐 */
+    "      float vert = smoothstep(-.3, .08, v) * exp(-max(v, 0.0) * 2.3);\n"
+    "      vec3 ac = mix(vec3(.25, 1.0, .55), vec3(.6, .35, 1.0), smoothstep(.15, .9, v));\n"
+    "      col += ac * ray * vert * smoothstep(0.0, .18, q.x) * smoothstep(1.0, .82, q.x) * aurora * .55;\n"
+    "    }\n"
+    "  }\n"
+    "  o = vec4(col, 0.0);\n"
     "}\n";
 
 /* 截图 pixmap -> 卡片纹理 (逐像素拷贝, 统一成第 0 行在上) */
@@ -773,7 +788,7 @@ galaxyglglow(int shape, const double rgb[3], double core, double x, double y, do
 /* 星云: 每帧光层清空后最先画 (加法), 之后卡片挖洞会把卡片后面的部分擦掉.
  * k: 强度; t: 秒 (流动); oct: fbm 倍频数 (降级时减少); 颜色取极光配色的紫 / 青 / 玫粉 */
 static void
-galaxyglnebula(double k, double t, int oct, const double seed[2])
+galaxyglnebula(double k, double t, int oct, const double seed[2], double aurora)
 {
     GalaxyScene *r = &galaxyscene;
     GLuint p = galaxygl.prognebula;
@@ -781,7 +796,7 @@ galaxyglnebula(double k, double t, int oct, const double seed[2])
     float c[3][3];
     int i;
 
-    if (!galaxygl.win || !p || k < .004)
+    if (!galaxygl.win || !p || (k < .004 && aurora < .004))
         return;
     for (i = 0; i < 3; i++) {
         unsigned int v = galaxyfxcolor[pick[i]];
@@ -800,6 +815,7 @@ galaxyglnebula(double k, double t, int oct, const double seed[2])
     glUniform1f(glGetUniformLocation(p, "diag"), (float)(GALAXYDIAG * GALAXYPI / 180));
     glUniform1i(glGetUniformLocation(p, "oct"), oct);
     glUniform2f(glGetUniformLocation(p, "seed"), (float)seed[0], (float)seed[1]);
+    glUniform1f(glGetUniformLocation(p, "aurora"), (float)aurora);
     glUniform3fv(glGetUniformLocation(p, "c0"), 1, c[0]);
     glUniform3fv(glGetUniformLocation(p, "c1"), 1, c[1]);
     glUniform3fv(glGetUniformLocation(p, "c2"), 1, c[2]);

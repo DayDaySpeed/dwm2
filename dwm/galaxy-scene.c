@@ -946,6 +946,10 @@ galaxyfxpick(int populated, int not, unsigned int seed)
     return pick;
 }
 
+static double galaxyprand(void);
+static void galaxyemit(GalaxyVec pos, GalaxyVec vel, double life, double size, int tint, double alpha, double drag, int screen);
+static int galaxyemitcount(double rate);
+
 static void
 galaxyupdateholdfx(double motion)
 {
@@ -959,6 +963,7 @@ galaxyupdateholdfx(double motion)
         r->galaxies[i].nova = r->galaxies[i].bridge = 0;
     for (i = 0; i < r->nstars; i++)
         r->stars[i].constel = 0;
+    r->aurora = 0;
     if (f < .01 || r->ntags < 1)
         return;
     /* 星系翻转: 每 5s 一次, 开始时选定星系并记下开始时刻 (galaxyflipat 按它算角度) */
@@ -1025,6 +1030,33 @@ galaxyupdateholdfx(double motion)
         }
         if (r->brj >= 0 && local > 1.15)
             r->galaxies[r->brj].bridge = .7 * f * galaxyflash(local - .9, .4, 2.5);
+    }
+    /* 极光帘幕: 约每 26s 一次, 6s 内亮起、摆动、淡出 (画在星云着色器里) */
+    if (galaxycycle(motion, 13, 26, &k, &local) && local < 6) {
+        if (k != r->aurorak) {
+            r->aurorak = k;
+            if (r->log && r->mode == GalaxyOrbit)
+                fprintf(r->log, "galaxy aurora at %.1fs\n", motion);
+        }
+        r->aurora = f * galaxysmoothstep(local / 1.5) * (1 - galaxysmoothstep((local - 4.2) / 1.8));
+    }
+    /* 流星雨: 约每 31s 一次, 1.5s 内从视口上方射出十来颗 (屏幕粒子, 速度快, 自动画成拉丝) */
+    if (galaxycycle(motion, 20, 31, &k, &local) && local < 1.5 && f > .3) {
+        double side = galaxyhash(k * 13 + 7) < .5 ? -1 : 1, x0 = r->vx + r->vw * (.25 + .5 * galaxyhash(k * 13 + 3)), sp, ang;
+        int n;
+
+        if (k != r->meteork) {
+            r->meteork = k;
+            if (r->log && r->mode == GalaxyOrbit)
+                fprintf(r->log, "galaxy meteors at %.1fs\n", motion);
+        }
+        for (n = galaxyemitcount(8 * f); n > 0; n--) {
+            sp = r->vw * (.55 + .35 * galaxyprand());
+            ang = (55 + 20 * galaxyprand()) * GALAXYPI / 180;
+            galaxyemit(galaxyv(x0 + (galaxyprand() - .5) * .5 * r->vw, r->vy - 10 + galaxyprand() * .2 * r->vh, 0),
+                    galaxyv(side * cos(ang) * sp, sin(ang) * sp, 0), .5 + .4 * galaxyprand(), 1.6,
+                    galaxyprand() < .6 ? GalaxyCool : GalaxyGold, .9, 0, 1);
+        }
     }
 }
 
