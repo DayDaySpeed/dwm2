@@ -3,13 +3,10 @@
  * 开场时壁纸溶解成程序生成的深空, 回程 / 坍缩时再溶解回去:
  *   - 3 层可平铺的星点图 (远 / 中 / 近, 尺寸各不相同), 随镜头转动按不同速度平移, 形成视差;
  *     星的亮度按幂律分布 (亮星少暗星多), 色温从冷蓝到暖黄, 最亮的自带十字衍射芒
- *   - 银河带 (沿轨道盘面的对角线方向, 中间一道暗尘带): 低分辨率 a8 蒙版, 合成时用纯色上色并双线性放大
  *   - 星云在 GPU 上程序化生成 (galaxy-gl.c 的 galaxyglnebula), 画在光层最底下, 从第一帧起就有
- * 星点和银河在 CPU 上生成, 分几帧完成 (每帧一层), 生成好后淡入; 结果按 屏幕尺寸 + 壁纸 缓存在进程里, 之后再按 Super+Z 直接复用 */
+ * 星点在 CPU 上生成, 分几帧完成 (每帧一层), 生成好后淡入; 结果按 屏幕尺寸 + 壁纸 缓存在进程里, 之后再按 Super+Z 直接复用 */
 
 #define GALAXYSPACELAYERS 3
-#define GALAXYSPACEMASKS  1           /* 0 银河 */
-#define GALAXYSPACEMW     480         /* 蒙版宽度; 高度按视口比例 */
 
 static Picture galaxyargb(int w, int h, Pixmap *pix);
 static Picture galaxyopaque(int w, int h, Pixmap *pix);
@@ -20,10 +17,10 @@ static Picture galaxywhite(double a);
 /* 进程级缓存 (galaxyscene 每次启动都会清零, 这里不会) */
 static struct {
     int ready, steps, w, h, vw, vh;
-    Pixmap starpix[GALAXYSPACELAYERS], maskpix[GALAXYSPACEMASKS];
-    Picture star[GALAXYSPACELAYERS], mask[GALAXYSPACEMASKS];
-    int starsize[GALAXYSPACELAYERS], mw, mh;
-    Pixmap farpix;                    /* 远景合成图: 底色 + 星云 + 银河 + 最远一层星点, 比视口大 30% (视差平移时不露边) */
+    Pixmap starpix[GALAXYSPACELAYERS];
+    Picture star[GALAXYSPACELAYERS];
+    int starsize[GALAXYSPACELAYERS];
+    Pixmap farpix;                    /* 远景合成图: 底色 + 远 / 中两层星点, 比视口大 30% (视差平移时不露边) */
     Picture far;
     int fw, fh;
     double bakedat;                   /* 上次合成远景图的时刻 */
@@ -31,34 +28,7 @@ static struct {
 } galaxyspace;
 
 static const int galaxyspacesize[GALAXYSPACELAYERS] = { 1024, 896, 768 };
-static const int galaxyspacecount[GALAXYSPACELAYERS] = { 1500, 700, 260 };
-
-/* 值噪声 + 分形叠加, 用于银河和星云 */
-static double
-galaxynoise(double x, double y, unsigned int seed)
-{
-    int xi = (int)floor(x), yi = (int)floor(y);
-    double fx = x - xi, fy = y - yi, a, b, c, d;
-
-    fx = fx * fx * (3 - 2 * fx);
-    fy = fy * fy * (3 - 2 * fy);
-    a = galaxyhash(seed + (unsigned int)(xi * 73856093 ^ yi * 19349663));
-    b = galaxyhash(seed + (unsigned int)((xi + 1) * 73856093 ^ yi * 19349663));
-    c = galaxyhash(seed + (unsigned int)(xi * 73856093 ^ (yi + 1) * 19349663));
-    d = galaxyhash(seed + (unsigned int)((xi + 1) * 73856093 ^ (yi + 1) * 19349663));
-    return galaxymix(galaxymix(a, b, fx), galaxymix(c, d, fx), fy);
-}
-
-static double
-galaxyfbm(double x, double y, unsigned int seed)
-{
-    double v = 0, amp = .5;
-    int o;
-
-    for (o = 0; o < 5; o++, x *= 2.03, y *= 2.03, amp *= .5)
-        v += amp * galaxynoise(x, y, seed + o * 1013);
-    return v / .97;
-}
+static const int galaxyspacecount[GALAXYSPACELAYERS] = { 750, 350, 130 };
 
 /* 一层可平铺的星点图 (ARGB, 预乘) */
 static void
@@ -109,45 +79,6 @@ galaxyspacestars(int layer)
         XRenderChangePicture(dpy, galaxyspace.star[layer], CPRepeat, &(XRenderPictureAttributes){.repeat = RepeatNormal});
 }
 
-/* a8 蒙版: 银河带 (沿对角线, 中间暗尘带) */
-static void
-galaxyspacemask(int which)
-{
-    GalaxyScene *r = &galaxyscene;
-    int w = galaxyspace.mw, h = galaxyspace.mh, i, j, stride = (w + 3) & ~3;
-    unsigned char *data = calloc((size_t)stride * h, 1);
-    double ang = -GALAXY_DIAG * GALAXYPI / 180, ca = cos(ang), sa = sin(ang), x, y, u, v, a, n, k;
-    XImage *img;
-    GC gc;
-
-    if (!data)
-        return;
-    for (j = 0; j < h; j++)
-        for (i = 0; i < w; i++) {
-            x = (i + .5) / w * 2 - 1;
-            y = ((j + .5) / h * 2 - 1) * h / w;
-            u = x * ca - y * sa;              /* 沿银河 */
-            v = x * sa + y * ca;              /* 垂直银河 */
-            n = galaxyfbm(u * 2.4 + 7, v * 6 + 3, 501);
-            a = exp(-v * v / (.16 * .16)) * (.35 + .65 * n) * (.75 + .25 * galaxyfbm(u * 9, v * 9, 77));
-            k = exp(-pow((v - .015 - .03 * (galaxyfbm(u * 3, 1, 9) - .5)) / .028, 2));   /* 暗尘带 */
-            a *= 1 - .75 * k * (.5 + .5 * galaxyfbm(u * 7, v * 20, 31));
-            data[(size_t)j * stride + i] = (unsigned char)(galaxyclamp(a) * 255 + .5);
-        }
-    galaxyspace.maskpix[which] = XCreatePixmap(dpy, root, w, h, 8);
-    galaxyspace.mask[which] = XRenderCreatePicture(dpy, galaxyspace.maskpix[which], r->a8, 0, NULL);
-    img = XCreateImage(dpy, DefaultVisual(dpy, screen), 8, ZPixmap, 0, (char *)data, w, h, 8, stride);
-    if (!img) {
-        free(data);
-        return;
-    }
-    gc = XCreateGC(dpy, galaxyspace.maskpix[which], 0, NULL);
-    XPutImage(dpy, galaxyspace.maskpix[which], gc, img, 0, 0, 0, 0, w, h);
-    XFreeGC(dpy, gc);
-    XDestroyImage(img);
-    XRenderSetPictureFilter(dpy, galaxyspace.mask[which], FilterBilinear, NULL, 0);
-}
-
 static void
 galaxyspacefree(void)
 {
@@ -156,10 +87,6 @@ galaxyspacefree(void)
     for (i = 0; i < GALAXYSPACELAYERS; i++) {
         if (galaxyspace.star[i]) XRenderFreePicture(dpy, galaxyspace.star[i]);
         if (galaxyspace.starpix[i]) XFreePixmap(dpy, galaxyspace.starpix[i]);
-    }
-    for (i = 0; i < GALAXYSPACEMASKS; i++) {
-        if (galaxyspace.mask[i]) XRenderFreePicture(dpy, galaxyspace.mask[i]);
-        if (galaxyspace.maskpix[i]) XFreePixmap(dpy, galaxyspace.maskpix[i]);
     }
     if (galaxyspace.far) XRenderFreePicture(dpy, galaxyspace.far);
     if (galaxyspace.farpix) XFreePixmap(dpy, galaxyspace.farpix);
@@ -172,7 +99,7 @@ galaxyspacebegin(void)
 {
     GalaxyScene *r = &galaxyscene;
 
-    /* 星点 / 银河与壁纸无关 (星云在 GPU 上), 只看尺寸 */
+    /* 星点与壁纸无关 (星云在 GPU 上), 只看尺寸 */
     if (galaxyspace.ready && galaxyspace.w == r->w && galaxyspace.h == r->h && galaxyspace.vw == r->vw
             && galaxyspace.vh == r->vh) {
         galaxyspace.readyat = -1;
@@ -183,8 +110,6 @@ galaxyspacebegin(void)
     galaxyspace.h = r->h;
     galaxyspace.vw = r->vw;
     galaxyspace.vh = r->vh;
-    galaxyspace.mw = GALAXYSPACEMW;
-    galaxyspace.mh = MAX(8, GALAXYSPACEMW * r->vh / MAX(1, r->vw));
 }
 
 /* 每帧调用一次: 还没生成完就做下一步 (每步约 5–15ms), 开场开头几帧之后再开始, 不碰起飞的那几帧 */
@@ -200,8 +125,7 @@ galaxyspacestep(void)
     switch (galaxyspace.steps++) {
     case 0: galaxyspacestars(0); break;
     case 1: galaxyspacestars(1); break;
-    case 2: galaxyspacestars(2); break;
-    case 3: galaxyspacemask(0); galaxyspace.ready = 1; galaxyspace.readyat = galaxynow(); break;
+    case 2: galaxyspacestars(2); galaxyspace.ready = 1; galaxyspace.readyat = galaxynow(); break;
     }
     if (r->log && galaxyspace.steps == 1)
         fprintf(r->log, "galaxy space: generating\n");
@@ -209,41 +133,7 @@ galaxyspacestep(void)
         fprintf(r->log, "galaxy space step %d %.1fms\n", galaxyspace.steps, (galaxynow() - t0) * 1000);
 }
 
-/* HSV -> 预乘的 XRenderColor */
-static XRenderColor
-galaxyhsv(double h, double s, double v, double a)
-{
-    double c = v * s, x, m = v - c, rr = 0, gg = 0, bb = 0;
-
-    h = fmod(fmod(h, 360) + 360, 360) / 60;
-    x = c * (1 - fabs(fmod(h, 2) - 1));
-    if (h < 1) { rr = c; gg = x; }
-    else if (h < 2) { rr = x; gg = c; }
-    else if (h < 3) { gg = c; bb = x; }
-    else if (h < 4) { gg = x; bb = c; }
-    else if (h < 5) { rr = x; bb = c; }
-    else { rr = c; bb = x; }
-    a = galaxyclamp(a);
-    return (XRenderColor){(unsigned short)(65535 * galaxyclamp(rr + m) * a), (unsigned short)(65535 * galaxyclamp(gg + m) * a),
-        (unsigned short)(65535 * galaxyclamp(bb + m) * a), (unsigned short)(65535 * a)};
-}
-
-/* 用纯色把一张蒙版上色, 双线性放大铺满远景图 */
-static void
-galaxyspacetint(int which, XRenderColor col)
-{
-    Picture solid;
-    double sx = (double)galaxyspace.mw / galaxyspace.fw, sy = (double)galaxyspace.mh / galaxyspace.fh;
-
-    if (!galaxyspace.mask[which] || !col.alpha)
-        return;
-    galaxyaffine(galaxyspace.mask[which], sx, sy, 0, 0);
-    solid = XRenderCreateSolidFill(dpy, &col);
-    XRenderComposite(dpy, PictOpOver, solid, galaxyspace.mask[which], galaxyspace.far, 0, 0, 0, 0, 0, 0, galaxyspace.fw, galaxyspace.fh);
-    XRenderFreePicture(dpy, solid);
-}
-
-/* 合成远景图 (放大 / 上色只在这里做, 每帧只是平移拷贝): 底色 -> 银河 -> 远 / 中两层星点 */
+/* 合成远景图 (每帧只是平移拷贝): 底色 -> 远 / 中两层星点 */
 static void
 galaxyspacebake(void)
 {
@@ -258,7 +148,6 @@ galaxyspacebake(void)
             return;
     }
     XRenderFillRectangle(dpy, PictOpSrc, galaxyspace.far, &base, 0, 0, galaxyspace.fw, galaxyspace.fh);
-    galaxyspacetint(0, galaxyhsv(40, .18, .95, .34));
     if (galaxyspace.star[0])
         XRenderComposite(dpy, PictOpOver, galaxyspace.star[0], galaxywhite(.8), galaxyspace.far, 0, 0, 0, 0, 0, 0,
                 galaxyspace.fw, galaxyspace.fh);
@@ -269,7 +158,7 @@ galaxyspacebake(void)
 }
 
 /* 深空: 远景图 (含远 / 中两层星点, 按镜头角度平移, 幅度有限) + 近层平铺星点 (平移更多, 形成纵深).
- * 每帧只有 2 次不缩放的合成. 星点 / 银河生成好之前先铺深空底色 (碎块缝隙里不露出壁纸), 生成好后 0.25s 淡入 */
+ * 每帧只有 2 次不缩放的合成. 星点生成好之前先铺深空底色 (碎块缝隙里不露出壁纸), 生成好后 0.25s 淡入 */
 static void
 galaxyrenderspace(void)
 {
@@ -316,14 +205,13 @@ galaxyrenderspace(void)
     }
 }
 
-/* GPU 星云 (光层最底下): 强度跟深空的溶解走, 揭开壁纸时一起淡出; 降级 / 安静模式减少 fbm 倍频; 噪声偏移每次随机 */
+/* GPU 星云 (光层最底下的一层薄雾和远景元素): 强度跟深空的溶解走, 揭开壁纸时一起淡出 */
 static void
 galaxyrendernebula(void)
 {
     GalaxyScene *r = &galaxyscene;
-    double q = r->mode == GalaxyOrbit ? r->qualityvisual : 0;
 
-    galaxyglnebula(.35 * r->space * (1 - r->reveal), galaxynow(), q > 2 ? 3 : r->quiet ? 4 : 5, r->nebseed, r->gentle);
+    galaxyglnebula(.14 * r->space * (1 - r->reveal), galaxynow(), 3, r->nebseed, r->gentle);
 }
 
 /* dwm 启动 (含原地重启) 时预先按当前显示器生成好 (约 85ms), 第一次按 Super+Z 时开场不再卡一下.
@@ -355,11 +243,11 @@ static void
 galaxyfarinit(void)
 {
     GalaxyScene *r = &galaxyscene;
-    double hh = (double)r->vh / MAX(1, r->vw), pts[13][2], x, y, s = 1 / 2560.0;   /* s: 2560 宽屏幕上的 1 像素 (q 单位) */
+    double hh = (double)r->vh / MAX(1, r->vw), pts[5][2], x, y, s = 1 / 2560.0;   /* s: 2560 宽屏幕上的 1 像素 (q 单位) */
     unsigned int seed = (unsigned int)(r->nebseed[0] * 1000 + r->nebseed[1] * 37);
     int i, j, n = 0, tries, ok;
 
-    for (i = 0; i < 13; i++) {
+    for (i = 0; i < 5; i++) {
         for (tries = 0; tries < 60; tries++) {
             x = .06 + .88 * galaxyhash(seed + i * 131 + tries * 7);
             y = hh * (.08 + .84 * galaxyhash(seed + i * 131 + tries * 7 + 3));
@@ -373,7 +261,7 @@ galaxyfarinit(void)
         pts[n][1] = y;
         n++;
     }
-    for (i = 0; i < 4; i++) {     /* 远方星系 */
+    for (i = 0; i < 2; i++) {     /* 远方星系 */
         float *g = r->farg[i];
         g[0] = pts[i][0];
         g[1] = pts[i][1];
@@ -384,14 +272,9 @@ galaxyfarinit(void)
         g[6] = .07 + .05 * galaxyhash(seed + i * 17 + 5);
         g[7] = 2 * GALAXYPI * galaxyhash(seed + i * 17 + 6);
     }
-    for (i = 0; i < 3; i++) {     /* 星团 */
-        r->farc[i][0] = pts[4 + i][0];
-        r->farc[i][1] = pts[4 + i][1];
-        r->farc[i][2] = (40 + 50 * galaxyhash(seed + i * 23 + 9)) * s;
-    }
-    for (i = 0; i < 6; i++) {     /* 偶尔闪一下的亮星 */
-        r->fars[i][0] = pts[7 + i][0];
-        r->fars[i][1] = pts[7 + i][1];
+    for (i = 0; i < 3; i++) {     /* 偶尔闪一下的亮星 */
+        r->fars[i][0] = pts[2 + i][0];
+        r->fars[i][1] = pts[2 + i][1];
         r->fars[i][2] = 5 + 6 * galaxyhash(seed + i * 29 + 11);
         r->fars[i][3] = 2 * GALAXYPI * galaxyhash(seed + i * 29 + 12);
     }

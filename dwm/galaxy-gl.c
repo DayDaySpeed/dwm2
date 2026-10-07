@@ -148,12 +148,13 @@ static const char *galaxyglfsup =
     "}\n";
 
 /* 程序化星云 (光层最先画的一层, 之后卡片挖洞会把它挡住): 值噪声 fbm + domain warp, 两层不同视差,
- * 小团块均匀铺开, 沿银河带略浓; 作为远景: 颜色偏冷灰、视差小、流动慢, 四边渐隐、画面中央压暗 (不抢焦点); 噪声偏移 seed 每次随机. 外加稀疏的闪烁星点. view: 视口 (左上原点像素), cam: 镜头偏航 / 俯仰 */
+ * 一层很淡很柔的薄雾, 加两个远方星系、三颗偶尔闪烁的亮星、稀疏的闪烁星点和远处彗星; 作为远景: 偏冷灰、视差小、流动慢,
+ * 四边渐隐、画面中央压暗 (不抢焦点); 噪声偏移 seed 每次随机. 外加稀疏的闪烁星点. view: 视口 (左上原点像素), cam: 镜头偏航 / 俯仰 */
 static const char *galaxyglfsnebula =
     "#version 330 core\n"
     "in vec2 uv; out vec4 o;\n"
     "uniform vec2 screen, cam, seed; uniform vec4 view; uniform float t, k, diag, still; uniform int oct;\n"
-    "uniform vec3 c0, c1, c2; uniform vec4 fg0[4], fg1[4], fs[6], comet; uniform vec3 fc[3];\n"
+    "uniform vec3 c0, c1, c2; uniform vec4 fg0[2], fg1[2], fs[3], comet;\n"
     "float h(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }\n"
     "float n(vec2 p) {\n"
     "  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);\n"
@@ -170,29 +171,18 @@ static const char *galaxyglfsnebula2 =
     "void main() {\n"
     "  vec2 px = vec2(uv.x * screen.x, (1.0 - uv.y) * screen.y), q = (px - view.xy) / view.z;\n"
     "  if (q.x < 0.0 || q.y < 0.0 || q.x > 1.0 || q.y > view.w / view.z) discard;\n"
-    "  vec2 d = vec2(cos(diag), sin(diag)), c = q - vec2(.5, .5 * view.w / view.z);\n"
-    "  float across = dot(c, vec2(-d.y, d.x)), along = dot(c, d);\n"
+    "  vec2 c = q - vec2(.5, .5 * view.w / view.z);\n"
     "  vec3 col = vec3(0.0), grey = vec3(.55, .6, .7);\n"
     "  float hh = view.w / view.z;\n"
     /* 远景: 四边 / 四角渐隐 (不堆在角上), 画面中央压暗 (星系和卡片才是焦点) */
     "  float ed = min(min(q.x, 1.0 - q.x), min(q.y, hh - q.y));\n"
     "  float edge = .4 + .6 * smoothstep(0.0, .18, ed), cd = 1.0 - .45 * exp(-dot(c, c) / .05);\n"
-    "  for (int l = 0; l < 2; l++) {\n"
-    "    float s = l == 0 ? 3.0 : 4.6, par = l == 0 ? .06 : .15;\n"
-    "    vec2 p = q * s + cam * par * s + seed + vec2(3.1 * float(l), 7.7 * float(l));\n"
-    "    vec2 w = vec2(fbm(p + vec2(0.0, t * .006)), fbm(p + vec2(5.2, 1.3) - vec2(t * .0045, 0.0)));\n"
-    "    float f = fbm(p + 1.0 * w + vec2(t * .002));\n"
-    "    float band = exp(-across * across / (l == 0 ? .12 : .08)) * (.55 + .45 * fbm(vec2(along * 2.0, 4.0 + float(l))));\n"
-    "    float cover = .6 + .4 * n(q * 1.2 + seed * .37 + float(l) * 2.3);\n"
-    "    float m = smoothstep(.3, .85, f) * (.35 + .65 * band) * cover;\n"
-    "    vec3 hue = mix(c0, c1, smoothstep(.3, .75, w.x));\n"
-    "    hue = mix(mix(hue, c2, smoothstep(.55, .9, w.y) * .7), grey, .5);\n"
-    "    col += hue * m * (l == 0 ? .4 : .25);\n"
-    "  }\n"
-    "  col /= 1.0 + 1.5 * dot(col, vec3(.3, .59, .11));\n"
+    /* 星云: 一层很淡、很柔的薄雾 (低频 fbm, 极慢流动, 视差很小), 颜色固定为偏冷灰的淡紫青 */
+    "  float f = fbm(q * 1.6 + cam * .1 + seed + vec2(t * .003, 0.0));\n"
+    "  col = mix(mix(c0, c1, .5), grey, .6) * smoothstep(.4, .95, f);\n"
     /* 远景元素 (视差只有星云远层的一半): 远方星系 (旋涡: 核心 + 两条对数螺旋臂, 极慢自转; 椭圆: 柔和光斑) */
-    "  vec2 pq = q - cam * .03; vec3 far = vec3(0.0); float cl = 0.0;\n"
-    "  for (int i = 0; i < 4; i++) {\n"
+    "  vec2 pq = q - cam * .03; vec3 far = vec3(0.0);\n"
+    "  for (int i = 0; i < 2; i++) {\n"
     "    vec2 dv = pq - fg0[i].xy; float sz = fg0[i].z;\n"
     "    if (dot(dv, dv) > 9.0 * sz * sz) continue;\n"
     "    float ca = cos(fg0[i].w), sa = sin(fg0[i].w);\n"
@@ -204,13 +194,8 @@ static const char *galaxyglfsnebula2 =
     "    } else g = exp(-rr * rr * 2.2) * .8 + core * .5;\n"
     "    far += mix(mix(vec3(1.0, .88, .7), vec3(.6, .72, 1.0), smoothstep(0.0, .8, rr)), grey, .3) * g * fg1[i].z;\n"
     "  }\n"
-    /* 星团: 一团很淡的光晕, 范围内小星点更密 (见下面的闪烁星点) */
-    "  for (int i = 0; i < 3; i++) {\n"
-    "    vec2 dv = pq - fc[i].xy; float e = exp(-dot(dv, dv) / (fc[i].z * fc[i].z));\n"
-    "    cl = max(cl, e); far += vec3(.75, .8, .95) * e * .07;\n"
-    "  }\n"
     /* 亮星: 平时一个小亮点, 偶尔短暂闪一下, 闪时有很小的十字星芒 */
-    "  for (int i = 0; i < 6; i++) {\n"
+    "  for (int i = 0; i < 3; i++) {\n"
     "    vec2 dv = (pq - fs[i].xy) * view.z; float d2 = dot(dv, dv);\n"
     "    if (d2 > 900.0) continue;\n"
     "    float fl = still > .5 ? 0.0 : pow(max(0.0, sin(6.2832 * t / fs[i].z + fs[i].w)), 40.0);\n"
@@ -218,16 +203,16 @@ static const char *galaxyglfsnebula2 =
     "    far += vec3(.9, .94, 1.0) * (exp(-d2 / 2.2) * .25 * (1.0 + fl) + sp * .5 * fl);\n"
     "  }\n"
     "  col *= edge * cd;\n"
-    /* 闪烁星点: 每 22px 一格, 约 4% 的格子里有一颗, 亮度按各自的相位慢慢起伏 */
+    /* 闪烁星点: 每 22px 一格, 约 2% 的格子里有一颗, 亮度按各自的相位慢慢起伏 */
     "  vec2 cell = floor((px + cam * 60.0) / 22.0), fp = fract((px + cam * 60.0) / 22.0);\n"
     "  float r = h(cell);\n"
-    "  if (r < .04 + .5 * cl) {\n"
+    "  if (r < .02) {\n"
     "    vec2 sp = vec2(h(cell + 3.1), h(cell + 7.3)) * .7 + .15;\n"
     "    float tw = still > .5 ? .8 : .55 + .45 * sin(t * (1.1 + 2.5 * h(cell + 1.7)) + 6.28 * h(cell + 9.1));\n"
     "    col += mix(vec3(.75, .85, 1.0), vec3(1.0, .88, .7), h(cell + 5.5)) * exp(-dot(fp - sp, fp - sp) * 22.0 * 22.0 / 1.6) * tw * .3 * cd;\n"
     "  }\n"
     "  col *= k;\n"
-    /* 远景元素只跟深空的淡入淡出走 (k / .35), 不再乘星云本身的强度 */
+    /* 远景元素只跟深空的淡入淡出走 (k / .14), 不再乘星云本身的强度 */
     /* 远处彗星: 头部一个小光点带淡晕, 彗尾沿运动反方向延伸约 12% 视口宽, 逐渐张开、指数变淡 */
     "  if (comet.w > .001) {\n"
     "    vec2 dv = pq - comet.xy, dir = vec2(cos(comet.z), sin(comet.z));\n"
@@ -237,7 +222,7 @@ static const char *galaxyglfsnebula2 =
     "    float head = exp(-d2 / 16.0) + .3 * exp(-d2 / 400.0);\n"
     "    far += mix(vec3(.8, .92, 1.0), grey, .2) * (head * .35 + tail * .2) * comet.w / max(cd, .01);\n"
     "  }\n"
-    "  col += far * edge * cd * (k / .35);\n"
+    "  col += far * edge * cd * (k / .14);\n"
     "  o = vec4(col, 0.0);\n"
     "}\n";
 
@@ -861,19 +846,16 @@ galaxyglnebula(double k, double t, int oct, const double seed[2], int still)
     glUniform2f(glGetUniformLocation(p, "seed"), (float)seed[0], (float)seed[1]);
     glUniform1f(glGetUniformLocation(p, "still"), still ? 1 : 0);
     {   /* 远景元素 (galaxyfarinit 生成) */
-        float g0[4][4], g1[4][4], fc[3][3];
+        float g0[2][4], g1[2][4];
         int i;
 
-        for (i = 0; i < 4; i++) {
+        for (i = 0; i < 2; i++) {
             memcpy(g0[i], r->farg[i], sizeof g0[i]);
             memcpy(g1[i], r->farg[i] + 4, sizeof g1[i]);
         }
-        for (i = 0; i < 3; i++)
-            memcpy(fc[i], r->farc[i], sizeof fc[i]);
-        glUniform4fv(glGetUniformLocation(p, "fg0"), 4, &g0[0][0]);
-        glUniform4fv(glGetUniformLocation(p, "fg1"), 4, &g1[0][0]);
-        glUniform3fv(glGetUniformLocation(p, "fc"), 3, &fc[0][0]);
-        glUniform4fv(glGetUniformLocation(p, "fs"), 6, &r->fars[0][0]);
+        glUniform4fv(glGetUniformLocation(p, "fg0"), 2, &g0[0][0]);
+        glUniform4fv(glGetUniformLocation(p, "fg1"), 2, &g1[0][0]);
+        glUniform4fv(glGetUniformLocation(p, "fs"), 3, &r->fars[0][0]);
         glUniform4fv(glGetUniformLocation(p, "comet"), 1, r->farcomet);
     }
     glUniform3fv(glGetUniformLocation(p, "c0"), 1, c[0]);

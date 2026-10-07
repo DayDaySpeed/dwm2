@@ -659,11 +659,8 @@ galaxylogstart(void)
             r->w, r->h, r->ntags, r->nstars, r->ndust, r->ntrail, r->cam.focal, r->tscale, r->dpms,
             r->wallwin, r->live ? " (live)" : "", r->quiet, r->gentle, r->fxgap, r->refresh);
     fprintf(r->log, "galaxy far: galaxies");    /* 远景元素的位置 (像素), 方便对着截图找 */
-    for (i = 0; i < 4; i++)
+    for (i = 0; i < 2; i++)
         fprintf(r->log, " %.0f,%.0f/%.0f", r->vx + r->farg[i][0] * r->vw, r->vy + r->farg[i][1] * r->vw, r->farg[i][2] * r->vw);
-    fprintf(r->log, " clusters");
-    for (i = 0; i < 3; i++)
-        fprintf(r->log, " %.0f,%.0f", r->vx + r->farc[i][0] * r->vw, r->vy + r->farc[i][1] * r->vw);
     fprintf(r->log, "\n");
     for (i = 0; i < r->ntags; i++)
         if (r->galaxies[i].nstars)

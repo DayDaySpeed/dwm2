@@ -290,8 +290,8 @@ typedef struct {
     int meteork;                /* 流星雨: 当前是第几次 */
     double meteorat;            /* 下一颗零星流星的时刻 */
     /* 远景 (星云着色器里画, 每次按 nebseed 生成, 坐标是按视口宽归一化的 q): 远方星系 x y 半径 朝向 / 倾斜 类型 亮度 相位,
-     * 星团 x y 半径, 亮星 x y 闪烁周期 相位 */
-    float farg[4][8], farc[3][3], fars[6][4];
+     * 亮星 x y 闪烁周期 相位 */
+    float farg[2][8], fars[3][4];
     float farcomet[4];          /* 远处彗星: 头部 x y (q), 运动方向角, 强度 (0 表示没有) */
     int farcometk;
     double lumsum, lummax, expomin;   /* 本段统计 (日志): 光层亮度的和 / 最大值, 最低曝光 */
