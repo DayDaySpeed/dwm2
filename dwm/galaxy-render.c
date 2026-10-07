@@ -1612,10 +1612,10 @@ galaxyrenderparticles(void)
             galaxyglpartline(pp.x, pp.y, pr.x, pr.y, pr.z, MAX(.5, .45 * rad), col, .15, a * MAX(.2, MIN(1, 2.5 * rad / len)));
             continue;
         }
-        /* 景深: 离对焦距离 (镜头到目标) 越远, 光斑越大越淡; 明显失焦的画成散景光斑 */
-        coc = MIN(14, 10 * fabs(1 - r->cam.dist / MAX(1, pr.z)));
-        rad2 = MIN(18, sqrt(rad * rad + coc * coc));
-        galaxyglparticle(pr.x, pr.y, pr.z, MAX(.6, rad2), col, .7, a * pow(MAX(.6, rad) / MAX(.6, rad2), 1.4), coc > 2.5 && rad2 > 3);
+        /* 景深: 离对焦距离 (镜头到目标) 越远, 光斑越大越淡; 只有明显失焦的才画成散景圆盘 (否则近处核心身后像一串气泡) */
+        coc = MIN(10, 10 * fabs(1 - r->cam.dist / MAX(1, pr.z)));
+        rad2 = MIN(13, sqrt(rad * rad + coc * coc));
+        galaxyglparticle(pr.x, pr.y, pr.z, MAX(.6, rad2), col, .7, a * pow(MAX(.6, rad) / MAX(.6, rad2), 1.7), coc > 5 && rad2 > 6);
     }
 }
 
