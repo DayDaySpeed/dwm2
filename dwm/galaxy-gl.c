@@ -19,7 +19,7 @@
 #define GALAXYBLOOMW    .75f      /* 泛光逐级权重: 第 i 级 (越往后越宽) 的权重是它的 i 次方 */
 #define GALAXYBLOOMK    1.8       /* 加权后总能量变小 (1+.75+.56+... 约 3.3, 原来等权是 6 级), 整体补偿 */
 
-enum { GalaxyGLHalo, GalaxyGLDisc, GalaxyGLSpike, GalaxyGLLine, GalaxyGLRect, GalaxyGLDust, GalaxyGLBokeh, GalaxyGLStar };
+enum { GalaxyGLHalo, GalaxyGLDisc, GalaxyGLSpike, GalaxyGLLine, GalaxyGLRect, GalaxyGLDust, GalaxyGLBokeh, GalaxyGLStar, GalaxyGLSurface };
 
 typedef struct { float a[4], b[4], c0[4], c1[4]; } GalaxyGLInst;
 
@@ -83,10 +83,27 @@ static const char *galaxyglvslight =
 static const char *galaxyglfslight =
     "#version 330 core\n"
     "in vec2 vl; in float vt; flat in vec4 fb; flat in vec4 fc0; flat in vec4 fc1; flat in vec2 flen;\n"
-    "out vec4 o;\n"
+    "out vec4 o; uniform float time;\n"
+    "float hs(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }\n"
+    "float sn(vec2 p) {\n"
+    "  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);\n"
+    "  return mix(mix(hs(i), hs(i + vec2(1, 0)), f.x), mix(hs(i + vec2(0, 1)), hs(i + vec2(1, 1)), f.x), f.y);\n"
+    "}\n"
     "void main() {\n"
     "  int kind = int(fb.z + .5); float a; vec3 col = fc0.rgb;\n"
-    "  if (kind == 3) {\n"
+    "  if (kind == 8) {\n"
+    /* 近处的恒星表面: 球面 (半径 .55) 有临边昏暗和缓慢流动的米粒纹理, 中间偏白; 球外一圈随角度起伏、缓慢翻涌的日冕 */
+    "    float d = length(vl), x = d / .55, th = atan(vl.y, vl.x);\n"
+    "    if (x < 1.0) {\n"
+    "      float mu = sqrt(1.0 - x * x);\n"
+    "      vec2 sp = vl / .55 / (1.0 + mu);\n"
+    "      float gran = .7 + .3 * sn(sp * 14.0 + vec2(time * .15, -time * .1)) * (.6 + .4 * sn(sp * 31.0 - time * .2));\n"
+    "      a = (.35 + .65 * mu) * gran;\n"
+    "      col = mix(fc0.rgb, vec3(1.0), .55 * mu);\n"
+    "    } else {\n"
+    "      a = exp(-(x - 1.0) * 5.0) * (.5 + .5 * sn(vec2(th * 6.0, time * .3 - x * 2.0))) * .6 * (1.0 - smoothstep(.85, 1.0, d));\n"
+    "    }\n"
+    "  } else if (kind == 3) {\n"
     "    float t = clamp(vl.x, 0.0, flen.x), d = length(vec2(vl.x - t, vl.y));\n"
     "    a = clamp(flen.y + .5 - d, 0.0, 1.0); col = mix(fc0.rgb, fc1.rgb, vt);\n"
     "  } else if (kind == 4) {\n"
@@ -740,6 +757,7 @@ galaxygldraw(GalaxyGLInst *inst, int n, int depthtest)
     glViewport(0, 0, galaxygl.fw, galaxygl.fh);
     glUseProgram(galaxygl.proglight);
     glUniform2f(glGetUniformLocation(galaxygl.proglight, "screen"), galaxygl.fw, galaxygl.fh);
+    glUniform1f(glGetUniformLocation(galaxygl.proglight, "time"), (float)galaxynow());
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE);
     if (depthtest) {
@@ -799,7 +817,7 @@ galaxyglglow(int shape, const double rgb[3], double core, double x, double y, do
             || x - radius > galaxygl.fw || y - radius > galaxygl.fh)
         return;
     g = galaxyglpush();
-    *g = (GalaxyGLInst){{x, y, radius, angle}, {0, alpha, shape == GalaxySpike ? GalaxyGLSpike : shape == GalaxyDisc ? GalaxyGLDisc : shape == GalaxyPoint ? GalaxyGLStar : GalaxyGLHalo, -1},
+    *g = (GalaxyGLInst){{x, y, radius, angle}, {0, alpha, shape == GalaxySpike ? GalaxyGLSpike : shape == GalaxyDisc ? GalaxyGLDisc : shape == GalaxyPoint ? GalaxyGLStar : shape == GalaxySurface ? GalaxyGLSurface : GalaxyGLHalo, -1},
         {rgb[0], rgb[1], rgb[2], core}, {0}};
 }
 

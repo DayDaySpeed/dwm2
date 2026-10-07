@@ -544,12 +544,16 @@ galaxyrenderglow(int tint, GalaxyProj p, double radius, double alpha, double blu
     /* 点光源: 靠近时核心只按透视比例的平方根慢慢变大 (有上限), 主要是变亮, 多出的能量交给眩光和泛光;
      * 眩光越大单位面积越淡 (能量守恒), 近在眼前也不会糊成一张白饼 */
     double s = MAX(.05, p.scale), core = MIN(24, radius * sqrt(s)), boost = MIN(1.8, pow(s, .3));
-    double glare = core * (3.5 + 2.5 * MIN(1, s / 3)) * (1 + .5 * blur);
+    double glare = core * (3.5 + 2.5 * MIN(1, s / 3)) * (1 + .5 * blur), sf;
 
     if (outer > 0)
         galaxysprite(GalaxyHalo, tint, p.x, p.y, glare * 2.2, outer * alpha * boost / MAX(1, glare * 2.2 / 180));
     galaxysprite(GalaxyHalo, tint, p.x, p.y, glare, halo * alpha * boost / MAX(1, glare / 110));
     galaxysprite(GalaxyPoint, tint, p.x, p.y, MAX(1.5, core * 2.4), MIN(1, alpha * (1 - .5 * blur) * boost));
+    /* 镜头贴近时 (按真实透视的屏幕半径 30~80px 渐显): 叠一层恒星表面, 有临边昏暗、米粒纹理和日冕 */
+    sf = galaxysmoothstep((radius * s - 30) / 50) * (1 - blur);
+    if (sf > .01)
+        galaxysprite(GalaxySurface, tint, p.x, p.y, MIN(150, radius * s) / .55, MIN(1, .6 * alpha * sf));
 }
 
 /* 细光带 (轨道环 / 尾迹 / 冲击环): 软件画进 a8 画布 (按距离算覆盖率的抗锯齿胶囊), 同一画布内取最大值, 重叠处不叠亮.
