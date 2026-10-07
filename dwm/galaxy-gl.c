@@ -324,9 +324,11 @@ static const char *galaxyglvspartfx =
     "    float s = fract(h1 + et * ep.x);\n"
     "    if (s > ep.w) return;\n"
     "    vec3 c1 = (epos + eb) * .5 + ebasis[1];\n"
-    "    wp = mix(mix(epos, c1, s), mix(c1, eb, s), s) + rd * ep.y * sin(3.1416 * s) * sqrt(h6);\n"
+    /* ep.y > 0: 中段最散 (两端收拢, 用于光桥 / 连线); ep.y < 0: 越往后越散越淡 (彗尾) */
+    "    float tail = ep.y < 0.0 ? 1.0 : 0.0;\n"
+    "    wp = mix(mix(epos, c1, s), mix(c1, eb, s), s) + rd * abs(ep.y) * mix(sin(3.1416 * s), pow(s, .8), tail) * sqrt(h6);\n"
     "    col = mix(ec0, ec1, s);\n"
-    "    a = alpha * (.3 + .7 * pow(h5, 3.0)) * smoothstep(0.0, .06, s) * (1.0 - smoothstep(ep.w - .08, ep.w, s));\n"
+    "    a = alpha * (.3 + .7 * pow(h5, 3.0)) * mix(smoothstep(0.0, .06, s), pow(1.0 - s, 1.4), tail) * (1.0 - smoothstep(ep.w - .08, ep.w, s));\n"
     "  } else {\n"
     "    float th = 6.2832 * h1, r = ep.x * (1.0 + (h2 - .5) * ep.y);\n"
     "    wp = epos + ebasis * vec3(cos(th) * r, sin(th) * r, (h3 - .5) * ep.y * ep.x * .3);\n"

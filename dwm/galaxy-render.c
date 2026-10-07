@@ -1052,31 +1052,25 @@ galaxyrenderriver(double f)
     galaxybandwhite();
 }
 
-/* 彗星的两条尾巴: 蓝色离子尾笔直背向中心光源 (ion, 长度即向量长度); 白色尘埃尾短一些,
- * 从来路方向 (back, 单位向量) 弯向离子尾一侧. w: 宽度倍数 */
+/* 彗星 (粒子): 彗头一小团粒子彗发; 蓝色离子尾是笔直背向中心光源的快速粒子流 (ion, 长度即向量长度);
+ * 白黄色尘埃尾宽一些、慢一些, 从来路方向 (back, 单位向量) 弯向离子尾一侧. w: 宽度倍数, seed: 每颗彗星不同 */
 static void
-galaxycomettails(GalaxyVec head, GalaxyVec ion, GalaxyVec back, double env, double w)
+galaxycomettails(GalaxyVec head, GalaxyVec ion, GalaxyVec back, double env, double w, double seed)
 {
-    GalaxyProj pts[11];
-    double a, t, L = galaxylen(ion);
-    int j, tail;
+    GalaxyScene *r = &galaxyscene;
+    static const double blue0[3] = {.75, .9, 1}, blue1[3] = {.3, .45, 1}, dust0[3] = {1, .97, .9};
+    double L = galaxylen(ion), t = galaxynow();
+    GalaxyVec bend = galaxyscale(ion, .2), dend = galaxyadd(head, galaxyadd(galaxyscale(back, .8 * L), galaxyscale(ion, .6)));
+    GalaxyMat flat = {{{0, 0, 0}, {0, 0, 0}, {0, 0, 0}}}, curve = {{{0, bend.x, 0}, {0, bend.y, 0}, {0, bend.z, 0}}};
+    double rgb[3] = {.85, .92, 1};
+    static const double pale1[3] = {.95, .85, .65};
 
-    for (tail = 0; tail < 2; tail++) {
-        for (j = 0; j <= 10; j++) {
-            t = j / 10.0;
-            pts[j] = galaxyproject(tail ? galaxyadd(head, galaxyscale(ion, t))
-                    : galaxyadd(head, galaxyadd(galaxyscale(back, .55 * L * t), galaxyscale(ion, .4 * t * t))));
-        }
-        for (j = 0; j < 10; j++) {
-            if (!pts[j].ok || !pts[j + 1].ok)
-                continue;
-            galaxybandcolor(tail ? galaxytintrgb(GalaxyBlue, j < 2 ? .3 : .75) : 0xffffff);
-            a = env * pow(1 - j / 10.0, tail ? 1.3 : 1.8) * galaxynearfade(pts[j].z) * (tail ? 1 : .8);
-            galaxyband(&pts[j], &pts[j + 1], .24 * a, MAX(.6, (2.6 - 2.2 * j / 10.0) * w * pts[j].scale * (tail ? .8 : 1.2)));
-            galaxyband(&pts[j], &pts[j + 1], .07 * a, MAX(2, 7 * w * pts[j].scale));
-        }
-    }
-    galaxybandwhite();
+    if (env < .01 || L < 1)
+        return;
+    galaxyglemitter(2, head, &flat, galaxyadd(head, ion), 1.3, -.05 * L * w, 1, 1, t, blue0, blue1, .4 * env, .8 * r->starscale,
+            1800, seed);
+    galaxyglemitter(2, head, &curve, dend, .35, -.16 * L * w, 1, 1, t, dust0, pale1, .26 * env, .9 * r->starscale, 3500, seed + 1.7);
+    galaxyglstarball(head, &r->world, .035 * L * w, 2, rgb, .12 * env, .9 * r->starscale, 500, seed + 3.1);
 }
 
 /* 驻留特效: 轨道光流 / 星座连线 / 核心光桥 / 超新星冲击环 / 彗星 / 流星. 都是 motion 的函数, 强度乘 holdw */
@@ -1203,11 +1197,7 @@ galaxyrenderholdfx(void)
         head = galaxyapply(r->world, galaxylerp(A, B, u));
         tail = galaxyscale(galaxynormalize(head), .2 * r->vw);
         env = f * galaxysmoothstep(u / .1) * (1 - galaxysmoothstep((u - .85) / .15));
-        galaxycomettails(head, tail, galaxynormalize(galaxyapply(r->world, galaxysub(A, B))), env, 1);
-        for (j = galaxyemitcount(110 * env); j > 0; j--)    /* 离子尾里顺流而下的细粒子 */
-            galaxyemit(galaxyadd(head, galaxyprandvec(.004 * r->cam.focal)),
-                    galaxyadd(galaxyscale(galaxynormalize(tail), r->cam.focal * (.05 + .08 * galaxyprand())), galaxyprandvec(.01 * r->cam.focal)),
-                    .9 + .5 * galaxyprand(), .0018 * r->cam.focal, galaxyprand() < .6 ? GalaxyBlue : GalaxyCool, .6, .4, 0);
+        galaxycomettails(head, tail, galaxynormalize(galaxyapply(r->world, galaxysub(A, B))), env, 1, 21.7 + k);
         pts[0] = galaxyproject(head);
         if (pts[0].ok && env * galaxynearfade(pts[0].z) > .01)
             galaxyrenderglow(GalaxyCool, pts[0], 10, MIN(1, .9 * env) * galaxynearfade(pts[0].z), galaxydepthblur(pts[0].z), .7, .2);
@@ -1269,16 +1259,15 @@ galaxytext(XftFont *font, double x, double y, const char *text, double a, int ce
     }
 }
 
-/* 脉冲星: 一个空 tag 的核心 (没有空的就选最外圈的) 发出两道相反的光柱, 绕倾斜的轴每 14s 扫一圈, 扫向镜头时变亮 */
+/* 脉冲星: 一个空 tag 的核心 (没有空的就选最外圈的) 沿磁轴喷出两股相反的粒子流, 绕倾斜的轴每 14s 扫一圈, 扫向镜头时闪亮 */
 static void
 galaxyrenderpulsar(double f)
 {
     GalaxyScene *r = &galaxyscene;
     GalaxyCore *g;
-    GalaxyProj pts[5];
     GalaxyVec axis, u, v, dir, tocam;
-    double t = r->motion * r->tscale, th, align, a, L = .32 * r->vw, w;
-    int i, j, side;
+    double t = r->motion * r->tscale, th, align, L = .32 * r->vw;
+    int i, side;
 
     if (r->pulsar == -1) {
         r->pulsar = -2;
@@ -1303,24 +1292,22 @@ galaxyrenderpulsar(double f)
     th = 2 * GALAXYPI * t / 14;
     dir = galaxyadd(galaxyscale(axis, .5), galaxyscale(galaxyadd(galaxyscale(u, cos(th)), galaxyscale(v, sin(th))), .866));
     tocam = galaxynormalize(galaxysub(r->cam.pos, g->pos));
-    galaxybandcolor(galaxytintrgb(GalaxyCyan, .5));     /* 脉冲星光柱: 青色 */
+    /* 两股粒子喷流沿磁轴向外喷出 (青 -> 蓝紫), 随轴刚性地扫动, 像灯塔的光束; 越远越淡越散 */
+    {
+        static const double cyan[3] = {.55, .95, 1}, violet[3] = {.5, .4, 1};
+        GalaxyVec u2 = galaxynormalize(galaxycross(dir, galaxyv(0, 1, 0))), v2 = galaxycross(dir, u2);
+        GalaxyMat jb = {{{u2.x, v2.x, dir.x}, {u2.y, v2.y, dir.y}, {u2.z, v2.z, dir.z}}};
+
+        galaxyglemitter(1, g->pos, &jb, g->pos, L / 1.6, .07, 1.6, 0, t, cyan, violet, .3 * f * g->alpha, .9 * r->starscale,
+                4000, 3.3);
+    }
     for (side = 0; side < 2; side++) {
         align = MAX(0, galaxydot(dir, tocam) * (side ? -1 : 1));
-        a = f * g->alpha * (.10 + .5 * pow(align, 6)) * galaxynearfade(g->p.z);
-        for (j = 0; j < 5; j++)
-            pts[j] = galaxyproject(galaxyadd(g->pos, galaxyscale(dir, (side ? -1 : 1) * L * j / 4)));
-        for (j = 0; j < 4; j++)
-            if (pts[j].ok && pts[j + 1].ok) {
-                w = (1 + 1.6 * j) * pts[j].scale;
-                galaxyband(&pts[j], &pts[j + 1], a * (1 - j / 4.5), MAX(.6, 1.2 * w));
-                galaxyband(&pts[j], &pts[j + 1], .35 * a * (1 - j / 4.5), MAX(2, 4.5 * w));
-            }
         if (align > .7)
             galaxysprite(GalaxySpike, GalaxyCyan, g->p.x, g->p.y, MIN(240, 160 * MAX(.5, g->p.scale) * align),
                     MIN(1, f * pow(align, 8)) * galaxynearfade(g->p.z));
     }
     /* 核心本身按 0.9s 的周期脉动 */
-    galaxybandwhite();
     galaxysprite(GalaxyHalo, GalaxyCyan, g->p.x, g->p.y, MAX(6, 26 * g->p.scale * r->starscale),
             f * g->alpha * .5 * pow(.5 + .5 * cos(2 * GALAXYPI * t / .9), 4) * galaxynearfade(g->p.z));
 }
@@ -1423,7 +1410,7 @@ galaxyrenderevents(void)
         tail = galaxyscale(galaxynormalize(galaxyadd(galaxynormalize(head), galaxyapply(r->cam.rot, galaxyv(.6, -.3, 0)))),
                 .22 * r->vw);
         env = f * galaxysmoothstep(u / .08) * (1 - galaxysmoothstep((u - .85) / .15));
-        galaxycomettails(head, tail, galaxylen(C) > 1 ? galaxynormalize(C) : galaxynormalize(tail), env * 1.6, 1.5);
+        galaxycomettails(head, tail, galaxylen(C) > 1 ? galaxynormalize(C) : galaxynormalize(tail), env * 1.6, 1.5, 41.3 + i);
         for (j = galaxyemitcount(140 * env); j > 0; j--)
             galaxyemit(galaxyadd(head, galaxyprandvec(.005 * r->cam.focal)),
                     galaxyadd(galaxyscale(galaxynormalize(tail), r->cam.focal * (.05 + .1 * galaxyprand())), galaxyprandvec(.012 * r->cam.focal)),
