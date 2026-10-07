@@ -1694,7 +1694,7 @@ galaxy(const Arg *arg)
     r->lasthour = r->pulsar = -1;
     r->dragstar = r->dragarm = -1;
     r->calm = 1;
-    r->meteork = -1;
+    r->meteork = r->farcometk = -1;
     if ((env = getenv("GALAXY_FAKETIME")) && atof(env) > 0)     /* 测试: 确定性时钟, 每帧前进 1/帧率 秒 */
         r->fakestep = 1 / atof(env);
     for (env = getenv("GALAXY_DUMP"); env && *env && r->ndump < (int)LENGTH(r->dumpt); env = strchr(env, ',') ? strchr(env, ',') + 1 : "")

@@ -1050,6 +1050,22 @@ galaxyupdateholdfx(double motion)
                     galaxyprand() < .6 ? GalaxyCool : GalaxyGold, .45, 0, 1);
         }
     }
+    /* 远处彗星: 约每 45s 一次, 16s 内从画面一侧外慢慢飘到另一侧 (视口上方或下方, 不经过中央), 前后 2s 淡入淡出 */
+    r->farcomet[3] = 0;
+    if (galaxycycle(motion, 25, 45, &k, &local) && local < 16) {
+        double u = local / 16, top = galaxyhash(k * 41 + 1) < .5, ltr = galaxyhash(k * 41 + 2) < .5, hh = (double)r->vh / MAX(1, r->vw);
+        double x = ltr ? -.08 + 1.16 * u : 1.08 - 1.16 * u, tilt = (top ? 1 : -1) * .05;
+
+        if (k != r->farcometk) {
+            r->farcometk = k;
+            if (r->log && r->mode == GalaxyOrbit)
+                fprintf(r->log, "galaxy far comet at %.1fs\n", motion);
+        }
+        r->farcomet[0] = (float)x;
+        r->farcomet[1] = (float)(hh * (top ? .15 : .85) + (u - .5) * tilt * (ltr ? 1 : -1));
+        r->farcomet[2] = (float)atan2(tilt / 1.16 * (ltr ? 1 : -1), ltr ? 1 : -1);
+        r->farcomet[3] = (float)(f * galaxysmoothstep(local / 2) * (1 - galaxysmoothstep((local - 14) / 2)));
+    }
     /* 零星流星: 每 3~8s 一颗 (安静模式间隔加倍), 从视口外圈沿切线略朝外划过, 不经过中央; 细、淡、在最远处 */
     if (f > .3 && galaxynow() >= r->meteorat) {
         double a = 2 * GALAXYPI * galaxyprand(), tx = -sin(a), ty = cos(a), dx, dy, len, sp = r->vw * (.35 + .15 * galaxyprand());

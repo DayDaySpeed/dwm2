@@ -153,7 +153,7 @@ static const char *galaxyglfsnebula =
     "#version 330 core\n"
     "in vec2 uv; out vec4 o;\n"
     "uniform vec2 screen, cam, seed; uniform vec4 view; uniform float t, k, diag, still; uniform int oct;\n"
-    "uniform vec3 c0, c1, c2; uniform vec4 fg0[4], fg1[4], fs[6]; uniform vec3 fc[3];\n"
+    "uniform vec3 c0, c1, c2; uniform vec4 fg0[4], fg1[4], fs[6], comet; uniform vec3 fc[3];\n"
     "float h(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }\n"
     "float n(vec2 p) {\n"
     "  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);\n"
@@ -164,6 +164,9 @@ static const char *galaxyglfsnebula =
     "  for (int i = 0; i < 6; i++) { if (i >= oct) break; v += a * n(p); p = p * 2.03 + vec2(17.1, 9.2); a *= .5; }\n"
     "  return v;\n"
     "}\n"
+    "";
+/* 着色器源码分两段 (C99 只保证 4095 字节以内的字符串字面量), 建程序时拼起来 */
+static const char *galaxyglfsnebula2 =
     "void main() {\n"
     "  vec2 px = vec2(uv.x * screen.x, (1.0 - uv.y) * screen.y), q = (px - view.xy) / view.z;\n"
     "  if (q.x < 0.0 || q.y < 0.0 || q.x > 1.0 || q.y > view.w / view.z) discard;\n"
@@ -225,6 +228,15 @@ static const char *galaxyglfsnebula =
     "  }\n"
     "  col *= k;\n"
     /* 远景元素只跟深空的淡入淡出走 (k / .35), 不再乘星云本身的强度 */
+    /* 远处彗星: 头部一个小光点带淡晕, 彗尾沿运动反方向延伸约 12% 视口宽, 逐渐张开、指数变淡 */
+    "  if (comet.w > .001) {\n"
+    "    vec2 dv = pq - comet.xy, dir = vec2(cos(comet.z), sin(comet.z));\n"
+    "    float al = dot(dv, -dir), pr = dot(dv, vec2(-dir.y, dir.x)), sg = .002 + max(al, 0.0) * .08;\n"
+    "    float tail = al > 0.0 ? exp(-al / .042) * exp(-pr * pr / (sg * sg)) * (1.0 - smoothstep(.1, .14, al)) : 0.0;\n"
+    "    float d2 = dot(dv, dv) * view.z * view.z;\n"
+    "    float head = exp(-d2 / 16.0) + .3 * exp(-d2 / 400.0);\n"
+    "    far += mix(vec3(.8, .92, 1.0), grey, .2) * (head * .35 + tail * .2) * comet.w / max(cd, .01);\n"
+    "  }\n"
     "  col += far * edge * cd * (k / .35);\n"
     "  o = vec4(col, 0.0);\n"
     "}\n";
@@ -479,7 +491,17 @@ galaxyglobjects(void)
     galaxygl.progup = galaxyglprogram(galaxyglvsfull, galaxyglfsup);
     galaxygl.progcomp = galaxyglprogram(galaxyglvsfull, galaxyglfscomp);
     galaxygl.progprobe = galaxyglprogram(galaxyglvsfull, galaxyglfsprobe);
-    galaxygl.prognebula = galaxyglprogram(galaxyglvsfull, galaxyglfsnebula);
+    {
+        size_t na = strlen(galaxyglfsnebula), nb = strlen(galaxyglfsnebula2);
+        char *src = malloc(na + nb + 1);
+
+        if (src) {
+            memcpy(src, galaxyglfsnebula, na);
+            memcpy(src + na, galaxyglfsnebula2, nb + 1);
+            galaxygl.prognebula = galaxyglprogram(galaxyglvsfull, src);
+            free(src);
+        }
+    }
     galaxygl.progcopy = galaxyglprogram(galaxyglvsfull, galaxyglfscopy);
     galaxygl.progcard = galaxyglprogram(galaxyglvscard, galaxyglfscard);
     for (i = 0; i < (int)LENGTH(progs); i++)
@@ -852,6 +874,7 @@ galaxyglnebula(double k, double t, int oct, const double seed[2], int still)
         glUniform4fv(glGetUniformLocation(p, "fg1"), 4, &g1[0][0]);
         glUniform3fv(glGetUniformLocation(p, "fc"), 3, &fc[0][0]);
         glUniform4fv(glGetUniformLocation(p, "fs"), 6, &r->fars[0][0]);
+        glUniform4fv(glGetUniformLocation(p, "comet"), 1, r->farcomet);
     }
     glUniform3fv(glGetUniformLocation(p, "c0"), 1, c[0]);
     glUniform3fv(glGetUniformLocation(p, "c1"), 1, c[1]);
