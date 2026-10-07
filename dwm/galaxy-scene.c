@@ -1032,7 +1032,7 @@ galaxyupdateholdfx(double motion)
         if (r->brj >= 0 && local > 1.15)
             r->galaxies[r->brj].bridge = .7 * f * galaxyflash(local - .9, .4, 2.5);
     }
-    /* 极光帘幕: 约每 26s 一次, 6s 内亮起、摆动、淡出 (画在星云着色器里) */
+    /* 极光飘带: 约每 26s 一次, 6s 内沿银河带亮起、起伏、淡出 (画在星云着色器里) */
     if (galaxycycle(motion, 13, 26, &k, &local) && local < 6) {
         if (k != r->aurorak) {
             r->aurorak = k;
