@@ -346,6 +346,9 @@ galaxyxerror(Display *d, XErrorEvent *ee)
             || ee->request_code == X_GetWindowAttributes || ee->request_code == X_QueryTree
             || ee->request_code == X_GrabPointer || ee->request_code == X_GrabKeyboard) {
         galaxyscene.errors++;
+        if (galaxyscene.log)    /* 记下是哪个请求出的错, 便于排查 */
+            fprintf(galaxyscene.log, "galaxy xerror: code %d request %d.%d resource 0x%lx\n", ee->error_code,
+                    ee->request_code, ee->minor_code, ee->resourceid);
         return 0;
     }
     return xerror(d, ee);

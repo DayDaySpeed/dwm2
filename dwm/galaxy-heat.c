@@ -18,6 +18,8 @@ galaxyheatpids(void)
     for (i = 0; i < r->nstars; i++) {
         p = NULL;
         r->stars[i].pid = 0;
+        if (r->stars[i].died || !r->stars[i].valid)    /* 已关闭 (化作流星) 的窗口: 读属性会 BadWindow */
+            continue;
         if (XGetWindowProperty(dpy, r->stars[i].win, pidatom, 0, 1, False, XA_CARDINAL,
                 &type, &format, &n, &after, &p) == Success && p) {
             if (n == 1 && format == 32)
