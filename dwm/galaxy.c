@@ -456,18 +456,6 @@ galaxytintrgb(int tint, double sat)
         | (unsigned int)(galaxyclamp(c[1]) * 255 + .5) << 8 | (unsigned int)(galaxyclamp(c[2]) * 255 + .5);
 }
 
-/* 两个打包颜色按 t 混合 (超新星冲击环蓝紫 -> 橙) */
-static unsigned int
-galaxymixrgb(unsigned int a, unsigned int b, double t)
-{
-    unsigned int out = 0xff000000u;
-    int k;
-
-    t = galaxyclamp(t);
-    for (k = 0; k < 24; k += 8)
-        out |= (unsigned int)((a >> k & 255) * (1 - t) + (b >> k & 255) * t + .5) << k;
-    return out;
-}
 static double galaxymix(double a, double b, double t) { return a + (b - a) * t; }
 static double galaxyphase(double t, double a, double b) { return galaxyclamp((t - a) / (b - a)); }
 static double galaxyeaseincubic(double x) { x = galaxyclamp(x); return x * x * x; }
