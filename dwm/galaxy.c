@@ -289,6 +289,9 @@ typedef struct {
     double adapt, adaptat;      /* 曝光适应: 平滑后的光层亮度 / 上次更新的时刻 */
     int meteork;                /* 流星雨: 当前是第几次 */
     double meteorat;            /* 下一颗零星流星的时刻 */
+    /* 远景 (星云着色器里画, 每次按 nebseed 生成, 坐标是按视口宽归一化的 q): 远方星系 x y 半径 朝向 / 倾斜 类型 亮度 相位,
+     * 星团 x y 半径, 亮星 x y 闪烁周期 相位 */
+    float farg[4][8], farc[3][3], fars[6][4];
     double lumsum, lummax, expomin;   /* 本段统计 (日志): 光层亮度的和 / 最大值, 最低曝光 */
     int trace;                  /* 环境变量 GALAXY_TRACE: 每帧把镜头参数写进日志 */
     int saver;                  /* 屏保模式 (无操作时由 bin/galaxysaver.py 触发): 任何输入都回到桌面 */

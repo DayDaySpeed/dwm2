@@ -349,3 +349,50 @@ galaxyspaceprewarm(void)
     }
     memset(r, 0, sizeof *r);
 }
+
+/* 远景元素的位置: 离画面中心够远 (不抢焦点)、离边缘有一点距离、彼此不挤在一起; 按本次的星云种子生成 */
+static void
+galaxyfarinit(void)
+{
+    GalaxyScene *r = &galaxyscene;
+    double hh = (double)r->vh / MAX(1, r->vw), pts[13][2], x, y, s = 1 / 2560.0;   /* s: 2560 宽屏幕上的 1 像素 (q 单位) */
+    unsigned int seed = (unsigned int)(r->nebseed[0] * 1000 + r->nebseed[1] * 37);
+    int i, j, n = 0, tries, ok;
+
+    for (i = 0; i < 13; i++) {
+        for (tries = 0; tries < 60; tries++) {
+            x = .06 + .88 * galaxyhash(seed + i * 131 + tries * 7);
+            y = hh * (.08 + .84 * galaxyhash(seed + i * 131 + tries * 7 + 3));
+            ok = hypot(x - .5, y - hh * .5) > .3;
+            for (j = 0; j < n && ok; j++)
+                ok = hypot(x - pts[j][0], y - pts[j][1]) > .1;
+            if (ok)
+                break;
+        }
+        pts[n][0] = x;
+        pts[n][1] = y;
+        n++;
+    }
+    for (i = 0; i < 4; i++) {     /* 远方星系 */
+        float *g = r->farg[i];
+        g[0] = pts[i][0];
+        g[1] = pts[i][1];
+        g[2] = (18 + 27 * galaxyhash(seed + i * 17 + 1)) * s;
+        g[3] = 2 * GALAXYPI * galaxyhash(seed + i * 17 + 2);
+        g[4] = .35 + .65 * galaxyhash(seed + i * 17 + 3);
+        g[5] = galaxyhash(seed + i * 17 + 4) < .67 ? 0 : 1;
+        g[6] = .07 + .05 * galaxyhash(seed + i * 17 + 5);
+        g[7] = 2 * GALAXYPI * galaxyhash(seed + i * 17 + 6);
+    }
+    for (i = 0; i < 3; i++) {     /* 星团 */
+        r->farc[i][0] = pts[4 + i][0];
+        r->farc[i][1] = pts[4 + i][1];
+        r->farc[i][2] = (40 + 50 * galaxyhash(seed + i * 23 + 9)) * s;
+    }
+    for (i = 0; i < 6; i++) {     /* 偶尔闪一下的亮星 */
+        r->fars[i][0] = pts[7 + i][0];
+        r->fars[i][1] = pts[7 + i][1];
+        r->fars[i][2] = 5 + 6 * galaxyhash(seed + i * 29 + 11);
+        r->fars[i][3] = 2 * GALAXYPI * galaxyhash(seed + i * 29 + 12);
+    }
+}

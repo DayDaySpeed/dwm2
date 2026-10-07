@@ -153,7 +153,7 @@ static const char *galaxyglfsnebula =
     "#version 330 core\n"
     "in vec2 uv; out vec4 o;\n"
     "uniform vec2 screen, cam, seed; uniform vec4 view; uniform float t, k, diag, still; uniform int oct;\n"
-    "uniform vec3 c0, c1, c2;\n"
+    "uniform vec3 c0, c1, c2; uniform vec4 fg0[4], fg1[4], fs[6]; uniform vec3 fc[3];\n"
     "float h(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }\n"
     "float n(vec2 p) {\n"
     "  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);\n"
@@ -187,16 +187,45 @@ static const char *galaxyglfsnebula =
     "    col += hue * m * (l == 0 ? .4 : .25);\n"
     "  }\n"
     "  col /= 1.0 + 1.5 * dot(col, vec3(.3, .59, .11));\n"
+    /* 远景元素 (视差只有星云远层的一半): 远方星系 (旋涡: 核心 + 两条对数螺旋臂, 极慢自转; 椭圆: 柔和光斑) */
+    "  vec2 pq = q - cam * .03; vec3 far = vec3(0.0); float cl = 0.0;\n"
+    "  for (int i = 0; i < 4; i++) {\n"
+    "    vec2 dv = pq - fg0[i].xy; float sz = fg0[i].z;\n"
+    "    if (dot(dv, dv) > 9.0 * sz * sz) continue;\n"
+    "    float ca = cos(fg0[i].w), sa = sin(fg0[i].w);\n"
+    "    vec2 lp = vec2(ca * dv.x + sa * dv.y, (-sa * dv.x + ca * dv.y) / fg1[i].x) / sz;\n"
+    "    float rr = length(lp), th = atan(lp.y, lp.x), core = exp(-rr * rr * 18.0), g;\n"
+    "    if (fg1[i].y < .5) {\n"
+    "      float arm = .5 + .5 * cos(2.0 * th - 4.0 * log(rr + .05) + fg1[i].w + t * .02);\n"
+    "      g = core * .9 + exp(-rr * 2.6) * (.15 + .55 * arm * arm) * (1.0 - smoothstep(.3, 1.4, rr));\n"
+    "    } else g = exp(-rr * rr * 2.2) * .8 + core * .5;\n"
+    "    far += mix(mix(vec3(1.0, .88, .7), vec3(.6, .72, 1.0), smoothstep(0.0, .8, rr)), grey, .3) * g * fg1[i].z;\n"
+    "  }\n"
+    /* 星团: 一团很淡的光晕, 范围内小星点更密 (见下面的闪烁星点) */
+    "  for (int i = 0; i < 3; i++) {\n"
+    "    vec2 dv = pq - fc[i].xy; float e = exp(-dot(dv, dv) / (fc[i].z * fc[i].z));\n"
+    "    cl = max(cl, e); far += vec3(.75, .8, .95) * e * .07;\n"
+    "  }\n"
+    /* 亮星: 平时一个小亮点, 偶尔短暂闪一下, 闪时有很小的十字星芒 */
+    "  for (int i = 0; i < 6; i++) {\n"
+    "    vec2 dv = (pq - fs[i].xy) * view.z; float d2 = dot(dv, dv);\n"
+    "    if (d2 > 900.0) continue;\n"
+    "    float fl = still > .5 ? 0.0 : pow(max(0.0, sin(6.2832 * t / fs[i].z + fs[i].w)), 40.0);\n"
+    "    float sp = exp(-abs(dv.y) * 1.2) * exp(-abs(dv.x) / (10.0 + 8.0 * fl)) + exp(-abs(dv.x) * 1.2) * exp(-abs(dv.y) / (10.0 + 8.0 * fl));\n"
+    "    far += vec3(.9, .94, 1.0) * (exp(-d2 / 2.2) * .25 * (1.0 + fl) + sp * .5 * fl);\n"
+    "  }\n"
     "  col *= edge * cd;\n"
     /* 闪烁星点: 每 22px 一格, 约 4% 的格子里有一颗, 亮度按各自的相位慢慢起伏 */
     "  vec2 cell = floor((px + cam * 60.0) / 22.0), fp = fract((px + cam * 60.0) / 22.0);\n"
     "  float r = h(cell);\n"
-    "  if (r < .04) {\n"
+    "  if (r < .04 + .5 * cl) {\n"
     "    vec2 sp = vec2(h(cell + 3.1), h(cell + 7.3)) * .7 + .15;\n"
     "    float tw = still > .5 ? .8 : .55 + .45 * sin(t * (1.1 + 2.5 * h(cell + 1.7)) + 6.28 * h(cell + 9.1));\n"
     "    col += mix(vec3(.75, .85, 1.0), vec3(1.0, .88, .7), h(cell + 5.5)) * exp(-dot(fp - sp, fp - sp) * 22.0 * 22.0 / 1.6) * tw * .3 * cd;\n"
     "  }\n"
     "  col *= k;\n"
+    /* 远景元素只跟深空的淡入淡出走 (k / .35), 不再乘星云本身的强度 */
+    "  col += far * edge * cd * (k / .35);\n"
     "  o = vec4(col, 0.0);\n"
     "}\n";
 
@@ -809,6 +838,21 @@ galaxyglnebula(double k, double t, int oct, const double seed[2], int still)
     glUniform1i(glGetUniformLocation(p, "oct"), oct);
     glUniform2f(glGetUniformLocation(p, "seed"), (float)seed[0], (float)seed[1]);
     glUniform1f(glGetUniformLocation(p, "still"), still ? 1 : 0);
+    {   /* 远景元素 (galaxyfarinit 生成) */
+        float g0[4][4], g1[4][4], fc[3][3];
+        int i;
+
+        for (i = 0; i < 4; i++) {
+            memcpy(g0[i], r->farg[i], sizeof g0[i]);
+            memcpy(g1[i], r->farg[i] + 4, sizeof g1[i]);
+        }
+        for (i = 0; i < 3; i++)
+            memcpy(fc[i], r->farc[i], sizeof fc[i]);
+        glUniform4fv(glGetUniformLocation(p, "fg0"), 4, &g0[0][0]);
+        glUniform4fv(glGetUniformLocation(p, "fg1"), 4, &g1[0][0]);
+        glUniform3fv(glGetUniformLocation(p, "fc"), 3, &fc[0][0]);
+        glUniform4fv(glGetUniformLocation(p, "fs"), 6, &r->fars[0][0]);
+    }
     glUniform3fv(glGetUniformLocation(p, "c0"), 1, c[0]);
     glUniform3fv(glGetUniformLocation(p, "c1"), 1, c[1]);
     glUniform3fv(glGetUniformLocation(p, "c2"), 1, c[2]);
