@@ -1122,7 +1122,7 @@ galaxyupdatescene(double stage, double motion, double dt)
     galaxyupdatestars(stage, motion, dt);
     for (i = 0; i < r->ndust; i++)
         r->dust[i].p = galaxyproject(galaxydustat(&r->dust[i], motion));
-    /* 坍缩: 整体淡回壁纸的部分停在冲击波之前, 改由冲击波圆形揭开 (见 galaxypresent); 没有 GL 壁纸纹理时仍整体淡入 */
+    /* 坍缩: 整体淡回壁纸的部分停在 stage 5 之前, 之后由收尾的 wfade 淡成壁纸 (见 galaxyrender); 没有 GL 壁纸纹理时仍按原曲线淡入 */
     fs = r->mode == GalaxyCollapse && galaxygl.gwall ? MIN(stage, 5.0) : stage;
     r->bright = GALAXYCURVE(galaxybright, fs);
     r->space = GALAXYCURVE(galaxyspacekeys, fs);

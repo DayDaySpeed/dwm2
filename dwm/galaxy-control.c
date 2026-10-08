@@ -504,6 +504,8 @@ galaxyfps(double now)
     GalaxyScene *r = &galaxyscene;
     double orbit = r->refresh > 1 ? r->refresh : GALAXYORBITFPS;
 
+    if (r->mode == GalaxyCollapse)    /* Esc 收尾按显示器刷新率出帧, 更顺滑 */
+        return MAX(GALAXYFPS, orbit);
     if (r->mode != GalaxyOrbit)
         return GALAXYFPS;
     if (r->quiet || r->saver)
