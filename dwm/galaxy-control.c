@@ -1184,7 +1184,7 @@ galaxytick(void)
         r->motion = r->scene;
         r->exitspin = galaxyexitangle(u);
         r->beatfade = MIN(r->beatfade, 1 - galaxysmoothstep(u));   /* 开场节拍 (iclock 已冻结) 用 1s 平滑淡出 */
-        if (u >= MAX(GALAXYCOLLAPSE, galaxygl.gwall ? GALAXYSHOCK + GALAXYSHOCKT + GALAXYAFTER : 0)) {
+        if (u >= (galaxygl.gwall ? GALAXYVORTEX : GALAXYCOLLAPSE)) {
             galaxyfinish();
             return;
         }

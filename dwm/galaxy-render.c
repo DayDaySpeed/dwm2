@@ -412,6 +412,10 @@ galaxyrenderwindow(GalaxyStar *s, double vis, double tint, double light)
     Picture mask;
     int i, lvl, x0, y0, x1, y1, cx, cy, tiled, aligned, pixelcopy, drawn, opaque;
 
+    if (r->mode == GalaxyCollapse) {   /* Esc 收尾: 粒子转成旋涡时卡片淡出 */
+        vis *= 1 - r->vform;
+        tint *= 1 - r->vform;
+    }
     if (!s->snap || (vis < .004 && tint < .004))
         return;
     hw = s->w * .5 * s->size * s->kw;
@@ -639,7 +643,7 @@ galaxyrendersun(void)
             galaxyglstarball(c, &r->world, (i ? 14 : 17) * 2.4 * r->starscale * w * (1 + .2 * e), 1.1, rgb,
                     .1 * MIN(1, a) * (1 + .5 * e), r->starscale, (int)(2200 * (r->quiet ? .5 : 1)), i ? 77.1 : 53.9);
             galaxysprite(GalaxyHalo, i ? GalaxyWarm : GalaxyCool, p.x, p.y, MIN(160, (i ? 14 : 17) * 6 * p.scale),
-                    .12 * MIN(1, a) * (1 + .5 * e) * galaxynearfade(p.z));
+                    .12 * MIN(1, a) * (1 + .5 * e) * galaxynearfade(p.z) * (1 - r->vform));
         }
     }
 }
@@ -765,7 +769,7 @@ galaxyrenderitems(void)
                         .09 * k * (1 + .6 * MIN(2, a) + .5 * g->hover), r->starscale,
                         (int)(2600 * (r->quiet ? .5 : 1)), 31.7 * (g->tag + 1));
                 galaxysprite(GalaxyHalo, GALAXYTAGTINT(g->tag), g->p.x, g->p.y, MIN(160, g->size * 6 * g->p.scale),
-                        .12 * k * (1 + .5 * MIN(2, a)) * galaxynearfade(g->p.z));
+                        .12 * k * (1 + .5 * MIN(2, a)) * galaxynearfade(g->p.z) * (1 - r->vform));
             }
             if (g->alpha > .2) {
                 g->hx = g->p.x;
@@ -1503,16 +1507,17 @@ galaxyrendergpuparticles(void)
 
     if (r->quiet)
         k *= .5;
-    /* Esc 收尾: 所有 GPU 粒子 (尾迹 / 吸积盘 / 粒子恒星 / 星尘) 螺旋吸进中心, 再随冲击波炸开 */
+    /* Esc 收尾: 所有 GPU 粒子 (尾迹 / 吸积盘 / 粒子恒星 / 星尘) 转到正对镜头的平面成为一个铺满屏幕的多臂旋涡,
+     * 越转越快、旋臂越卷越紧并收向中心, 底层同时淡成壁纸 (壁纸从旋臂缝隙里透出来), 最后收成一点淡去 */
     if (r->mode == GalaxyCollapse) {
-        double ext = 0, u = r->celapsed;
+        double ext = 0, u = r->celapsed, sp = galaxyphase(u, .3, GALAXYVORTEX);
 
         for (i = 0; i < r->ntags; i++)
             ext = MAX(ext, galaxylen(r->galaxies[i].pos) + r->galaxies[i].size * 7);
-        /* 吸入在冲击波出现的那一刻刚好收拢 (越到最后越快), 冲击波一出现就开始爆发 (起步最快), 中间不留空档 */
-        galaxyglcollapsefx(pow(galaxyphase(u, GALAXYEXITSTART - .2, GALAXYSHOCK - .05), 2.2),
-                1 - pow(1 - galaxyphase(u, GALAXYSHOCK - .05, GALAXYSHOCK + GALAXYSHOCKT + GALAXYAFTER), 2),
-                galaxyapply(r->world, galaxyv(0, 1, 0)), MAX(1, ext) * 2.6 * (r->gentle ? .5 : 1));
+        r->vform = galaxysmoothstep(galaxyphase(u, .3, 1.2));
+        galaxyglcollapsefx(r->vform, (r->gentle ? 4 : 9) * sp * sp, pow(galaxyphase(u, 1.5, GALAXYVORTEX), 1.3),
+                galaxyapply(r->world, galaxyv(0, 1, 0)), MAX(1, ext), .5 * hypot(r->vw, r->vh) * .95,
+                galaxygl.gwall ? galaxysmoothstep(galaxyphase(u, 1.7, 2.75)) : 0);
     }
     /* 涟漪: 一圈粒子波在盘面上扩散, 同时把经过处的吸积盘 / 拖尾 / 星尘托起并点亮 */
     if (r->rippleamp > .003 && r->mode != GalaxyReturn) {
@@ -1577,7 +1582,8 @@ galaxyrendergpuparticles(void)
         lcol[nl][2] = .75 * r->sunalpha;
         nl++;
     }
-    galaxygldust(&r->world, extent * 1.25, lights, lcol, nl, .45 * (r->mode == GalaxyCollapse ? 1 : r->dustfade), .7, (int)(16000 * k), 91.7);
+    galaxygldust(&r->world, extent * 1.25, lights, lcol, nl, .45 * (r->mode == GalaxyCollapse ? 1 : r->dustfade), .7,
+            (int)(16000 * k + (r->mode == GalaxyCollapse ? 64000 * r->vform : 0)), 91.7);   /* 收尾: 星尘加到约 8 万颗, 组成旋涡 */
 }
 
 /* 更新并画出所有粒子: 透视投影, 按年龄淡出、缩小, 交给 GPU (按深度被卡片挡住) */
@@ -2055,9 +2061,9 @@ static void
 galaxypresent(void)
 {
     GalaxyScene *r = &galaxyscene;
-    double q = r->mode == GalaxyOrbit ? r->qualityvisual : 0, u, cx, cy, far, sp, lens, sr = 0, sw = 1, sk = 0, glow;
+    double q = r->mode == GalaxyOrbit ? r->qualityvisual : 0, u, glow;
     double now = galaxynow(), dt, expo, rays;
-    GalaxyProj p, sun;
+    GalaxyProj sun;
 
     /* 曝光适应: 光层变亮时约 0.12s 跟上, 变暗时约 0.8s 恢复; 曝光只乘在光上 (底层不变), 大闪光后画面短暂压暗 */
     dt = r->adaptat > 0 ? MAX(0, MIN(.1, now - r->adaptat)) : 0;
@@ -2072,33 +2078,14 @@ galaxypresent(void)
     rays = sun.ok && r->mode != GalaxyReturn ? .12 * r->sunalpha * (1 + .5 * r->sunpulse) : 0;
     galaxyglpostfx(sun.x, sun.y, rays, expo);
 
-    /* Esc 收尾: 收束时引力透镜把背景拽向中心; 然后中心爆出冲击波, 圆内露出壁纸, 余晖慢慢散去 */
+    /* Esc 收尾: 壁纸从旋涡的缝隙里透出来 (galaxyrendergpuparticles 里设好淡入程度); 动态壁纸刷新正在播放的画面.
+     * 旋涡收成一点时中心只留一点很小的柔光 */
     if (r->mode == GalaxyCollapse && galaxygl.gwall) {
         u = r->celapsed;
-        p = galaxyproject(galaxyv(0, 0, 0));
-        cx = p.ok ? p.x : r->vx + r->vw * .5;
-        cy = p.ok ? p.y : r->vy + r->vh * .5;
-        lens = .35 * galaxysmoothstep(galaxyphase(u, GALAXYEXITSTART, GALAXYSHOCK))
-            * (1 - galaxysmoothstep(galaxyphase(u, GALAXYSHOCK, GALAXYSHOCK + .25)));
-        glow = .6 * galaxysmoothstep(galaxyphase(u, GALAXYSHOCK - .08, GALAXYSHOCK))
-            * pow(1 - galaxyphase(u, GALAXYSHOCK, GALAXYSHOCK + GALAXYSHOCKT + GALAXYAFTER), 2);
-        if (u >= GALAXYSHOCK) {
-            sp = galaxyphase(u, GALAXYSHOCK, GALAXYSHOCK + GALAXYSHOCKT);
-            far = 1.35 * hypot(MAX(cx - r->vx, r->vx + r->vw - cx), MAX(cy - r->vy, r->vy + r->vh - cy)) + 160;   /* 螺旋边界最窄处也要扫过四角 */
-            sr = far * galaxyeaseinoutcubic(sp);   /* 旋涡边界匀匀地转着展开, 看得出螺旋 */
-            sw = 30 + 90 * sp;
-            sk = 1.1 * pow(1 - sp, 1.5);
-            if (r->live)    /* 动态壁纸: 揭开的是正在播放的画面 (取不到离屏画面时用进入前的截图) */
-                galaxyreadlive(r->wallpaper);
-        }
-        if (r->gentle) {   /* 减弱动效: 不扭曲背景, 闪光和光环只留四分之一 */
-            lens = 0;
-            glow *= .25;
-            sk *= .25;
-        }
-        galaxylensflare(cx, cy, .8 * glow);
-        galaxyglexitfx(cx, cy, lens, .95 * MAX(1, MIN(MIN(cx - r->vx, r->vx + r->vw - cx), MIN(cy - r->vy, r->vy + r->vh - cy))),
-                sr, sw, sk, u >= GALAXYSHOCK, glow);
+        if (r->live && u > 1.2)
+            galaxyreadlive(r->wallpaper);
+        glow = .25 * galaxysmoothstep(galaxyphase(u, 2.2, 2.7)) * (1 - galaxysmoothstep(galaxyphase(u, 2.7, GALAXYVORTEX)));
+        galaxyglexitfx(r->vx + r->vw * .5, r->vy + r->vh * .5, 0, 1, 0, 1, 0, 0, glow * (r->gentle ? .5 : 1));
     }
     galaxyglpresent(.6, r->gentle ? 0 : 1 - galaxyclamp(q - 1), GALAXYBLOOM - (int)lround(galaxyclamp(q / 3) * 3));   /* 减弱动效: 不加色差 */
 }

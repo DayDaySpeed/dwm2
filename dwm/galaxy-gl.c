@@ -44,7 +44,8 @@ static struct {
     GLXPixmap gback, gfront, gwall;
     float lens[4], shock[4], glow;    /* 收尾特效 (每帧 galaxyglframe 清零, 坍缩时 galaxyglexitfx 设置) */
     float rays[3], expo;
-    float pull, burst, bext, axis[3];  /* Esc 收尾时粒子的吸入 / 爆发 (每帧清零, galaxyglcollapsefx 设置) */
+    float vform, vspin, vcol, vscale, vrad, axis[3], vcen[3], crt[3], cup[3], cfw[3];  /* Esc 收尾的旋涡 (每帧清零, galaxyglcollapsefx 设置) */
+    float wfade;                      /* Esc 收尾: 底层淡成壁纸的程度 (每帧清零) */
     float rip[4], ripn[3];             /* 涟漪场: 半径 / 强度 / 宽度 (世界), 盘面法线 (每帧清零, galaxyglripple 设置) */              /* 体积光束 (光源像素位置 + 强度) / 光层曝光 (每帧清零, galaxyglpostfx 设置) */
     GLuint pbo[3];                    /* 读回最小一级泛光 (曝光适应), 轮流使用, 晚两帧读 */
     int pboi, pbocap, pbon_[3];
@@ -295,7 +296,7 @@ static const char *galaxyglvspart =
     "uniform mat3 view, plane; uniform vec3 campos, cpos, tint; uniform vec2 center, screen;\n"
     "uniform float focal, cnear, cfar, fnear, time, mode, seed, alpha, psize, extent; uniform vec4 disk;\n"
     "uniform vec4 lights[10]; uniform vec3 lcol[10]; uniform int nl; uniform vec4 trail[48]; uniform int ntrail; uniform float mclock, tlen;\n"
-    "uniform float pull, burst, bext; uniform vec3 axis;\n"
+    "uniform float vform, vspin, vcol, vscale, vrad; uniform vec3 axis, vcen, crt, cup, cfw;\n"
     "out vec2 vl; out vec3 vc; out float va;\n"
     "float hs(float n) { return fract(sin(n * 12.9898 + seed * 78.233) * 43758.5453); }\n"
     "";
@@ -405,21 +406,31 @@ static const char *galaxyglvspart3 =
     "    float dw = (length(wp) - rip.x) / rip.z, w = rip.y * exp(-dw * dw);\n"
     "    wp += ripn * w * rip.z * .35; a *= 1.0 + 2.5 * w; col = mix(col, vec3(1.0), .3 * min(w, 1.0));\n"
     "  }\n"
-    /* Esc 收尾: 先绕星系群的上轴螺旋着吸进中心 (各自有延迟, 越近越亮越白), 再随冲击波从中心炸开、淡出 */
+    /* Esc 收尾: 所有粒子转到正对镜头的平面 (vform), 铺满屏幕成为多臂旋涡, 内快外慢地越转越快 (vspin),
+     * 旋臂越卷越紧并带着先后收向中心 (vcol), 越近越亮越白, 最后收成一点淡去 */
     "  float hd = hs(fi * 9.71 + .5), he = hs(fi * 6.13 + .8);\n"
-    "  if (pull > .001) {\n"
-    "    float d = clamp(pull * 1.4 - .4 * hd, 0.0, 1.0); d = d * d * (3.0 - 2.0 * d);\n"
-    "    float an = 3.5 * d * (1.0 + .5 * he), ca = cos(an), sa = sin(an);\n"
-    "    wp = (wp * ca + cross(axis, wp) * sa + axis * dot(axis, wp) * (1.0 - ca)) * pow(1.0 - d, 1.6);\n"
-    "    a *= 1.0 + 1.5 * d; col = mix(col, vec3(1.0, .95, .88), .5 * d);\n"
-    "  }\n"
-    /* 旋涡展开: 沿两条对数螺旋臂一边旋转一边向外甩出, 越往外越淡 (与收尾的吸入方向一致) */
-    "  if (burst > .001) {\n"
+    "  if (vform > .001) {\n"
     "    vec3 e1 = normalize(abs(axis.y) < .9 ? cross(axis, vec3(0.0, 1.0, 0.0)) : cross(axis, vec3(1.0, 0.0, 0.0))), e2 = cross(axis, e1);\n"
-    "    float R = bext * (.08 + .92 * h1) * pow(burst, .6);\n"
-    "    float th = (h2 < .5 ? 0.0 : 3.1416) + 2.2 * log(1.0 + R / (.05 * bext)) + 2.5 * burst + (he - .5) * .5;\n"
-    "    wp = (e1 * cos(th) + e2 * sin(th)) * R + axis * (h3 - .5) * .05 * R;\n"
-    "    a *= pow(1.0 - burst, 1.2) * (1.4 + 1.2 * (1.0 - h1));\n"
+    "    float px = dot(wp, e1), py = dot(wp, e2), rs = (length(vec2(px, py)) + 1e-3) * vscale, th0 = atan(py, px);\n"
+    /* 星尘是旋涡的主体: 直接排到三条对数螺旋臂上 (越靠中心越密, 臂有一定宽度), 从原位置旋进臂里 */
+    "    bool dustp = mode > .5 && mode < 1.5;\n"
+    "    if (dustp) {\n"
+    "      rs = vrad * (.03 + 1.07 * pow(h1, 1.25));\n"
+    "      th0 = 2.0944 * floor(h2 * 3.0) + 2.6 * log(1.0 + rs / (.05 * vrad)) + (he - .5) * (.25 + .5 * hd) * (1.0 + rs / vrad);\n"
+    "    }\n"
+    "    float d = clamp(vcol * 1.45 - .45 * hd, 0.0, 1.0); d = d * d * (3.0 - 2.0 * d);\n"
+    "    float th = th0 + vspin * (1.0 + 1.6 / (1.0 + 3.0 * rs / vrad)) + 2.5 * d * (1.0 + he);\n"
+    "    float rr = rs * pow(1.0 - d, 1.4);\n"
+    "    vec3 P = vcen + (crt * cos(th) + cup * sin(th)) * rr + cfw * (h3 - .5) * .04 * rr;\n"
+    "    float arm = dustp ? 1.0 : .5 + .5 * cos(3.0 * (th0 - 2.6 * log(1.0 + rs / (.05 * vrad))));\n"
+    "    wp = mix(wp, P, vform);\n"
+    "    a *= mix(1.0, .3 + 1.2 * arm * arm, vform) * (1.0 + .6 * d) * (1.0 - smoothstep(.45, .8, vcol)) * (1.0 - .85 * smoothstep(.7, 1.0, d));\n"
+    "    col = mix(col, vec3(1.0, .96, .9), .3 * d);\n"
+    /* 星尘本身不发光; 收尾时它是旋涡的主体: 按半径着色 (中心暖白, 外圈蓝紫), 并提亮 */
+    "    if (dustp) {\n"
+    "      vec3 vc2 = mix(vec3(1.0, .93, .85), mix(vec3(.55, .75, 1.0), vec3(.8, .5, 1.0), h4), smoothstep(.05, .7, rs / vrad));\n"
+    "      col = mix(col, vc2 * (.7 + .3 * he), vform); a *= mix(1.0, .5 * (.7 + .5 * smoothstep(.05, .5, rs / vrad)), vform);\n"
+    "    }\n"
     "  }\n"
     "  vec3 cv = view * (wp - campos);\n"
     "  if (cv.z < cnear || cv.z > cfar || a < .002) { gl_Position = vec4(3.0, 3.0, 3.0, 1.0); vl = c; vc = col; va = 0.0; return; }\n"
@@ -477,7 +488,7 @@ static const char *galaxyglfscomp =
     "in vec2 uv; out vec4 o;\n"
     "uniform sampler2D tbase, tlight, tbloom, tfront, twall, tcards; uniform float cards;\n"
     "uniform float ybase, yfront, bloomk, aberr, grain, seed, glow; uniform vec2 screen;\n"
-    "uniform vec4 lens, shock; uniform float expo; uniform vec3 rays; uniform sampler2D tbloom2;\n"
+    "uniform vec4 lens, shock; uniform float expo, wfade; uniform vec3 rays; uniform sampler2D tbloom2;\n"
     "vec3 tolin(vec3 c) { return mix(c / 12.92, pow((c + .055) / 1.055, vec3(2.4)), step(.04045, c)); }\n"
     "vec3 tosrgb(vec3 c) { return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - .055, step(.0031308, c)); }\n"
     /* 保色相的软肩: 按最亮通道压缩, 各通道等比缩放 (不会像逐通道截断那样先变白); 极亮处才逐渐偏白 */
@@ -506,8 +517,10 @@ static const char *galaxyglfscomp =
     "  if (shock.w > .5) {\n"
     "    vec2 uw = vec2(uv.x, ybase > .5 ? uv.y : 1.0 - uv.y);\n"
     "    vec3 wall = tolin(texture(twall, uw).rgb), in3;\n"
+    /* Esc 收尾: 没有揭开边界, 底层整体淡成壁纸, 壁纸从旋臂之间的缝隙里透出来 */
+    "    if (wfade > 0.0) { base = mix(base, wall, wfade); } else {\n"
     "    in3 = 1.0 - smoothstep(shock.x - shock.y * vec3(1.15, 1.0, .85), shock.x + shock.y * vec3(.25, .15, .05), vec3(rs));\n"
-    "    base = mix(base, wall, in3);\n"
+    "    base = mix(base, wall, in3); }\n"
     "  }\n"
     "  vec2 off = (uv - .5) * aberr / screen;\n"
     "  vec3 L = vec3(texture(tlight, uv + off).r, texture(tlight, uv).g, texture(tlight, uv - off).b)\n"
@@ -969,7 +982,7 @@ galaxyglframe(void)
     galaxygl.glow = 0;
     galaxygl.rays[2] = 0;
     galaxygl.expo = 1;
-    galaxygl.pull = galaxygl.burst = 0;
+    galaxygl.vform = galaxygl.vcol = galaxygl.wfade = 0;
     memset(galaxygl.rip, 0, sizeof galaxygl.rip);
 }
 
@@ -1172,10 +1185,16 @@ galaxyglpartbegin(void)
     glUniform1f(glGetUniformLocation(p, "cfar"), r->cam.far);
     glUniform1f(glGetUniformLocation(p, "fnear"), r->cam.focal * .25);
     glUniform1f(glGetUniformLocation(p, "time"), (float)galaxynow());
-    glUniform1f(glGetUniformLocation(p, "pull"), galaxygl.pull);
-    glUniform1f(glGetUniformLocation(p, "burst"), galaxygl.burst);
-    glUniform1f(glGetUniformLocation(p, "bext"), galaxygl.bext);
+    glUniform1f(glGetUniformLocation(p, "vform"), galaxygl.vform);
+    glUniform1f(glGetUniformLocation(p, "vspin"), galaxygl.vspin);
+    glUniform1f(glGetUniformLocation(p, "vcol"), galaxygl.vcol);
+    glUniform1f(glGetUniformLocation(p, "vscale"), galaxygl.vscale);
+    glUniform1f(glGetUniformLocation(p, "vrad"), galaxygl.vrad);
     glUniform3fv(glGetUniformLocation(p, "axis"), 1, galaxygl.axis);
+    glUniform3fv(glGetUniformLocation(p, "vcen"), 1, galaxygl.vcen);
+    glUniform3fv(glGetUniformLocation(p, "crt"), 1, galaxygl.crt);
+    glUniform3fv(glGetUniformLocation(p, "cup"), 1, galaxygl.cup);
+    glUniform3fv(glGetUniformLocation(p, "cfw"), 1, galaxygl.cfw);
     glUniform4fv(glGetUniformLocation(p, "rip"), 1, galaxygl.rip);
     glUniform3fv(glGetUniformLocation(p, "ripn"), 1, galaxygl.ripn);
     glEnable(GL_BLEND);
@@ -1264,18 +1283,34 @@ galaxygltrail(const GalaxyVec *pts, int n, double lm, double mclock, double head
     glDisable(GL_DEPTH_TEST);
 }
 
-/* Esc 收尾 (这一帧): pull 吸入进度, burst 爆发进度, axis 绕转的轴 (世界), ext 爆发的半径 */
+/* Esc 收尾 (这一帧): form 粒子转到正对镜头平面的程度, spin 旋涡转过的角度 (外圈; 内圈更快), col 收向中心的进度,
+ * axis 星系群的上轴 (世界), ext 星系群半径 (世界), fill 旋涡在屏幕上的半径 (像素), wfade 底层淡成壁纸的程度 */
 static void
-galaxyglcollapsefx(double pull, double burst, GalaxyVec axis, double ext)
+galaxyglcollapsefx(double form, double spin, double col, GalaxyVec axis, double ext, double fill, double wfade)
 {
-    double l = galaxylen(axis);
+    GalaxyCamera *c = &galaxyscene.cam;
+    GalaxyVec o = galaxyapply(c->view, galaxyscale(c->pos, -1)), cen;
+    double l = galaxylen(axis), z0 = MAX(c->near * 2, o.z), rad = fill * z0 / c->focal;
+    int i;
 
-    galaxygl.pull = (float)pull;
-    galaxygl.burst = (float)burst;
-    galaxygl.bext = (float)ext;
+    galaxygl.vform = (float)form;
+    galaxygl.vspin = (float)spin;
+    galaxygl.vcol = (float)col;
+    galaxygl.vrad = (float)rad;
+    galaxygl.vscale = (float)(rad / MAX(1, ext));
+    galaxygl.wfade = (float)wfade;
     galaxygl.axis[0] = (float)(l > 0 ? axis.x / l : 0);
     galaxygl.axis[1] = (float)(l > 0 ? axis.y / l : 1);
     galaxygl.axis[2] = (float)(l > 0 ? axis.z / l : 0);
+    cen = galaxyadd(c->pos, galaxyscale(galaxyv(c->view.m[2][0], c->view.m[2][1], c->view.m[2][2]), z0));   /* 画面中心, 与世界原点同深度 */
+    galaxygl.vcen[0] = cen.x;
+    galaxygl.vcen[1] = cen.y;
+    galaxygl.vcen[2] = cen.z;
+    for (i = 0; i < 3; i++) {   /* 镜头的右 / 下 / 前 (世界坐标) = 世界 -> 镜头矩阵的各行 */
+        galaxygl.crt[i] = (float)c->view.m[0][i];
+        galaxygl.cup[i] = (float)c->view.m[1][i];
+        galaxygl.cfw[i] = (float)c->view.m[2][i];
+    }
 }
 
 /* 涟漪场 (这一帧): 以世界原点为中心、半径 radius 的一圈波, 强度 amp, 宽度 width; normal 是盘面法线 */
@@ -1740,7 +1775,7 @@ galaxyglpresent(double bloom, double fx, int levels)
     /* 平时逐像素对齐采样 (首帧与桌面一致); 透镜扭曲时要插值, 否则有锯齿 */
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, galaxygl.lens[2] > .001 ? GL_LINEAR : GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, galaxygl.lens[2] > .001 ? GL_LINEAR : GL_NEAREST);
-    wall = galaxygl.gwall && galaxygl.shock[3] > .5;
+    wall = galaxygl.gwall && (galaxygl.shock[3] > .5 || galaxygl.wfade > 0);
     if (wall) {
         glActiveTexture(GL_TEXTURE4);
         glBindTexture(GL_TEXTURE_2D, galaxygl.texwall);
@@ -1772,6 +1807,7 @@ galaxyglpresent(double bloom, double fx, int levels)
     glActiveTexture(GL_TEXTURE0);
     glUniform4fv(glGetUniformLocation(p, "lens"), 1, galaxygl.lens);
     glUniform4f(glGetUniformLocation(p, "shock"), galaxygl.shock[0], galaxygl.shock[1], galaxygl.shock[2], wall ? 1 : 0);
+    glUniform1f(glGetUniformLocation(p, "wfade"), galaxygl.wfade);
     glUniform1f(glGetUniformLocation(p, "glow"), galaxygl.glow);
     glUniform3f(glGetUniformLocation(p, "rays"), galaxygl.rays[0], galaxygl.rays[1], bloom > .001 ? galaxygl.rays[2] : 0);
     glUniform1f(glGetUniformLocation(p, "expo"), galaxygl.expo > 0 ? galaxygl.expo : 1);
