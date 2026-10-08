@@ -1960,8 +1960,8 @@ galaxyrenderbackground(void)
         return;
     }
     XRenderComposite(dpy, PictOpSrc, r->wallpaper, None, r->back, 0, 0, 0, 0, 0, 0, r->w, r->h);
-    if (r->live && r->reveal > 0)
-        XRenderComposite(dpy, PictOpOver, r->live, galaxywhite(r->reveal), r->back, 0, 0, 0, 0, 0, 0, r->w, r->h);
+    if (r->live && r->reveal > 0 && galaxyreadlive(r->wallpaper))   /* 动态壁纸: 淡回正在播放的画面 */
+        XRenderComposite(dpy, PictOpOver, r->wallpaper, galaxywhite(r->reveal), r->back, 0, 0, 0, 0, 0, 0, r->w, r->h);
     if (r->desktop && r->desk > 0 && !galaxyshardsactive())
         XRenderComposite(dpy, PictOpOver, r->desktop, galaxywhite(r->desk), r->back, 0, 0, 0, 0, 0, 0, r->w, r->h);
     shade.alpha = (unsigned short)(65535 * galaxyclamp(1 - r->bright));
@@ -2088,8 +2088,8 @@ galaxypresent(void)
             sr = far * galaxyeaseoutcubic(sp);
             sw = 30 + 90 * sp;
             sk = 1.1 * pow(1 - sp, 1.5);
-            if (r->live)    /* 动态壁纸: 揭开的是正在播放的画面 */
-                XRenderComposite(dpy, PictOpSrc, r->live, None, r->wallpaper, 0, 0, 0, 0, 0, 0, r->w, r->h);
+            if (r->live)    /* 动态壁纸: 揭开的是正在播放的画面 (取不到离屏画面时用进入前的截图) */
+                galaxyreadlive(r->wallpaper);
         }
         if (r->gentle) {   /* 减弱动效: 不扭曲背景, 闪光和光环只留四分之一 */
             lens = 0;

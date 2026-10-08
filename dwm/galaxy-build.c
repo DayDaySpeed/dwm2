@@ -604,6 +604,41 @@ galaxyfindwallpaper(void)
     return found;
 }
 
+/* 遮罩显示后刷新动态壁纸: 只读壁纸窗口自己的离屏画面 (Composite 命名 pixmap). 合成器取消重定向屏幕时 (全屏遮罩)
+ * 窗口没有离屏画面, 直接读窗口会读到屏幕上的星系自己 (收尾时一圈圈叠成同心环): 这时不读, 保留进入前截的壁纸 */
+static int
+galaxyreadlive(Picture dst)
+{
+    GalaxyScene *r = &galaxyscene;
+    XErrorHandler old;
+    XWindowAttributes wa;
+    XRenderPictFormat *fmt;
+    Pixmap pix;
+    Picture p;
+    int ok = 0;
+
+    if (!r->wallwin || galaxynow() - r->livefail < 1 || !XGetWindowAttributes(dpy, r->wallwin, &wa)
+            || !(fmt = XRenderFindVisualFormat(dpy, wa.visual)))
+        return 0;
+    XSync(dpy, False);
+    old = XSetErrorHandler(xerrordummy);
+    pix = XCompositeNameWindowPixmap(dpy, r->wallwin);
+    XSync(dpy, False);
+    if (pix && (p = XRenderCreatePicture(dpy, pix, fmt, 0, NULL))) {
+        XRenderComposite(dpy, PictOpSrc, p, None, dst, 0, 0, 0, 0, wa.x, wa.y, wa.width, wa.height);
+        XRenderFreePicture(dpy, p);
+        XSync(dpy, False);
+        ok = 1;
+    }
+    if (pix)
+        XFreePixmap(dpy, pix);
+    XSync(dpy, False);
+    XSetErrorHandler(old);
+    if (!ok)
+        r->livefail = galaxynow();
+    return ok;
+}
+
 static void
 galaxycapturebackground(void)
 {

@@ -149,7 +149,7 @@ galaxypresentwall(void)
             && !glXMakeCurrent(dpy, galaxygl.win, galaxygl.ctx))
         return;
     if (r->live)
-        XRenderComposite(dpy, PictOpSrc, r->live, None, r->wallpaper, 0, 0, 0, 0, 0, 0, r->w, r->h);
+        galaxyreadlive(r->wallpaper);
     XRenderComposite(dpy, PictOpSrc, r->wallpaper, None, r->back, 0, 0, 0, 0, 0, 0, r->w, r->h);
     if (r->front)
         XRenderFillRectangle(dpy, PictOpSrc, r->front, &clear, 0, 0, r->w, r->h);
