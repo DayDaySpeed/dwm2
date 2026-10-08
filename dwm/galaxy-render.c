@@ -633,7 +633,7 @@ galaxyrendersun(void)
         p = galaxyproject(galaxyapply(r->world, galaxyv((i ? -1 : 1) * rad * cos(th), 0, (i ? -1 : 1) * rad * sin(th))));
         if (!p.ok)
             continue;
-        w = 1 + .12 * sin(th * 2 + i * GALAXYPI);
+        w = 1;   /* 双星不随互转胀缩 */
         /* 粒子恒星 (一冷一暖); 脉冲 / 整点报时只让粒子团亮一点、胀一点, 不出现白光大球 */
         {
             double rgb[3], e = MIN(2, r->sunpulse + 1.5 * chime);
