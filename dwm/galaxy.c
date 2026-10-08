@@ -75,7 +75,6 @@
 #define GALAXYSHARDX   20        /* 开场 A: 桌面碎成 20x12 块 */
 #define GALAXYSHARDY   12
 #define GALAXYSHARDA   8         /* 碎块蒙版的透明度级数 */
-#define GALAXYBANGN    90        /* 开场 C: 大爆炸喷出的粒子数 */
 #define GALAXYPI       3.14159265358979323846
 
 enum { GalaxyOff, GalaxyIntro, GalaxyOrbit, GalaxyCollapse, GalaxyReturn, GalaxyRest };

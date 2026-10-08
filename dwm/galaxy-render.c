@@ -593,31 +593,6 @@ galaxyflushbands(void)
 
 
 
-static GalaxyProj galaxysp(double x, double y);
-
-/* 镜头光晕: 很亮的光源沿 光源 -> 画面中心 的连线留下几枚彩色鬼影, 再加一道横向拉丝 (画在光层最前面, 不被卡片挡).
- * 按已知光源解析地画, 不从泛光里取 (那样大面积爆闪会把整屏染色) */
-static void
-galaxylensflare(double x, double y, double k)
-{
-    GalaxyScene *r = &galaxyscene;
-    static const double at[5] = { .42, .78, 1.2, 1.55, 2.05 }, size[5] = { 22, 58, 16, 92, 38 }, alpha[5] = { .1, .05, .14, .04, .07 };
-    static const int tint[5] = { GalaxyCyan, GalaxyViolet, GalaxyGold, GalaxyRose, GalaxyCool };
-    double cx = r->vx + r->vw * .5, cy = r->vy + r->vh * .5, s = r->vw / 2560.0;
-    GalaxyProj a, b;
-    int i;
-
-    k = galaxyclamp(k);
-    if (k < .02 || r->gentle)
-        return;
-    for (i = 0; i < 5; i++)
-        galaxysprite(i % 2 ? GalaxyHalo : GalaxyDisc, tint[i], x + (cx - x) * at[i], y + (cy - y) * at[i], size[i] * s, k * alpha[i]);
-    a = galaxysp(x - .3 * r->vw, y);
-    b = galaxysp(x + .3 * r->vw, y);
-    galaxyglline(&a, &b, 0x7fb8ff, 0x7fb8ff, .1 * k, 1.1);
-    galaxyglline(&a, &b, 0x4d8bff, 0x4d8bff, .035 * k, 6);
-}
-
 /* 中心光源: 三条椭圆的共同焦点, 发出涟漪时脉冲一次 */
 static void
 galaxyrendersun(void)
@@ -628,7 +603,7 @@ galaxyrendersun(void)
     double chime = r->chimeat > 0 && r->mode == GalaxyOrbit ? galaxyflash(galaxynow() - r->chimeat, .3, 1.1) : 0;
     int i;
 
-    /* 双星: 一冷一暖两颗粒子恒星绕共同质心 (群轨道的焦点) 互转, 随相位轻微脉动 */
+    /* 双星: 一冷一暖两颗粒子恒星绕共同质心 (群轨道的焦点) 互转 */
     for (i = 0; i < 2; i++) {
         p = galaxyproject(galaxyapply(r->world, galaxyv((i ? -1 : 1) * rad * cos(th), 0, (i ? -1 : 1) * rad * sin(th))));
         if (!p.ok)
@@ -741,13 +716,16 @@ galaxyrenderitems(void)
             a *= 1 + 2 * d->boost;
             if (a < .003)
                 break;
-            galaxysprite(GalaxyHalo, GalaxyCool, d->p.x, d->p.y, rad, MIN(1, a));
-            if (r->warpfx > .01) {
-                /* 超空间跃迁: 尘埃沿屏幕中心向外拉成光线 */
-                GalaxyProj q = d->p;
-                q.x += (d->p.x - r->vx - r->vw * .5) * .25 * r->warpfx;
-                q.y += (d->p.y - r->vy - r->vh * .5) * .25 * r->warpfx;
-                galaxyband(&d->p, &q, MIN(.25, a * 1.2 * r->warpfx), MAX(.5, .45 * d->size * d->p.scale));
+            {   /* 星尘: 带深度的细小粒子 (被卡片挡住) */
+                static double cool[3];
+
+                if (!cool[0])
+                    galaxytintcolor(GalaxyCool, -1, cool);
+                galaxyglparticle(d->p.x, d->p.y, d->p.z, rad, cool, .6, MIN(1, a) * (1 - r->vform), 0);
+                if (r->warpfx > .01)    /* 超空间跃迁: 尘埃沿屏幕中心向外拉成粒子拉丝 */
+                    galaxyglpartline(d->p.x, d->p.y, d->p.x + (d->p.x - r->vx - r->vw * .5) * .25 * r->warpfx,
+                            d->p.y + (d->p.y - r->vy - r->vh * .5) * .25 * r->warpfx, d->p.z, MAX(.5, MIN(1.6, .45 * d->size * d->p.scale)), cool, .2,
+                            MIN(.25, a * 1.2 * r->warpfx));
             }
             break;
         case GalaxyCoreItem:
@@ -827,54 +805,52 @@ galaxycampoint(double x, double y, double z)
     return galaxyadd(r->cam.pos, galaxyapply(r->cam.rot, galaxyv(x, y, z)));
 }
 
-/* 开场 B: 星门. 一座正对镜头的光环从远处迎面而来, 环上 12 个光点跑动, 镜头从环中穿过, 穿过的一刻白光一闪 */
+/* 屏幕点 (x, y) 在镜头深度 z 处的世界坐标; 配合 r->cam.rot (xy 平面正对镜头) 画「正对镜头」的粒子环 / 粒子团 */
+static GalaxyVec
+galaxyscreenpoint(double x, double y, double z)
+{
+    GalaxyScene *r = &galaxyscene;
+
+    return galaxycampoint((x - r->vx - r->vw * .5) * z / r->cam.focal, (y - r->vy - r->vh * .5) * z / r->cam.focal, z);
+}
+
+/* 开场 B: 星门. 一座正对镜头的粒子光环从远处迎面而来 (青色外环 / 紫色内环反向转动), 环上 12 颗小粒子恒星跑动,
+ * 外圈 9 个 V 形粒子标记, 环心一团淡淡的粒子; 镜头从环中穿过, 穿过的一刻白光一闪 */
 static void
 galaxyrendergate(double f, double s)
 {
     GalaxyScene *r = &galaxyscene;
-    GalaxyProj pts[49], lp;
-    double F = r->cam.focal, u = galaxyphase(s, .4, 1.3), z, R = .4 * r->vw, env, th, spin = 2 * GALAXYPI * .3 * s, a, w;
+    GalaxyMat flat = {{{0}}};
+    GalaxyVec v[3];
+    double F = r->cam.focal, u = galaxyphase(s, .4, 1.3), z, R = .4 * r->vw, env, th, spin = 2 * GALAXYPI * .3 * s, a, now = galaxynow();
+    double cyan[3], violet[3], hot[3];
     int j, k, ring;
 
+    galaxytintcolor(GalaxyCyan, .4, cyan);
+    galaxytintcolor(GalaxyViolet, -1, violet);
+    for (k = 0; k < 3; k++)
+        hot[k] = galaxymix(cyan[k], 1, .5);
     if (u > 0 && u < 1) {
         z = F * galaxymix(3.4, .12, galaxyeaseincubic(u));
-        /* 离得很近时淡掉 (光带会非常宽, 也已经出了画面) */
+        /* 离得很近时淡掉 (已经出了画面) */
         env = f * galaxysmoothstep(u / .2) * galaxysmoothstep((z / F - .2) / .5);
-        for (ring = 0; ring < 2 && env > .01; ring++) {
-            galaxybandcolor(galaxytintrgb(ring ? GalaxyViolet : GalaxyCyan, ring ? -1 : .4));   /* 星门: 青色外环, 紫色内环 */
-            for (j = 0; j <= 48; j++) {
-                th = 2 * GALAXYPI * j / 48 + (ring ? -spin : spin) * .3;
-                pts[j] = galaxyproject(galaxycampoint(R * (ring ? .9 : 1) * cos(th), R * (ring ? .9 : 1) * sin(th), z));
-            }
-            for (j = 0; j < 48; j++)
-                if (pts[j].ok && pts[j + 1].ok) {
-                    w = MIN(6, pts[j].scale);
-                    galaxyband(&pts[j], &pts[j + 1], env * (ring ? .35 : .85), MAX(1, (ring ? 1.6 : 4) * w));
-                    if (!ring)
-                        galaxyband(&pts[j], &pts[j + 1], env * .16, MAX(4, 22 * w));
-                }
-        }
+        for (ring = 0; ring < 2 && env > .01; ring++)
+            galaxyglemitter(3, galaxycampoint(0, 0, z), &r->cam.rot, galaxyv(0, 0, 0), R * (ring ? .9 : 1), ring ? .02 : .035, 1,
+                    ring ? -.6 : .6, now, ring ? violet : hot, ring ? violet : cyan, env * (ring ? .3 : .55), .9 * r->starscale,
+                    ring ? 2000 : 3200, 61.3 + ring);
         for (k = 0; k < 12 && env > .01; k++) {
             th = spin * 1.6 + 2 * GALAXYPI * k / 12;
-            lp = galaxyproject(galaxycampoint(R * cos(th), R * sin(th), z));
-            if (!lp.ok)
-                continue;
             a = env * (.7 + .3 * sin(spin * 3 + k));
-            galaxysprite(GalaxyHalo, k % 3 ? GalaxyCyan : GalaxyViolet, lp.x, lp.y, MAX(6, 26 * MIN(6, lp.scale)), MIN(1, a));
-            if (k % 3 == 0)
-                galaxysprite(GalaxySpike, GalaxyCyan, lp.x, lp.y, MIN(300, 110 * MIN(4, lp.scale)), .8 * a);
+            galaxyglstarball(galaxycampoint(R * cos(th), R * sin(th), z), &r->cam.rot, R * (k % 3 ? .022 : .032), 1.5, k % 3 ? cyan : violet,
+                    .14 * a, .8 * r->starscale, 260, 70.1 + k);
         }
-        /* 外圈 9 个 V 形标记, 反向慢转 (星门的「锁定环」) */
-        galaxybandcolor(galaxytintrgb(GalaxyViolet, -1));
+        /* 外圈 9 个 V 形标记, 反向慢转 (星门的「锁定环」): 每个是两段沿 V 流动的短粒子流 */
         for (k = 0; k < 9 && env > .01; k++) {
             th = -spin * .5 + 2 * GALAXYPI * k / 9;
             for (j = 0; j < 3; j++)
-                pts[j] = galaxyproject(galaxycampoint(R * (1.12 - .06 * (j == 1)) * cos(th + (j - 1) * .045),
-                            R * (1.12 - .06 * (j == 1)) * sin(th + (j - 1) * .045), z));
-            if (pts[0].ok && pts[1].ok && pts[2].ok) {
-                galaxyband(&pts[0], &pts[1], .6 * env, MAX(1, 2.4 * MIN(6, pts[1].scale)));
-                galaxyband(&pts[1], &pts[2], .6 * env, MAX(1, 2.4 * MIN(6, pts[1].scale)));
-            }
+                v[j] = galaxycampoint(R * (1.12 - .06 * (j == 1)) * cos(th + (j - 1) * .045), R * (1.12 - .06 * (j == 1)) * sin(th + (j - 1) * .045), z);
+            for (j = 0; j < 2; j++)
+                galaxyglemitter(2, v[j], &flat, v[j + 1], .8, .004 * R, 1, 1, now, violet, hot, .5 * env, .8 * r->starscale, 70, 90.7 + 2 * k + j);
         }
         /* 环心涌出的光流, 迎面而来 */
         for (k = galaxyemitcount(500 * env * galaxysmoothstep((u - .5) / .3)); k > 0; k--) {
@@ -883,33 +859,35 @@ galaxyrendergate(double f, double s)
             galaxyemit(galaxycampoint(a * cos(th), a * sin(th), z), galaxyapply(r->cam.rot, galaxyv(0, 0, -F * (.6 + .6 * galaxyprand()))),
                     .5 + .3 * galaxyprand(), .0025 * F, galaxyprand() < .5 ? GalaxyCyan : GalaxyViolet, .7, 0, 0);
         }
-        /* 环心: 一团淡淡的光, 越近越亮 */
-        lp = galaxyproject(galaxycampoint(0, 0, z));
-        if (lp.ok)
-            galaxysprite(GalaxyHalo, GalaxyCyan, lp.x, lp.y, MIN(900, .55 * R * lp.scale), .25 * env);
-        galaxybandwhite();
+        /* 环心: 一团淡淡的粒子; 镜头快穿过时先淡掉 (否则粒子团包住镜头, 整屏发灰) */
+        galaxyglstarball(galaxycampoint(0, 0, z), &r->cam.rot, .55 * R, .4, cyan, .035 * env * galaxysmoothstep((z / F - .6) / 1.2),
+                .8 * r->starscale, 1500, 77.7);
     }
-    galaxyflushbands();
     a = f * galaxyflash(s - 1.18, .04, 12);
-    if (a > .01)    /* 穿过星门: 青白色闪光 */
-        galaxyglrect(r->vx, r->vy, r->vw, r->vh, (double[3]){.85, .97, 1}, .08 * MIN(1, a) * (r->gentle ? .25 : 1));
+    if (a > .01)    /* 穿过星门: 很淡的青白色闪光 (太亮会像整屏蒙一层灰) */
+        galaxyglrect(r->vx, r->vy, r->vw, r->vh, (double[3]){.85, .97, 1}, .035 * MIN(1, a) * (r->gentle ? .25 : 1));
 }
 
-/* 开场 C: 大爆炸. 焦点窗口中心爆闪, 两圈冲击波, 粒子向四周喷射; 核心从爆心飞出 (galaxyupdatecores) 后再点火 */
+/* 开场 C: 大爆炸. 焦点窗口中心: 一颗金色粒子恒星收紧, 然后球壳粒子爆发 (金 -> 橙), 核心的粒子团渐渐散去,
+ * 两圈粒子冲击环在爆心深度、略倾斜的平面上扩散; 另有金橙色的粒子喷射 (CPU); 核心从爆心飞出 (galaxyupdatecores) 后再点火 */
 static void
 galaxyrenderbang(double f, double s)
 {
     GalaxyScene *r = &galaxyscene;
-    GalaxyProj c = galaxyproject(r->bang), pts[65], a0, a1;
-    double t = s - .3, u, a, th, sp, d0, d1, R;
-    int i, j;
+    GalaxyProj c = galaxyproject(r->bang);
+    GalaxyMat tilt;
+    double t = s - .3, u, a, R, w, gold[3], orange[3], white[3] = {1, .95, .85};
+    int i;
 
     if (t < -.05 || t > 1.4 || !c.ok)
         return;
-    /* 爆发前的一瞬: 光点向内收紧 */
+    w = c.z / r->cam.focal;     /* 爆心处 1 像素对应的世界长度 */
+    galaxytintcolor(GalaxyGold, -1, gold);
+    galaxytintcolor(GalaxyOrange, -1, orange);
+    /* 爆发前的一瞬: 金色粒子团向内收紧 */
     if (t < 0) {
         a = f * galaxysmoothstep((t + .05) / .05);
-        galaxysprite(GalaxyHalo, GalaxyGold, c.x, c.y, 30, a);
+        galaxyglstarball(r->bang, &r->cam.rot, 30 * w * (1.8 - .8 * a), 3, gold, .16 * a, .8 * r->starscale, 1500, 41.3);
         return;
     }
     a = f * galaxyflash(t, .04, 2.2);
@@ -919,40 +897,23 @@ galaxyrenderbang(double f, double s)
             galaxyemit(r->bang, galaxyscale(galaxynormalize(galaxyprandvec(1)), r->cam.focal * (.12 + .7 * pow(galaxyprand(), 1.5))),
                     1.2 + .9 * galaxyprand(), .003 * r->cam.focal, i % 3 ? GalaxyGold : i % 2 ? GalaxyOrange : GalaxyWarm, .85, 1.5, 0);
     }
-    galaxysprite(GalaxyHalo, GalaxyGold, c.x, c.y, 60 + 380 * galaxyeaseoutcubic(t / .5), MIN(1, a));
-    galaxysprite(GalaxySpike, GalaxyGold, c.x, c.y, MIN(600, 520 * (.5 + .5 * a)), MIN(1, 1.2 * a));
-    galaxylensflare(c.x, c.y, a);
+    /* 球壳爆发: 减速扩张到约 .6 屏宽, 带纤维结构; 核心的粒子团先胀大再散去 */
+    galaxyglemitter(0, r->bang, &r->cam.rot, r->bang, .6 * r->vw * w / 1.3, 0, 1.3, .08, t, gold, orange,
+            .55 * f, .9 * r->starscale, r->gentle ? 4000 : 9000, 43.9);
+    galaxyglstarball(r->bang, &r->cam.rot, 40 * w * (1 + .8 * galaxyeaseoutcubic(t / .5)), 2, white, .2 * MIN(1, a), .9 * r->starscale, 1800, 47.1);
     if (f * galaxyflash(t, .03, 7) > .01)  /* 爆闪: 暖白 */
         galaxyglrect(r->vx, r->vy, r->vw, r->vh, (double[3]){1, .93, .8}, .1 * MIN(1, f * galaxyflash(t, .03, 12)) * (r->gentle ? .25 : 1));
+    /* 两圈冲击环: 爆心处略向后倒的平面 (看起来是扁椭圆) */
+    tilt = galaxymul(r->cam.rot, galaxyrotx(.9));
     for (i = 0; i < 2; i++) {
         u = galaxyphase(t, .15 * i, .8 + .25 * i);
         if (u <= 0 || u >= 1)
             continue;
-        R = (i ? .55 : .95) * r->vw * galaxyeaseoutcubic(u);
-        for (j = 0; j <= 64; j++) {
-            th = 2 * GALAXYPI * j / 64;
-            pts[j] = galaxysp(c.x + cos(th) * R, c.y + sin(th) * R * .62);
-        }
-        for (j = 0; j < 64; j++) {
-            galaxybandcolor(galaxytintrgb(i ? GalaxyOrange : GalaxyGold, .5));     /* 大爆炸: 金 / 橙冲击波 */
-            galaxyband(&pts[j], &pts[j + 1], f * (i ? .14 : .26) * pow(1 - u, 1.4), 2 + 2 * u);
-            galaxyband(&pts[j], &pts[j + 1], f * .06 * pow(1 - u, 1.4), 10 + 14 * u);
-        }
+        R = (i ? .55 : .95) * r->vw * galaxyeaseoutcubic(u) * w;
+        galaxybandcolor(galaxytintrgb(i ? GalaxyOrange : GalaxyGold, .5));     /* 大爆炸: 金 / 橙冲击环 */
+        galaxyringfx(r->bang, tilt, R, f * (i ? .14 : .26) * pow(1 - u, 1.4), 3 + 4 * u);
     }
-    /* 喷射的粒子: 各自方向和速度, 减速飞散, 拉出短线 */
-    u = galaxyphase(t, 0, 1.3);
-    for (i = 0; i < GALAXYBANGN && u < 1; i++) {
-        th = 2 * GALAXYPI * galaxyhash(i * 3 + 7001);
-        sp = r->vw * (.15 + .7 * pow(galaxyhash(i * 3 + 7002), 1.5));
-        d1 = sp * galaxyeaseoutcubic(u);
-        d0 = sp * galaxyeaseoutcubic(MAX(0, u - .06));
-        a0 = galaxysp(c.x + cos(th) * d0, c.y + sin(th) * d0 * .7);
-        a1 = galaxysp(c.x + cos(th) * d1, c.y + sin(th) * d1 * .7);
-        a = f * pow(1 - u, 1.2) * (.5 + .5 * galaxyhash(i * 3 + 7003));
-        galaxybandcolor(galaxytintrgb(i % 3 ? GalaxyGold : GalaxyOrange, .6));
-        galaxyband(&a0, &a1, .5 * a, 1.1);
-        galaxysprite(GalaxyHalo, i % 3 ? GalaxyGold : GalaxyOrange, a1.x, a1.y, 4 + 5 * galaxyhash(i * 3 + 7003), a);
-    }
+    galaxybandwhite();
 }
 
 /* 开场的一次性光效: 起飞冲击波 / 核心点火冲击环 / 中心光源点火 / 转速峰值的盘面冲击环 */
@@ -961,10 +922,10 @@ galaxyrenderfx(void)
 {
     GalaxyScene *r = &galaxyscene;
     GalaxyCore *g;
-    GalaxyProj pts[65], c = {0};
+    GalaxyProj c;
     GalaxyMat disk;
     double f = galaxybeatw(), s = r->iclock, u, t;
-    int i, j;
+    int i;
 
     if (f < .01)
         return;
@@ -973,22 +934,15 @@ galaxyrenderfx(void)
     else if (r->variant == GalaxyBang)
         galaxyrenderbang(f, s);
     galaxybandwhite();
-    /* 起飞: 以焦点窗口为圆心, 屏幕空间的一圈光环 (大爆炸有自己的冲击波) */
+    /* 起飞: 以焦点窗口为圆心、在它的深度上正对镜头的一圈粒子环, 向外扩张并淡出 (大爆炸有自己的冲击环) */
     u = galaxyphase(s, .08, .7);
     if (u > 0 && u < 1 && r->variant != GalaxyBang) {
-        c.x = r->vx + r->vw * .5;
-        c.y = r->vy + r->vh * .5;
+        c = (GalaxyProj){r->vx + r->vw * .5, r->vy + r->vh * .5, r->cam.focal, 1, 1};
         for (i = 0; i < r->nstars; i++)
             if (r->stars[i].focused && r->stars[i].p.ok)
                 c = r->stars[i].p;
-        for (j = 0; j <= 64; j++) {
-            t = 2 * GALAXYPI * j / 64;
-            pts[j] = (GalaxyProj){c.x + cos(t) * .7 * r->vw * galaxyeaseoutcubic(u), c.y + sin(t) * .7 * r->vw * galaxyeaseoutcubic(u), 1, 1, 1};
-        }
-        for (j = 0; j < 64; j++) {
-            galaxyband(&pts[j], &pts[j + 1], f * .22 * pow(1 - u, 1.5), 1.5 + 2 * u);
-            galaxyband(&pts[j], &pts[j + 1], f * .07 * pow(1 - u, 1.5), 8 + 10 * u);
-        }
+        galaxyringfx(galaxyscreenpoint(c.x, c.y, c.z), r->cam.rot, .7 * r->vw * galaxyeaseoutcubic(u) * c.z / r->cam.focal,
+                f * .22 * pow(1 - u, 1.5), 2 + 3 * u);
     }
     /* 核心点火: 在各自轨道平面里扩散的冲击环 */
     for (i = 0; i < r->ntags; i++) {
@@ -1868,9 +1822,9 @@ galaxyrendershards(void)
 {
     GalaxyScene *r = &galaxyscene;
     XTransform xf = {{{0}}};
-    GalaxyProj pa, pb;
     double f = galaxybeatw(), s = r->iclock, cx, cy, k, a, u, px, py, pk, pa_, pu, c, sn, bx, by, ex, ey, al, eh, hw = r->shardw * .5, hh = r->shardh * .5;
-    static const double flashrgb[3] = {1, .95, .86};
+    static const double flashrgb[3] = {1, .95, .86}, cool[3] = {.75, .86, 1}, warm[3] = {1, .86, .66};
+    const double *rgb;
     int i, j, lvl, x0, y0, x1, y1;
 
     if (!galaxyshardsactive())
@@ -1923,13 +1877,12 @@ galaxyrendershards(void)
                 for (m = 0; m < 4; m++)
                     galaxyglline(&e[m], &e[(m + 1) % 4], 0xfff1dc, 0xdbe8ff, eh, .7);
             }
-            /* 碎块变小后: 光点 + 指向来路的短尾 */
+            /* 碎块变小后: 一颗粒子 + 指向来路的粒子拉丝 */
             if (u > .3) {
                 galaxyshardat(i, j, s - .07, &px, &py, &pk, &pa_, &pu);
-                pa = galaxysp(cx, cy);
-                pb = galaxysp(px, py);
-                galaxyband(&pa, &pb, .3 * al * galaxysmoothstep((u - .3) / .3), 1.2);
-                galaxysprite(GalaxyHalo, (i + j) % 3 ? GalaxyCool : GalaxyWarm, cx, cy, 5 + 10 * (1 - k), .7 * al * galaxysmoothstep((u - .3) / .4));
+                rgb = (i + j) % 3 ? cool : warm;
+                galaxyglpartline(px, py, cx, cy, r->cam.focal, 1.1, rgb, .15, .5 * al * galaxysmoothstep((u - .3) / .3));
+                galaxyglparticle(cx, cy, r->cam.focal, 2 + 4 * (1 - k), rgb, .7, .8 * al * galaxysmoothstep((u - .3) / .4), 0);
             }
         }
     galaxyflushbands();
