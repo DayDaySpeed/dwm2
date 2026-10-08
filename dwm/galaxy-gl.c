@@ -398,6 +398,8 @@ static const char *galaxyglvspart2 =
     "    a = alpha * (.4 + .6 * h4);\n"
     "    sz = psize * (.5 + h4);\n"
     "  }\n"
+    "";
+static const char *galaxyglvspart3 =
     /* 涟漪场: 吸积盘 / 星尘 / 拖尾的粒子在波经过时沿盘面法线被托起一点, 并短暂变亮 */
     "  if (rip.y > .001 && (mode < 1.5 || (mode > 2.5 && mode < 3.5))) {\n"
     "    float dw = (length(wp) - rip.x) / rip.z, w = rip.y * exp(-dw * dw);\n"
@@ -411,10 +413,13 @@ static const char *galaxyglvspart2 =
     "    wp = (wp * ca + cross(axis, wp) * sa + axis * dot(axis, wp) * (1.0 - ca)) * pow(1.0 - d, 1.6);\n"
     "    a *= 1.0 + 1.5 * d; col = mix(col, vec3(1.0, .95, .88), .5 * d);\n"
     "  }\n"
+    /* 旋涡展开: 沿两条对数螺旋臂一边旋转一边向外甩出, 越往外越淡 (与收尾的吸入方向一致) */
     "  if (burst > .001) {\n"
-    "    vec3 dir = vec3(hd, he, h4) * 2.0 - 1.0; dir /= max(length(dir), .05);\n"
-    "    wp = dir * bext * (.25 + .75 * h1) * pow(burst, .55);\n"
-    "    a *= pow(1.0 - burst, 1.6);\n"
+    "    vec3 e1 = normalize(abs(axis.y) < .9 ? cross(axis, vec3(0.0, 1.0, 0.0)) : cross(axis, vec3(1.0, 0.0, 0.0))), e2 = cross(axis, e1);\n"
+    "    float R = bext * (.08 + .92 * h1) * pow(burst, .6);\n"
+    "    float th = (h2 < .5 ? 0.0 : 3.1416) + 2.2 * log(1.0 + R / (.05 * bext)) + 2.5 * burst + (he - .5) * .5;\n"
+    "    wp = (e1 * cos(th) + e2 * sin(th)) * R + axis * (h3 - .5) * .05 * R;\n"
+    "    a *= pow(1.0 - burst, 1.2) * (1.4 + 1.2 * (1.0 - h1));\n"
     "  }\n"
     "  vec3 cv = view * (wp - campos);\n"
     "  if (cv.z < cnear || cv.z > cfar || a < .002) { gl_Position = vec4(3.0, 3.0, 3.0, 1.0); vl = c; vc = col; va = 0.0; return; }\n"
@@ -496,11 +501,12 @@ static const char *galaxyglfscomp =
     "  vec3 base = texture(tbase, ub).rgb;\n"
     "  if (cards > .5) { vec4 cd = texture(tcards, uv); base = base * (1.0 - cd.a) + cd.rgb; }\n"
     "  base = tolin(base);\n"
-    /* 冲击波揭开壁纸: 圆内是壁纸, 边界三个通道错开一点 (色差) */
+    /* 旋涡揭开壁纸: 边界是两条旋臂的螺旋 (随展开缓慢转动), 边界内是壁纸, 三个通道错开一点 (色差) */
+    "  float rs = rd * (1.0 - .3 * cos(2.0 * (atan(d.y, d.x) + 1.6 * log(1.0 + rd / 120.0)) - shock.x * .005));\n"
     "  if (shock.w > .5) {\n"
     "    vec2 uw = vec2(uv.x, ybase > .5 ? uv.y : 1.0 - uv.y);\n"
     "    vec3 wall = tolin(texture(twall, uw).rgb), in3;\n"
-    "    in3 = 1.0 - smoothstep(shock.x - shock.y * vec3(1.15, 1.0, .85), shock.x + shock.y * vec3(.25, .15, .05), vec3(rd));\n"
+    "    in3 = 1.0 - smoothstep(shock.x - shock.y * vec3(1.15, 1.0, .85), shock.x + shock.y * vec3(.25, .15, .05), vec3(rs));\n"
     "    base = mix(base, wall, in3);\n"
     "  }\n"
     "  vec2 off = (uv - .5) * aberr / screen;\n"
@@ -508,7 +514,7 @@ static const char *galaxyglfscomp =
     "         + bloomk * texture(tbloom, uv).rgb;\n"
     /* 光按显示空间的强度画出 (调好的观感不变), 换到线性空间后再压缩、滤色; 光为 0 时输出与底层完全相同 */
     /* 冲击波的光环 (外沿偏暖) 和收尾的余晖 */
-    "  if (shock.z > .001) L += vec3(1.0, .9, .78) * shock.z * exp(-pow((rd - shock.x) / (.6 * shock.y), 2.0));\n"
+    "  if (shock.z > .001) L += vec3(1.0, .9, .78) * shock.z * exp(-pow((rs - shock.x) / (.6 * shock.y), 2.0));\n"
     "  if (glow > .001) L += vec3(1.0, .86, .7) * glow * exp(-rd * rd / (.025 * screen.x * screen.x));\n"
     /* 体积光束: 从光源出发沿径向采样泛光, 逐次衰减 (星云 / 光尘被照出放射状的光柱) */
     "  if (rays.z > .001) {\n"
@@ -700,13 +706,14 @@ galaxyglobjects(void)
     galaxygl.progcopy = galaxyglprogram(galaxyglvsfull, galaxyglfscopy);
     galaxygl.progcard = galaxyglprogram(galaxyglvscard, galaxyglfscard);
     {   /* 顶点着色器源码也分两段 */
-        size_t na = strlen(galaxyglvspart), nf = strlen(galaxyglvspartfx), nb = strlen(galaxyglvspart2);
-        char *vs = malloc(na + nf + nb + 1);
+        size_t na = strlen(galaxyglvspart), nf = strlen(galaxyglvspartfx), nb = strlen(galaxyglvspart2), nc = strlen(galaxyglvspart3);
+        char *vs = malloc(na + nf + nb + nc + 1);
 
         if (vs) {
             memcpy(vs, galaxyglvspart, na);
             memcpy(vs + na, galaxyglvspartfx, nf);
-            memcpy(vs + na + nf, galaxyglvspart2, nb + 1);
+            memcpy(vs + na + nf, galaxyglvspart2, nb);
+            memcpy(vs + na + nf + nb, galaxyglvspart3, nc + 1);
             galaxygl.progpart = galaxyglprogram(vs, galaxyglfspart);
             free(vs);
         }

@@ -1512,7 +1512,7 @@ galaxyrendergpuparticles(void)
         /* 吸入在冲击波出现的那一刻刚好收拢 (越到最后越快), 冲击波一出现就开始爆发 (起步最快), 中间不留空档 */
         galaxyglcollapsefx(pow(galaxyphase(u, GALAXYEXITSTART - .2, GALAXYSHOCK - .05), 2.2),
                 1 - pow(1 - galaxyphase(u, GALAXYSHOCK - .05, GALAXYSHOCK + GALAXYSHOCKT + GALAXYAFTER), 2),
-                galaxyapply(r->world, galaxyv(0, 1, 0)), MAX(1, ext) * 1.4 * (r->gentle ? .5 : 1));
+                galaxyapply(r->world, galaxyv(0, 1, 0)), MAX(1, ext) * 2.6 * (r->gentle ? .5 : 1));
     }
     /* 涟漪: 一圈粒子波在盘面上扩散, 同时把经过处的吸积盘 / 拖尾 / 星尘托起并点亮 */
     if (r->rippleamp > .003 && r->mode != GalaxyReturn) {
@@ -2084,8 +2084,8 @@ galaxypresent(void)
             * pow(1 - galaxyphase(u, GALAXYSHOCK, GALAXYSHOCK + GALAXYSHOCKT + GALAXYAFTER), 2);
         if (u >= GALAXYSHOCK) {
             sp = galaxyphase(u, GALAXYSHOCK, GALAXYSHOCK + GALAXYSHOCKT);
-            far = hypot(MAX(cx - r->vx, r->vx + r->vw - cx), MAX(cy - r->vy, r->vy + r->vh - cy)) + 160;
-            sr = far * galaxyeaseoutcubic(sp);
+            far = 1.35 * hypot(MAX(cx - r->vx, r->vx + r->vw - cx), MAX(cy - r->vy, r->vy + r->vh - cy)) + 160;   /* 螺旋边界最窄处也要扫过四角 */
+            sr = far * galaxyeaseinoutcubic(sp);   /* 旋涡边界匀匀地转着展开, 看得出螺旋 */
             sw = 30 + 90 * sp;
             sk = 1.1 * pow(1 - sp, 1.5);
             if (r->live)    /* 动态壁纸: 揭开的是正在播放的画面 (取不到离屏画面时用进入前的截图) */

@@ -829,7 +829,7 @@ galaxylogactions(double motion)
 
     if (!r->log || r->mode != GalaxyOrbit)
         return;
-    if (galaxycycle(motion, 4, 6, &k, &local) && k != r->lastripple) {
+    if (galaxycycle(motion, 4, 20, &k, &local) && k != r->lastripple) {
         r->lastripple = k;
         fprintf(r->log, "galaxy ripple at %.1fs\n", motion);
     }
@@ -839,7 +839,7 @@ galaxylogactions(double motion)
     }
 }
 
-/* 涟漪: 驻留后每 6s 从中心光源发出一圈亮波, 以 .4 屏宽/秒沿轨道向外扩散, 扫过的核心短暂亮起 */
+/* 涟漪: 驻留后每 20s 从中心光源发出一圈亮波, 以 .4 屏宽/秒沿轨道向外扩散, 扫过的核心短暂亮起 */
 static void
 galaxyupdateripple(double motion)
 {
@@ -848,7 +848,7 @@ galaxyupdateripple(double motion)
     int k;
 
     r->ripple = r->rippleamp = r->sunpulse = 0;
-    if (!galaxycycle(motion, 4, 6, &k, &local))
+    if (!galaxycycle(motion, 4, 20, &k, &local))
         return;
     r->ripple = .4 * r->vw * local;
     r->rippleamp = galaxyclamp(1 - r->ripple / (.65 * r->vw));
