@@ -149,7 +149,7 @@ galaxypresentwall(void)
             && !glXMakeCurrent(dpy, galaxygl.win, galaxygl.ctx))
         return;
     if (r->live)
-        XRenderComposite(dpy, PictOpSrc, r->live, None, r->wallpaper, 0, 0, 0, 0, 0, 0, r->w, r->h);
+        galaxyreadlive(r->wallpaper);
     XRenderComposite(dpy, PictOpSrc, r->wallpaper, None, r->back, 0, 0, 0, 0, 0, 0, r->w, r->h);
     if (r->front)
         XRenderFillRectangle(dpy, PictOpSrc, r->front, &clear, 0, 0, r->w, r->h);
@@ -504,6 +504,8 @@ galaxyfps(double now)
     GalaxyScene *r = &galaxyscene;
     double orbit = r->refresh > 1 ? r->refresh : GALAXYORBITFPS;
 
+    if (r->mode == GalaxyCollapse)    /* Esc 收尾按显示器刷新率出帧, 更顺滑 */
+        return MAX(GALAXYFPS, orbit);
     if (r->mode != GalaxyOrbit)
         return GALAXYFPS;
     if (r->quiet || r->saver)
@@ -1177,14 +1179,14 @@ galaxytick(void)
         r->celapsed = u;
         if (u < GALAXYPREP)
             r->stage = galaxymix(r->cstage, GALAXYHOLD, galaxyeaseinoutcubic(u / GALAXYPREP));
-        else if (u < GALAXYEXITSTART)
+        else if (u < GALAXYEXITSTART || galaxygl.gwall)   /* 有壁纸纹理时星系群照常公转, 交给黑洞吞噬 */
             r->stage = GALAXYHOLD;
         else
             r->stage = GALAXYEXIT + (GALAXYEND - GALAXYEXIT) * galaxyphase(u, GALAXYEXITSTART, GALAXYCOLLAPSE);
         r->motion = r->scene;
         r->exitspin = galaxyexitangle(u);
         r->beatfade = MIN(r->beatfade, 1 - galaxysmoothstep(u));   /* 开场节拍 (iclock 已冻结) 用 1s 平滑淡出 */
-        if (u >= MAX(GALAXYCOLLAPSE, galaxygl.gwall ? GALAXYSHOCK + GALAXYSHOCKT + GALAXYAFTER : 0)) {
+        if (u >= (galaxygl.gwall ? GALAXYVORTEX : GALAXYCOLLAPSE)) {
             galaxyfinish();
             return;
         }

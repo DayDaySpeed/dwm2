@@ -13,6 +13,7 @@
 
 #include <X11/extensions/dpms.h>
 #include <X11/extensions/Xrandr.h>
+#include <X11/extensions/Xcomposite.h>
 #include <ctype.h>
 
 #define GALAXYMIPS     6
@@ -64,9 +65,7 @@
 #define GALAXYSTREAKM  1.5       /* 星轨覆盖的平近点角 (rad): 近点处自然拉长, 远点处变短 */
 #define GALAXYCOLLAPSE 2.35      /* Esc 后完整的环绕 / 坍缩演出 (真实秒) */
 #define GALAXYEXITSTART 1.25     /* 退场从环绕切换到向中心收束的时刻 */
-#define GALAXYSHOCK    2.05      /* Esc 后多久从中心爆出冲击波, 圆形揭开壁纸 (真实秒; 之前透镜把背景拽向中心) */
-#define GALAXYSHOCKT   .5        /* 冲击波扩到屏幕四角的时长 */
-#define GALAXYAFTER    .3        /* 揭开后中心余晖再散去的时长, 之后才停在壁纸 */
+#define GALAXYVORTEX   4.0       /* Esc 收尾 (整屏被吸进黑洞, 壁纸浮现, 黑洞闭合) 的总时长 (真实秒) */
 #define GALAXYPREP     .45       /* 开场按 Esc 时平滑进入星系群形态 */
 #define GALAXYLANES    3
 #define GALAXYNOVAPRE  .3        /* 超新星爆发前核心收缩、变暗的时长 (秒) */
@@ -76,7 +75,6 @@
 #define GALAXYSHARDX   20        /* 开场 A: 桌面碎成 20x12 块 */
 #define GALAXYSHARDY   12
 #define GALAXYSHARDA   8         /* 碎块蒙版的透明度级数 */
-#define GALAXYBANGN    90        /* 开场 C: 大爆炸喷出的粒子数 */
 #define GALAXYPI       3.14159265358979323846
 
 enum { GalaxyOff, GalaxyIntro, GalaxyOrbit, GalaxyCollapse, GalaxyReturn, GalaxyRest };
@@ -288,6 +286,7 @@ typedef struct {
     int quiet;                  /* 安静模式: 省电模式打开时特效变少变稀, 帧率降低 */
     int gentle;                 /* 减弱动效 (GALAXY_GENTLE=1 或 ~/.cache/galaxy-gentle): 闪白 / 透镜 / 光晕 / 曝光骤降 / 闪烁都收敛 */
     double refresh;             /* 遮罩所在显示器的刷新率 (Hz): 驻留态按它出帧 */
+    double livefail;            /* 上次取不到动态壁纸离屏画面的时刻 (之后 1s 内不再尝试) */
     double nebseed[2];          /* 星云噪声的偏移: 每次 Super+Z 随机, 浓淡的位置每次不同 */
     double adapt, adaptat;      /* 曝光适应: 平滑后的光层亮度 / 上次更新的时刻 */
     int meteork;                /* 流星雨: 当前是第几次 */
@@ -357,6 +356,7 @@ typedef struct {
 
 static GalaxyScene galaxyscene;
 static double galaxynow(void);
+static int galaxyreadlive(Picture dst);
 static void galaxyheatfree(void);
 static int galaxyhud;           /* F12 帧率面板, 进程内保持 */
 

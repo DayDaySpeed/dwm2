@@ -829,30 +829,20 @@ galaxylogactions(double motion)
 
     if (!r->log || r->mode != GalaxyOrbit)
         return;
-    if (galaxycycle(motion, 4, 6, &k, &local) && k != r->lastripple) {
-        r->lastripple = k;
-        fprintf(r->log, "galaxy ripple at %.1fs\n", motion);
-    }
     if (!r->quiet && galaxycycle(motion, 6, 15, &k, &local) && k != r->lastcomet) {
         r->lastcomet = k;
         fprintf(r->log, "galaxy comet at %.1fs\n", motion);
     }
 }
 
-/* 涟漪: 驻留后每 6s 从中心光源发出一圈亮波, 以 .4 屏宽/秒沿轨道向外扩散, 扫过的核心短暂亮起 */
+/* 涟漪 / 双星脉冲: 驻留时不再周期发出 (太频繁), 每帧先清零; 只有开场落定 (galaxyupdatebeats) 和整点报时 (galaxyupdatescene) 会发 */
 static void
 galaxyupdateripple(double motion)
 {
     GalaxyScene *r = &galaxyscene;
-    double local;   /* 本次涟漪发出后的真实秒数 */
-    int k;
 
+    (void)motion;
     r->ripple = r->rippleamp = r->sunpulse = 0;
-    if (!galaxycycle(motion, 4, 6, &k, &local))
-        return;
-    r->ripple = .4 * r->vw * local;
-    r->rippleamp = galaxyclamp(1 - r->ripple / (.65 * r->vw));
-    r->sunpulse = .7 * galaxyflash(local, .6, 2);
 }
 
 
@@ -1132,7 +1122,7 @@ galaxyupdatescene(double stage, double motion, double dt)
     galaxyupdatestars(stage, motion, dt);
     for (i = 0; i < r->ndust; i++)
         r->dust[i].p = galaxyproject(galaxydustat(&r->dust[i], motion));
-    /* 坍缩: 整体淡回壁纸的部分停在冲击波之前, 改由冲击波圆形揭开 (见 galaxypresent); 没有 GL 壁纸纹理时仍整体淡入 */
+    /* 坍缩: 整体淡回壁纸的部分停在 stage 5 之前, 之后由收尾的 wfade 淡成壁纸 (见 galaxyrender); 没有 GL 壁纸纹理时仍按原曲线淡入 */
     fs = r->mode == GalaxyCollapse && galaxygl.gwall ? MIN(stage, 5.0) : stage;
     r->bright = GALAXYCURVE(galaxybright, fs);
     r->space = GALAXYCURVE(galaxyspacekeys, fs);
