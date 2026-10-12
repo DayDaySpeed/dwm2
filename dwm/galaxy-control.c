@@ -1179,7 +1179,7 @@ galaxytick(void)
         r->celapsed = u;
         if (u < GALAXYPREP)
             r->stage = galaxymix(r->cstage, GALAXYHOLD, galaxyeaseinoutcubic(u / GALAXYPREP));
-        else if (u < GALAXYEXITSTART)
+        else if (u < GALAXYEXITSTART || galaxygl.gwall)   /* 有壁纸纹理时星系群照常公转, 交给黑洞吞噬 */
             r->stage = GALAXYHOLD;
         else
             r->stage = GALAXYEXIT + (GALAXYEND - GALAXYEXIT) * galaxyphase(u, GALAXYEXITSTART, GALAXYCOLLAPSE);
