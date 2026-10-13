@@ -205,8 +205,7 @@ galaxyorbitstart(void)
     r->lastinput = r->lastdpms = galaxynow();
     if (r->fakehour > 0)
         r->fakehour += r->lastinput;   /* 测试用的假整点: 从驻留开始计时 */
-    if (!r->saver)
-        galaxymousesleep("orbit start");
+    galaxymousesleep("orbit start");
     galaxyrelease();
 }
 
@@ -508,7 +507,7 @@ galaxyfps(double now)
         return MAX(GALAXYFPS, orbit);
     if (r->mode != GalaxyOrbit)
         return GALAXYFPS;
-    if (r->quiet || r->saver)
+    if (r->quiet)
         return MIN(GALAXY_QUIETFPS, orbit);
     return now - r->lastinput > GALAXYIDLE ? GALAXYIDLEFPS : orbit;
 }
@@ -971,7 +970,7 @@ static void
 galaxynotequeue(const char *text)
 {
     GalaxyScene *r = &galaxyscene;
-    char *t, buf[160];
+    char *t;
     size_t n;
 
     if (r->nnote >= GALAXYNOTES || !*text)
@@ -987,7 +986,7 @@ galaxynotequeue(const char *text)
             *t = ' ';
     r->noteat[r->nnote++] = 0;
     if (r->log)
-        fprintf(r->log, "galaxy note: queued \"%s\"\n", galaxynotetext(r->note[r->nnote - 1], buf, sizeof buf)), fflush(r->log);
+        fprintf(r->log, "galaxy note: queued \"%s\"\n", r->note[r->nnote - 1]), fflush(r->log);
 }
 
 /* 每帧: 处理待诞生的窗口, 推进彗星队列, 检查整点, 天象发生后随机特效让位 3s */
@@ -998,7 +997,6 @@ galaxyupdateevents(double now, double dt)
     Client *c;
     struct tm tm;
     time_t tt;
-    char buf[160];
     int i, active = 0;
     double last = -1e9;
 
@@ -1030,7 +1028,7 @@ galaxyupdateevents(double now, double dt)
             active++;
             r->hushuntil = now + 3;
             if (r->log)
-                fprintf(r->log, "galaxy note: comet \"%s\"\n", galaxynotetext(r->note[i], buf, sizeof buf)), fflush(r->log);
+                fprintf(r->log, "galaxy note: comet \"%s\"\n", r->note[i]), fflush(r->log);
         }
     /* 整点报时 (GALAXY_FAKEHOUR=秒: 驻留这么多秒后假装到了整点, 测试用) */
     tt = time(NULL);
@@ -1203,10 +1201,7 @@ galaxytick(void)
         r->gaps[r->ngaps++] = now - r->last;
     r->last = now;
     begin = galaxynow();
-    if (r->mode == GalaxyOrbit && r->saver) {
-        /* 屏保: 指针静止不动, 不当作悬停 (否则导演镜头会一直停住) */
-        r->hover = r->hovercore = -1;
-    } else if (r->mode == GalaxyOrbit && r->dragging) {
+    if (r->mode == GalaxyOrbit && r->dragging) {
         r->hover = r->hovercore = -1;
         galaxysetcursor(0);
     } else if (r->mode == GalaxyOrbit && r->dragstar >= 0) {
@@ -1309,19 +1304,6 @@ galaxyevent(XEvent *e)
 
     if (!r->mode)
         return 0;
-    if (r->saver && (r->mode == GalaxyIntro || r->mode == GalaxyOrbit)) {
-        /* 屏保模式: 任何按键、点击, 或鼠标移动超过 8px, 都走回程回到桌面 */
-        if ((e->type == KeyPress && !IsModifierKey(XLookupKeysym(&e->xkey, 0))) || e->type == ButtonPress
-                || (e->type == MotionNotify && hypot(e->xmotion.x_root - r->saverx, e->xmotion.y_root - r->savery) > 8)) {
-            if (r->log)
-                fprintf(r->log, "galaxy saver: input, back to desktop\n");
-            galaxyreturnstart(-1, -1);
-            return 1;
-        }
-        if (e->type == KeyPress || e->type == KeyRelease || e->type == ButtonPress || e->type == ButtonRelease
-                || e->type == MotionNotify)
-            return 1;
-    }
     switch (e->type) {
     case KeyPress:
         sym = XLookupKeysym(&e->xkey, 0);
@@ -1961,8 +1943,7 @@ fail:
     galaxyend(1);
 }
 
-/* bin/galaxysaver.py 在 root 上设置 _DWM_GALAXY=saver: 无操作到时间, 以屏保模式进入星系 (星系已在运行时忽略);
- * bin/galaxynote.sh 设置 note:<文字>: 星系运行中的通知彗星 */
+/* bin/galaxynote.sh 在 root 上设置 _DWM_GALAXY=note:<文字>: 星系运行中的通知彗星 */
 static void
 galaxyproperty(XPropertyEvent *ev)
 {
@@ -1980,19 +1961,7 @@ galaxyproperty(XPropertyEvent *ev)
         XFree(tp.value);
     }
     XDeleteProperty(dpy, root, atom);
-    if (!strncmp(value, "note:", 5)) {     /* 通知: 星系运行中化作一颗带标题的彗星, 没运行时忽略 */
-        if (r->mode == GalaxyIntro || r->mode == GalaxyOrbit)
-            galaxynotequeue(value + 5);
-        return;
-    }
-    if (strcmp(value, "saver") || galaxyactive())
-        return;
-    galaxy(&(Arg){0});
-    if (!galaxyactive())
-        return;
-    r->saver = 1;
-    r->saverx = r->mx;
-    r->savery = r->my;
-    if (r->log)
-        fprintf(r->log, "galaxy saver: started after idle\n");
+    /* 通知: 星系运行中化作一颗带标题的彗星, 没运行时忽略 */
+    if (!strncmp(value, "note:", 5) && (r->mode == GalaxyIntro || r->mode == GalaxyOrbit))
+        galaxynotequeue(value + 5);
 }

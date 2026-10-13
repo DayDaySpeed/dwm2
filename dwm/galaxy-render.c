@@ -1173,19 +1173,6 @@ galaxyrenderpulsar(double f)
             f * g->alpha * .5 * pow(.5 + .5 * cos(2 * GALAXYPI * t / .9), 4) * galaxynearfade(g->p.z));
 }
 
-/* 通知彗星显示的文字. 屏保模式 (无人看着的屏幕) 只显示应用名, 不显示消息摘要 */
-static const char *
-galaxynotetext(const char *note, char *buf, size_t n)
-{
-    const char *sep;
-
-    if (!galaxyscene.saver)
-        return note;
-    sep = strstr(note, ": ");
-    snprintf(buf, n, "%.*s: 新通知", sep ? (int)(sep - note) : (int)strlen(note), note);
-    return buf;
-}
-
 /* 天象: 新星诞生的闪光 / 关闭窗口的流星尾 / 通知彗星和标题 / 整点光波和时间 */
 static void
 galaxyrenderevents(void)
@@ -1196,7 +1183,7 @@ galaxyrenderevents(void)
     GalaxyVec head, tail, dir, A, B, C;
     GalaxyMat disk;
     double now = galaxynow(), f = r->holdw, t, u, env, a, L, z, sx, sy, h;
-    char clock[8], buf[160];
+    char clock[8];
     int i, j, ntext = 0;
     struct GalaxyText { double x, y, a; int note; } text[GALAXYNOTES + 1];
 
@@ -1306,7 +1293,7 @@ galaxyrenderevents(void)
             snprintf(clock, sizeof clock, "%02d:00", r->chimehour);
             galaxytext(r->clockfont, text[i].x, text[i].y + (r->clockfont ? r->clockfont->ascent : 0), clock, text[i].a, 1);
         } else {
-            galaxytext(r->notefont, text[i].x, text[i].y, galaxynotetext(r->note[text[i].note], buf, sizeof buf), text[i].a, 0);
+            galaxytext(r->notefont, text[i].x, text[i].y, r->note[text[i].note], text[i].a, 0);
         }
 }
 

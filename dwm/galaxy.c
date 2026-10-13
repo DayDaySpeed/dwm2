@@ -298,8 +298,6 @@ typedef struct {
     int farcometk;
     double lumsum, lummax, expomin;   /* 本段统计 (日志): 光层亮度的和 / 最大值, 最低曝光 */
     int trace;                  /* 环境变量 GALAXY_TRACE: 每帧把镜头参数写进日志 */
-    int saver;                  /* 屏保模式 (无操作时由 bin/galaxysaver.py 触发): 任何输入都回到桌面 */
-    double saverx, savery;      /* 屏保开始时的指针位置: 移动超过几像素才算有人回来 */
     double fxgap;               /* 驻留特效间隔的总倍数 (配置 x 安静模式) */
     double divesum, divemax;    /* 俯冲段 (开场时钟 3.2–5.0) 的渲染耗时统计 */
     int divenum;

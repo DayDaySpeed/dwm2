@@ -2277,7 +2277,7 @@ propertynotify(XEvent *e)
     if ((ev->window == root) && (ev->atom == XA_WM_NAME))
         updatestatus();
     else if (ev->window == root && ev->state == PropertyNewValue && !overviewactive())
-        galaxyproperty(ev);     /* bin/galaxysaver.py 设置 _DWM_GALAXY: 无操作时进入星系屏保 (窗口总览打开时不打断) */
+        galaxyproperty(ev);     /* bin/galaxynote.sh 设置 _DWM_GALAXY: 星系运行中的通知彗星 */
     else if (ev->state == PropertyDelete)
         return; /* ignore */
     else if ((c = wintoclient(ev->window))) {
