@@ -203,7 +203,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 
 ## 6. 修改配置
 
-所有配置都在 `~/projs/dwm2` 中：
+所有配置都在仓库里（`$DWM`，即你克隆的位置，如 `~/projs/dwm2`）：
 
 | 想改什么 | 改哪个文件 | 改完后 |
 |---|---|---|
@@ -214,7 +214,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 | 环境变量、缩放、输入法 | `config/xinitrc` | 下次登录生效 |
 | 窗口动画、透明、圆角、模糊 | `config/picom.conf` | `Super + P` 关闭 picom 再打开 |
 | 通知样式 | `config/dunst.conf` | `killall dunst; dunst -conf $DWM/config/dunst.conf &` |
-| rofi 外观 | `config/rofi.rasi` | 下次打开 rofi 时生效 |
+| rofi 外观 | `config/rofi/config.rasi` | 下次打开 rofi 时生效 |
 | 状态栏模块 | `bin/statusbar/packages/*.sh` | 立即生效（下次刷新时） |
 | 壁纸 | 图片放进 `wallpaper/static/`，视频放进 `wallpaper/live/`；Steam 上订阅的 Wallpaper Engine 壁纸执行 `bin/livewall.sh sync`（或重新登录）复制进 `wallpaper/live/`，之后可以在 Steam 取消订阅；不想要的直接从 `wallpaper/live/` 删掉 | 静态壁纸每 5 分钟随机更换；`Super + P` → switch wallpaper mode to live / static 在动态 / 静态之间切换（各自随机挑一个，选择会记住）；左键点状态栏的菜单图标立即换一张（动态模式下换一个）；所有壁纸切换（动态、静态、每 5 分钟换图）都随机播放一种 GPU 转场特效（`config/transitions/`）；在 `bin/livewall.sh` 顶部改 `TRANSITION=` 可固定某一种或改成 `fade`（GPU 淡入），`TRANSITION_SAVE=` 单独设置省电模式下的转场 |
 
@@ -225,21 +225,14 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 
 ---
 
-## 7. 需要另外安装才能用的功能
+## 7. 其他功能
 
-| 功能 | 需要安装 |
-|---|---|
-| `Super + M` 音乐播放器 | SPlayer 的 AppImage（`./setup.sh deps` 会自动下载，无需安装） |
-| `Super + R` 文件管理器 | `pcmanfm` |
-| `Super + Y` 翻译 | `translate-shell`（需要联网，使用谷歌翻译等在线服务） |
-| `Super + X` 剪贴板历史 | `clipmenu`（装好后重新登录生效；没装时用原来的 parcellite） |
-| 护眼 | `gammastep` |
-| 外接显示器布局 | `autorandr`：插上显示器后按 `Super + P` 选 `monitor layout` 设置布局（`bin/monitor.sh`），也可以设外接屏分辨率和缩放（笔记本屏固定 135%，外接屏默认 100%，两块屏同时用时也各按各的显示）。会按显示器自动保存；以后插上同一台会自动套用（登录时也会），拔掉时自动点亮笔记本屏。注意：切换屏幕布局时会重新铺壁纸 |
+这些功能用到的程序都由 `./setup.sh deps` 装好（见 [安装教程](../tutorials/01-install.md)）。`Super + M` 音乐播放器是 SPlayer 的 AppImage，`Super + Y` 翻译要联网。外接显示器的布局和缩放见 [多显示器教程](../tutorials/05-monitors.md)。
 
 **Super + P 菜单里的其他开关：**
 
 - **do not disturb（勿扰）**：暂停弹出通知，远程桌面、开会、录屏时用；关闭后，期间收到的通知会补弹出来。
-- **pause / resume auto lock（暂停自动锁屏）**：看视频、演示时不会自动锁屏和熄屏；恢复后回到正常的时间（见「锁屏与截图使用说明」）。
+- **pause / resume auto lock（暂停自动锁屏）**：看视频、演示时不会自动锁屏和熄屏；恢复后回到正常的时间（见 [锁屏与截图](lock-screenshot.md)）。
 - **night light（护眼）**：屏幕调成 4000K 暖色，晚上看着不刺眼；开着时重启后依然有效。需要安装 `gammastep`。
 
 **电量低提醒：** 用电池时，电量降到 20% 弹提醒，10% 弹紧急提醒，5% 时 30 秒后自动睡眠（期间插上电源会取消）。每一档只提醒一次。
@@ -249,13 +242,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 - 开启时：壁纸带转场切到静态（停掉视频和场景渲染）、屏幕刷新率降到 60Hz、CPU 节能策略（EPP）设为 `power`；关闭时全部恢复成开启前的样子。开着省电模式重启后依然有效。
 - 拔掉电源时自动开启，插上电源时自动关闭（每 10 秒检测一次）。只会自动关闭拔电时自动开的那次；在 `Super + P` 里手动开的不会被插电关掉。
 - 独显直连模式下（BIOS 里的「独显直连 / MUX」），独显一直开着，大约 25W，开启省电时会弹通知提醒。想要真正省电，要在 BIOS 里切回混合模式。
-- CPU 节能策略要写 `/sys`，需要 root。配置一次 sudo 免密后才会生效，否则只跳过这一项（会弹通知提示）：
-
-```sh
-# 先写到临时文件, visudo 检查语法无误后再装进 /etc/sudoers.d (sudoers 写错会导致 sudo 用不了)
-echo "$USER ALL=(root) NOPASSWD: /usr/bin/tee /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference" > /tmp/powersave
-sudo visudo -cf /tmp/powersave && sudo install -m 440 -o root -g root /tmp/powersave /etc/sudoers.d/powersave
-```
+- CPU 节能策略要写 `/sys`，需要 root。`./setup.sh system` 会装好免密规则（`/etc/sudoers.d/powersave`，模板在 `system/sudoers-powersave`）；没装时只跳过这一项（会弹通知提示）。CPU 驱动不支持 EPP 的机器上这一项自动跳过。
 
 **显卡模式（混合 / 独显直连）：**
 
@@ -272,11 +259,7 @@ sudo visudo -cf /tmp/powersave && sudo install -m 440 -o root -g root /tmp/power
 - **切换方法**：重启时按 `F10` 进 BIOS，在显卡相关选项（Graphics Switching / Display Mode 之类）里选「独显 / Discrete」或「混合 / Hybrid」，保存重启，正常 `startx` 即可。`bin/livewall.sh` 会自动识别当前模式。
 - **黑屏恢复**：按 `Ctrl + Alt + F2` 进 tty 登录，执行 `sudo mv /etc/X11/xorg.conf.d.bak/* /etc/X11/xorg.conf.d/` 恢复旧配置后重启；或者进 BIOS 切回混合模式。
 
-安装命令：
-
-```sh
-sudo pacman -S pcmanfm clipmenu gammastep autorandr
-```
+这些都由 `./setup.sh deps` 安装（清单在 `packages/core.txt`）。
 
 **音乐播放器（SPlayer）：**
 

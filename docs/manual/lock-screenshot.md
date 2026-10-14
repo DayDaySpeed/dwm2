@@ -35,14 +35,14 @@
 
 背景图需要预先生成（2560×1440 约 10 秒），所以：
 
-- 每次换壁纸后（开机时和每 5 分钟），`bin/autostart.sh` 会在后台执行 `bin/blurlock.sh update` 重新生成。壁纸没变时会跳过。
+- 每次换壁纸后（开机时和每 5 分钟），`bin/livewall.sh` 会在后台执行 `bin/blurlock.sh update` 重新生成。壁纸没变时会跳过。
 - 第一次锁屏时如果还没有背景图，会先生成再锁屏，稍等几秒。
 
 ### 修改
 
 | 想改什么 | 改哪里 |
 |---|---|
-| 自动锁屏的等待时间 | `bin/dpms.sh` 里的 `IDLE_SEC`（单位是秒）；`config/betterlockscreenrc` 的 `lock_timeout` 要改成一样的值 |
+| 自动锁屏的等待时间 | `bin/dpms.sh` 里的 `ALERT_SEC`（调暗提醒）和 `CYCLE_SEC`（提醒后多久锁屏）、`OFF_SEC`（熄屏），单位是秒；`config/betterlockscreenrc` 的 `lock_timeout` 要和 `OFF_SEC` 一致 |
 | 调暗、模糊程度 | `config/betterlockscreenrc` 里的 `dim_level`、`blur_level` |
 | 颜色、字体、提示文字 | `config/betterlockscreenrc` |
 | 时间、日期、竖条的位置和大小 | `bin/blurlock.sh` 里 `--` 之后的参数（竖条是 `--bar-*`） |

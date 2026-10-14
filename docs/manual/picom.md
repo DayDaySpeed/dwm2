@@ -6,8 +6,8 @@ picom 是窗口合成器，负责窗口的透明、圆角、模糊、淡入淡�
 - 配置文件：`config/picom.conf`（v13 语法：窗口相关的设置都写在 `rules` 里，动画写在 `animations` 里）
 - 由 `bin/autostart.sh` 开机启动：`picom --config $DWM/config/picom.conf`
 
-> 系统里还有一个 pacman 装的 picom（`/usr/bin/picom`，也是 v13，但没有 dwm 的补丁）。
-> 执行 `which picom` 应该显示 `~/.local/bin/picom`。
+> `config/xinitrc` 把 `~/.local/bin` 排在 PATH 最前面，所以桌面里用的一定是这一份。
+> 确认正在运行的版本：`readlink /proc/$(pgrep -x picom)/exe` 应该显示 `~/.local/bin/picom`。旧安装残留的 `/usr/local/bin/picom` 可以删掉（`./setup.sh check` 会提示）。
 
 ---
 

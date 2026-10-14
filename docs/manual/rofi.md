@@ -40,13 +40,17 @@ rofi 是启动器和菜单：用来启动程序、切换窗口，也被用作 dw
 
 | 菜单项 | 作用 |
 |---|---|
-| ` set wallpaper` | 从 `wallpaper/` 里随机换一张壁纸 |
+| ` switch wallpaper mode to live / static` | 动态 / 静态壁纸切换（见 [壁纸教程](../tutorials/04-wallpaper.md)） |
+| `󰌪 open / close power save` | 省电模式：静态壁纸 + 60Hz + CPU 节能，拔电时自动打开（见 [dwm 手册](dwm.md)） |
+| `󰂛 open / close do not disturb` | 勿扰：暂停显示通知 |
+| `󰌿 pause auto lock` / `󰌾 resume auto lock` | 暂停 / 恢复自动锁屏和熄屏（看视频、演示时用） |
+| `󰖔 open / close night light` | 护眼暖色（gammastep） |
 | `󰕞 update statusbar` | 立即刷新状态栏 |
 | ` open daed` / ` close daed` | 启动 / 停止 daed 代理服务。需要先安装 daed，并给 `systemctl` 配置免密 sudo，否则从菜单点击没有反应 |
-| `󰍹 monitor layout` | 接了外接显示器时才出现。选择布局：外接屏在右侧 / 左侧 / 上方、复制、仅外接屏、仅笔记本；还可以设外接屏分辨率和缩放。缩放：笔记本屏固定 135%，外接屏默认 100%，也可以给这台显示器手动指定。两块屏同时用时，外接屏按放大后的画面渲染再缩小显示，看起来就是它自己的缩放（文字比原生略软）；改了全局缩放后状态栏自动刷新，已打开的程序重开后生效。选好的布局、分辨率、缩放按显示器记住，下次插上同一台自动沿用；拔掉外接屏时自动点亮笔记本屏。子菜单里按 `Esc` 或选 `↩ 返回` 回到上一层，在 Super+P 主菜单按 `Esc` 才是关闭 |
+| `󰍹 monitor layout` | 接了外接显示器时才出现。选择布局：外接屏在右侧 / 左侧 / 上方、复制、仅外接屏、仅笔记本；还可以设外接屏分辨率和缩放。缩放：两块屏都可以手动指定（笔记本屏默认按分辨率取 100% 或 135%，外接屏默认 100%）。两块屏同时用时，外接屏按放大后的画面渲染再缩小显示，看起来就是它自己的缩放（文字比原生略软，详见 [多显示器教程](../tutorials/05-monitors.md)）；改了全局缩放后状态栏自动刷新，已打开的程序重开后生效。选好的布局、分辨率、缩放按显示器记住，下次插上同一台自动沿用；拔掉外接屏时自动点亮笔记本屏。子菜单里按 `Esc` 或选 `↩ 返回` 回到上一层，在 Super+P 主菜单按 `Esc` 才是关闭 |
 | ` open picom` / ` close picom` | 打开 / 关闭 picom |
-| `󱒃 open sunshine` / `󱒃 close sunshine` | 开启 / 关闭 Sunshine 远程桌面（见 [远程桌面使用说明](远程桌面使用说明.md)） |
-| `󰢹 open vnc` / `󰢹 close vnc` | 开启 / 关闭远程桌面（见 [远程桌面使用说明](远程桌面使用说明.md)） |
+| `󱒃 open sunshine` / `󱒃 close sunshine` | 开启 / 关闭 Sunshine 远程桌面（见 [远程桌面使用说明](remote-desktop.md)） |
+| `󰢹 open vnc` / `󰢹 close vnc` | 开启 / 关闭远程桌面（见 [远程桌面使用说明](remote-desktop.md)） |
 
 **添加菜单项：** 编辑 `bin/rofi.sh`。
 

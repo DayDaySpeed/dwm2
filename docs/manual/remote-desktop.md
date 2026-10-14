@@ -89,13 +89,13 @@ yay -S sunshine-bin                             # Sunshine
 | `Ctrl + Alt + Shift + S` | 显示 / 隐藏性能统计（帧率、延迟、码率） |
 
 **Win 键：** 在推荐设置下，全屏时 Win 键会传给 Linux。但 **Win + L**（锁屏）、**Win + G**（Xbox Game Bar）等组合键会被 Windows 系统抢先处理，传不过去。
-这时用 **右 Alt** 代替 Win：Sunshine 已经配置了 `key_rightalt_to_key_win`，会把右 Alt 当作 Win 发送。例如：
+这时用 **Alt** 代替 Win：开启 Sunshine 时 `bin/sunshine.sh altkey` 会给远程用的虚拟键盘设置 `altwin:swap_alt_win`，Alt 和 Win 互换（不要再开 Sunshine 的 `key_rightalt_to_key_win`，否则会被换回去）。例如：
 
 | 按键 | 在 dwm 中等于 |
 |---|---|
-| `右 Alt + L` | `Super + L`：聚焦右边的窗口 |
-| `右 Alt + G` | `Super + G`：切换全局窗口 |
-| `右 Alt + 其他键` | `Super + 其他键` |
+| `Alt + L` | `Super + L`：聚焦右边的窗口 |
+| `Alt + G` | `Super + G`：切换全局窗口 |
+| `Alt + 其他键` | `Super + 其他键` |
 
 ### 5. 推荐设置（Moonlight → 设置）
 
