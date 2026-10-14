@@ -40,6 +40,7 @@
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
 #include <X11/Xproto.h>
+#include <X11/Xresource.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/shape.h>
 #ifdef XINERAMA
@@ -301,6 +302,7 @@ static void setup(void);
 static void seturgent(Client *c, int urg);
 static void sigchld(int unused);
 static void spawn(const Arg *arg);
+static void syncqtscale(void);
 static Monitor *systraytomon(Monitor *m);
 
 static Monitor *recttomon(int x, int y, int w, int h);
@@ -3149,6 +3151,28 @@ spawn(const Arg *arg)
     }
 }
 
+/* Qt 缩放跟着 Xft.dpi 走: 布局切换改了 dpi 后 bin/monitor.sh 会原地重启 dwm, 之后启动的程序继承新倍数 (130 -> 1.35, 96 -> 1.00) */
+void
+syncqtscale(void)
+{
+    char *rms, *type, f[16];
+    XrmDatabase db;
+    XrmValue v;
+    double dpi;
+
+    if (!(rms = XResourceManagerString(dpy)))
+        return;
+    XrmInitialize();
+    if (!(db = XrmGetStringDatabase(rms)))
+        return;
+    if (XrmGetResource(db, "Xft.dpi", "Xft.Dpi", &type, &v) && v.addr && (dpi = atof(v.addr)) > 0) {
+        snprintf(f, sizeof f, "%.2f", dpi / 96);
+        setenv("QT_SCALE_FACTOR", f, 1);
+        setenv("QT_SCREEN_SCALE_FACTORS", f, 1);
+    }
+    XrmDestroyDatabase(db);
+}
+
 void
 tag(const Arg *arg)
 {
@@ -4484,6 +4508,7 @@ main(int argc, char *argv[])
     if (!(dpy = XOpenDisplay(NULL)))
         die("dwm: cannot open display");
     checkotherwm();
+    syncqtscale();
     setup();
     if (getenv("DWM_RESTARTED"))
         restorelayouts();

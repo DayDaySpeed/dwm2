@@ -1,6 +1,7 @@
 #! /bin/bash
-# 显示器布局 (Super+P 菜单 "󰍹 monitor layout", 接了外接屏时才出现)
-#   monitor.sh menu       rofi 选择: 外接屏在右 / 左 / 上方、复制、仅外接屏、仅笔记本, 以及外接屏分辨率、缩放
+# 显示器布局与缩放 (Super+P 菜单 "󰍹 monitor layout")
+#   monitor.sh menu       rofi 选择: 外接屏在右 / 左 / 上方、复制、仅外接屏、仅笔记本, 以及外接屏分辨率、外接屏 / 笔记本屏缩放
+#                         没接外接屏时只有笔记本屏缩放
 #                         Esc / "↩ 返回" 回到上一层: 子菜单回到本菜单, 本菜单退出码 2 (rofi.sh 据此重新打开 Super+P 主菜单)
 #   monitor.sh <布局>     right | left | above | mirror | external | laptop
 #   monitor.sh detect     打印已连接的外接屏 (没有则为空)
@@ -8,10 +9,11 @@
 #                         插上用过的显示器时套用它上次的布局, 新显示器弹通知提示从菜单选
 #   monitor.sh login      登录时 (xinitrc, dwm 启动前): 套用保存的布局并设好缩放, 打印 Qt 缩放倍数
 # 选好的布局按显示器 (EDID) 存成 autorandr 配置, 外接屏位置不固定, 换了位置从菜单重选即可
-# 缩放: X11 整个桌面只有一个缩放比例 (Xft.dpi)。笔记本屏 (2560x1440 高密度) 在用时全局 135%, 只用外接屏时全局用外接屏的缩放;
-#   外接屏的缩放默认 100%, 可在菜单里给这台显示器手动指定 (记在它的 autorandr 配置目录里)。
-#   两块屏同时用 (扩展) 时, 外接屏按 135% / 外接屏缩放 倍放大的画面渲染再缩小显示 (xrandr --scale),
-#   这样外接屏上看起来就是它自己的缩放, 代价是文字比原生略软。改了全局缩放会原地重启 dwm (窗口保留), 已打开的程序重开后生效
+# 缩放: X11 整个桌面只有一个缩放比例 (Xft.dpi)。笔记本屏在用时全局用笔记本屏的缩放, 只用外接屏时全局用外接屏的缩放 (原生显示, 文字清晰);
+#   两块屏的缩放都可在菜单里手动指定, 按 EDID 记住: 外接屏默认 100% (记在它的 autorandr 配置目录里),
+#   笔记本屏默认按分辨率猜 (宽 >= 2560 为 135%, 否则 100%; 记在 ~/.config/dwm-scale/), 换了笔记本选一次即可。
+#   两块屏同时用 (扩展) 时, 外接屏按 笔记本屏缩放 / 外接屏缩放 倍放大的画面渲染再缩小显示 (xrandr --scale),
+#   这样外接屏上看起来就是它自己的缩放, 代价是文字比原生略软。改了全局缩放会原地重启 dwm (窗口保留), 已打开的程序重开后生效 (Qt 程序也是, 不用重新登录)
 
 DWM=${DWM:-$(cd "$(dirname "$0")/.."; pwd)}
 STATE=${XDG_CACHE_HOME:-$HOME/.cache}/monitor-connected
@@ -19,8 +21,10 @@ CONF=${XDG_CONFIG_HOME:-$HOME/.config}
 PROFILES=$CONF/autorandr
 NID=9541
 BACK="↩ 返回"                                      # 各层菜单最后一项; 与 Esc 一样回到上一层 (退出码 2)
-SCALES="115 125 135"                              # 菜单里除"默认 100%"外的选项
-LAPTOP_SCALE=135                                   # 笔记本屏在用时的默认缩放, 与 config/Xresources 的 Xft.dpi: 130 一致
+SCALES="115 125 135"                              # 外接屏菜单里除"默认"外的选项
+LAPTOP_SCALES="100 115 125 135 150 175 200"       # 笔记本屏菜单里除"默认"外的选项
+LAPTOP_SCALE=135                                   # 没指定过时高分屏 (宽 >= 2560) 笔记本的缩放, 与 config/Xresources 的 Xft.dpi: 130 一致
+LAPTOP_DIR=$CONF/dwm-scale                         # 笔记本屏缩放按 EDID 存在这里 (不放 autorandr 目录: --save 会清空, 子目录还会被当成布局)
 
 # 笔记本屏: NVIDIA 独显直连时名字是 DP-x, 靠 ConnectorType: Panel 识别; 核显下没有这个属性, 按 eDP / LVDS 名字识别
 internal() {
@@ -39,8 +43,11 @@ post() {
     "$DWM/bin/nightlight.sh" apply >/dev/null 2>&1 || true      # 护眼关着时返回非 0
 }
 
+# 屏幕 $1 的 EDID 摘要: 同一块屏换了输出名 (独显直连 DP-4 / 核显 eDP-1) 也不变
+edid() { autorandr --fingerprint 2>/dev/null | awk -v o="$1" '$1 == o {print $2}' | md5sum | cut -c1-8; }
+
 # 这台外接屏的 autorandr 配置名 (按 EDID)
-profile() { echo "monitor-$(autorandr --fingerprint 2>/dev/null | awk -v o="$1" '$1 == o {print $2}' | md5sum | cut -c1-8)"; }
+profile() { echo "monitor-$(edid "$1")"; }
 
 # 按这台外接屏的 EDID 保存当前布局, 下次插上同一台自动沿用 (autorandr --save 会清空目录, 先留住手动缩放)
 save() {
@@ -60,16 +67,30 @@ extscale() {
     echo "${s:-100}"
 }
 
-# 当前布局应有的全局缩放: 笔记本屏在用 135%, 只用外接屏时用外接屏的缩放
+# 笔记本屏 $1 的缩放: 手动指定过就用它, 否则按分辨率猜
+laptopfile() { echo "$LAPTOP_DIR/laptop-$(edid "$1")"; }
+laptopguess() {
+    local w
+    w=$(preferred "$1"); w=${w%x*}
+    [ "${w:-0}" -ge 2560 ] && echo $LAPTOP_SCALE || echo 100
+}
+laptopscale() {
+    local s
+    s=$(cat "$(laptopfile "$1")" 2>/dev/null)
+    [ -n "$s" ] && echo "$s" || laptopguess "$1"
+}
+
+# 当前布局应有的全局缩放: 笔记本屏在用时用笔记本屏的缩放, 只用外接屏时用外接屏的缩放
 wantscale() {
-    local ext
-    if active "$(internal)"; then echo $LAPTOP_SCALE; return; fi
+    local int ext
+    int=$(internal)
+    if active "$int"; then laptopscale "$int"; return; fi
     ext=$(external)
     [ -n "$ext" ] && extscale "$ext" || echo 100
 }
 
-# 扩展布局时外接屏的放大倍数: 全局 135% / 外接屏缩放, 不小于 1
-extfactor() { awk -v g=$LAPTOP_SCALE -v s="$(extscale "$1")" 'BEGIN {f = g / s; if (f < 1) f = 1; printf "%.4f\n", f}'; }
+# 扩展布局时外接屏的放大倍数: 笔记本屏缩放 / 外接屏缩放, 不小于 1
+extfactor() { awk -v g="$(laptopscale "$(internal)")" -v s="$(extscale "$1")" 'BEGIN {f = g / s; if (f < 1) f = 1; printf "%.4f\n", f}'; }
 
 # 外接屏用的分辨率: 亮着就沿用当前的 (菜单里改过分辨率), 否则用首选的
 extmode() {
@@ -119,6 +140,8 @@ setscale() {
         && sed -i "s/--force-device-scale-factor=[0-9.]*/--force-device-scale-factor=$(factor "$1")/" "$f" && changed=1
     if [ "$(curdpi)" != "$d" ]; then
         echo "Xft.dpi: $d" | xrdb -merge
+        # Qt 倍数: dwm 重启时按 Xft.dpi 自己设 (见 dwm.c syncqtscale), 这里同步给 systemd / dbus 拉起的程序
+        systemctl --user set-environment QT_SCALE_FACTOR="$(factor "$1")" QT_SCREEN_SCALE_FACTORS="$(factor "$1")" 2>/dev/null
         changed=1
         [ "$2" = norestart ] || restartdwm
     fi
@@ -128,7 +151,8 @@ setscale() {
 }
 factor() { awk -v s="$1" 'BEGIN {printf "%.2f\n", s / 100}'; }   # 135 -> 1.35
 
-apply() {
+# 按布局 $1 摆放屏幕 (只调 xrandr)
+layout() {
     local int ext args=() o
     int=$(internal)
     ext=$(external)
@@ -159,9 +183,22 @@ apply() {
             *)        return 1 ;;
         esac
     fi || { notify-send -r $NID "󰍹 显示器" "切换失败"; return 1; }
+}
+
+apply() {
+    local ext
+    layout "$1" || return
+    ext=$(external)
     [ -n "$ext" ] && save "$ext"
     post
     setscale "$(wantscale)"
+}
+
+# autorandr 套用保存的布局后按当前缩放重新摆一次: 配置里存的外接屏放大倍数可能已经不对 (之后改过缩放)
+relayout() {
+    local l
+    l=$(curlayout)
+    [ "$l" = laptop ] || layout "$l"
 }
 
 # 外接屏分辨率: 列出它支持的分辨率, 当前的打勾
@@ -178,30 +215,65 @@ resolution() {
     apply "$(curlayout)"                       # 按新分辨率重新摆放 (扩展时外接屏的放大和位置要重算)
 }
 
-# 外接屏缩放: 自动, 或手动指定 (记在这台显示器的 autorandr 配置里)
-scale() {
-    local ext f cur choice s
+# rofi 选缩放: $1 提示, $2 当前手动指定的值 (空 = 默认), $3 "默认"项的文字, 其余为可选的百分比
+# 打印选中的百分比 (选默认时为空); 按了 Esc / 返回时退出码 2
+pickscale() {
+    local p=$1 cur=$2 def=$3 s choice
+    shift 3
+    choice=$( { echo "$([ -z "$cur" ] && echo "󰄬 " || echo "   ")$def"
+                for s in "$@"; do echo "$([ "$cur" = "$s" ] && echo "󰄬 " || echo "   ")$s%"; done
+                echo "$BACK"; } | rofi -dmenu -p "$p") || return 2
+    case $choice in
+        "$BACK") return 2 ;;
+        *默认*) echo ;;
+        *%)     s=${choice##* }; echo "${s%\%}" ;;
+        *)      return 1 ;;
+    esac
+}
+
+# 外接屏缩放: 默认 100%, 或手动指定 (记在这台显示器的 autorandr 配置里)
+extscalemenu() {
+    local ext f s
     ext=$(external)
     f="$PROFILES/$(profile "$ext")/dwm-scale"
     [ -d "$(dirname "$f")" ] || save "$ext"      # 还没保存过这台显示器: 先存一份当前布局
-    cur=$(cat "$f" 2>/dev/null)
-    choice=$( { echo "$([ -z "$cur" ] && echo "󰄬 " || echo "   ")默认 100%"
-                for s in $SCALES; do echo "$([ "$cur" = "$s" ] && echo "󰄬 " || echo "   ")$s%"; done
-                echo "$BACK"; } \
-        | rofi -dmenu -p "$ext 缩放 (当前 $(extscale "$ext")%)") || return 2
-    case $choice in
-        "$BACK") return 2 ;;
-        *默认*) rm -f "$f" ;;
-        *%)     s=${choice##* }; echo "${s%\%}" > "$f" ;;
-        *)      return ;;
-    esac
+    s=$(pickscale "$ext 缩放 (当前 $(extscale "$ext")%)" "$(cat "$f" 2>/dev/null)" "默认 100%" $SCALES) || return
+    if [ -n "$s" ]; then echo "$s" > "$f"; else rm -f "$f"; fi
     apply "$(curlayout)"                       # 扩展时改的是外接屏的放大倍数, 只用外接屏时改的是全局缩放
+}
+
+# 笔记本屏缩放: 默认按分辨率猜, 或手动指定 (按 EDID 记在 $LAPTOP_DIR, 换了笔记本各记各的)
+laptopscalemenu() {
+    local int f s
+    int=$(internal)
+    [ -n "$int" ] || { notify-send -r $NID "󰍹 显示器" "找不到笔记本屏幕"; return 1; }
+    f=$(laptopfile "$int")
+    s=$(pickscale "笔记本屏 $int 缩放 (当前 $(laptopscale "$int")%)" "$(cat "$f" 2>/dev/null)" "默认 $(laptopguess "$int")%" $LAPTOP_SCALES) || return
+    if [ -n "$s" ]; then mkdir -p "$LAPTOP_DIR" && echo "$s" > "$f"; else rm -f "$f"; fi
+    apply "$(curlayout)"                       # 笔记本屏在用时改的是全局缩放 (扩展时外接屏的放大倍数跟着重算), 只用外接屏时下次点亮笔记本屏才生效
+}
+
+# 缩放: 外接屏 / 笔记本屏 各自的缩放
+scale() {
+    local ext int choice
+    ext=$(external); int=$(internal)
+    while :; do
+        choice=$(printf '%s\n' "󰍹 外接屏 $ext (当前 $(extscale "$ext")%)" "󰌢 笔记本屏 $int (当前 $(laptopscale "$int")%)" "$BACK" \
+            | rofi -dmenu -p "缩放") || return 2
+        case $choice in
+            "$BACK") return 2 ;;
+            *外接屏*) extscalemenu ;;
+            *笔记本屏*) laptopscalemenu ;;
+            *) return ;;
+        esac
+        [ $? -eq 2 ] || return 0               # 子菜单按了 Esc / 返回: 重新显示本菜单
+    done
 }
 
 menu() {
     local ext choice
     ext=$(external)
-    [ -n "$ext" ] || { notify-send -r $NID "󰍹 显示器" "没有检测到外接显示器"; return; }
+    [ -n "$ext" ] || { laptopscalemenu; return; }   # 没接外接屏: 只有笔记本屏缩放可调
     while :; do
         choice=$(printf '%s\n' \
             "󰍺 外接屏在右侧" "󰍺 外接屏在左侧" "󰍺 外接屏在上方" "󰍹 复制 (两块屏显示相同内容)" "󰍹 仅外接屏" "󰌢 仅笔记本" \
@@ -234,7 +306,7 @@ check() {
     if [ -z "$ext" ]; then
         apply laptop                           # 外接屏拔掉了: 确保笔记本屏亮着
     elif prof=$(autorandr --detected 2>/dev/null | head -1) && [ -n "$prof" ]; then
-        autorandr --load "$prof" >/dev/null 2>&1 && post && setscale "$(wantscale)"
+        autorandr --load "$prof" >/dev/null 2>&1 && relayout && save "$ext" && post && setscale "$(wantscale)"
     else
         notify-send -r $NID "󰍹 检测到外接显示器 $ext" "按 Super+P 选择 monitor layout 设置布局"
     fi
@@ -243,7 +315,7 @@ check() {
 # 登录时: 套用保存的布局 (没有匹配的就保持原样), 按布局设好 Xft.dpi, 打印 Qt 缩放倍数供 xinitrc 导出
 login() {
     local s
-    autorandr --change >/dev/null 2>&1
+    autorandr --change >/dev/null 2>&1 && relayout
     s=$(wantscale)
     setscale "$s" norestart
     factor "$s"
