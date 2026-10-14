@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""Own org.kde.StatusNotifierWatcher so Electron never falls back to GtkStatusIcon.
+
+dwm has no system tray. Electron tries the StatusNotifierWatcher D-Bus name
+first; if nobody owns it, the tray becomes a GtkStatusIcon. That icon installs
+an X11 root-window filter, gtk_tray_icon_manager_filter, which SIGSEGVs once
+the icon's private data is gone. Cursor and other Electron apps then flash-exit
+after the icon is created or torn down.
+"""
+
+import sys
+
+import dbus
+import dbus.service
+from dbus.mainloop.glib import DBusGMainLoop
+from gi.repository import GLib
+
+BUS = "org.kde.StatusNotifierWatcher"
+PATH = "/StatusNotifierWatcher"
+IFACE = "org.kde.StatusNotifierWatcher"
+
+
+class Watcher(dbus.service.Object):
+    def __init__(self, bus):
+        self._name = dbus.service.BusName(BUS, bus, do_not_queue=True)
+        super().__init__(self._name, PATH)
+        self._items = []
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="")
+    def RegisterStatusNotifierItem(self, service):
+        text = str(service)
+        if text not in self._items:
+            self._items.append(text)
+            self.StatusNotifierItemRegistered(text)
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="")
+    def RegisterStatusNotifierHost(self, service):
+        self.StatusNotifierHostRegistered()
+
+    @dbus.service.signal(IFACE, signature="s")
+    def StatusNotifierItemRegistered(self, service):
+        pass
+
+    @dbus.service.signal(IFACE, signature="")
+    def StatusNotifierHostRegistered(self):
+        pass
+
+    def _props(self):
+        return {
+            "IsStatusNotifierHostRegistered": dbus.Boolean(True),
+            "RegisteredStatusNotifierItems": dbus.Array(self._items, signature="s"),
+        }
+
+    @dbus.service.method(
+        dbus.PROPERTIES_IFACE, in_signature="ss", out_signature="v"
+    )
+    def Get(self, interface, prop):
+        props = self._props()
+        if str(interface) != IFACE or str(prop) not in props:
+            raise dbus.exceptions.DBusException(
+                "org.freedesktop.DBus.Error.UnknownProperty",
+                f"no property {interface}.{prop}",
+            )
+        return props[str(prop)]
+
+    @dbus.service.method(
+        dbus.PROPERTIES_IFACE, in_signature="s", out_signature="a{sv}"
+    )
+    def GetAll(self, interface):
+        if str(interface) != IFACE:
+            return dbus.Dictionary({}, signature="sv")
+        return dbus.Dictionary(self._props(), signature="sv")
+
+
+def main():
+    DBusGMainLoop(set_as_default=True)
+    bus = dbus.SessionBus()
+    try:
+        Watcher(bus)
+    except dbus.exceptions.NameExistsException:
+        return 0
+    GLib.MainLoop().run()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

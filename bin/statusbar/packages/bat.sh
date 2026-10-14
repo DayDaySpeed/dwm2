@@ -27,6 +27,11 @@ get_by_upower() {
 }
 
 update() {
+    # 没有电池 (台式机) 时不显示这个模块
+    if ! ls /sys/class/power_supply/BAT* >/dev/null 2>&1; then
+        sed -i '/^export '$this'=.*$/d' $tempfile
+        return
+    fi
     get_by_upower
     get_by_acpi
     [ -z $bat_text ] && bat_text=0

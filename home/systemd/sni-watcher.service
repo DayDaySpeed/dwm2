@@ -1,0 +1,11 @@
+[Unit]
+Description=Minimal StatusNotifier watcher (avoid Electron GtkStatusIcon crash)
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.config/dwm2/bin/sni-watcher
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

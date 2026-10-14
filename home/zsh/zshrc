@@ -1,0 +1,26 @@
+# 历史记录
+HISTFILE=~/.config/zsh/history
+HISTSIZE=50000
+SAVEHIST=50000
+setopt share_history
+setopt hist_ignore_dups
+setopt hist_reduce_blanks
+
+# 补全系统
+autoload -Uz compinit
+compinit
+
+# 更智能的补全
+setopt auto_menu
+setopt complete_in_word
+
+# 更好的通配符
+setopt extended_glob
+
+# 更好的提示符（临时）
+
+# 别名
+alias ll='ls -alF --color=auto'
+alias la='ls -la --color=auto'
+alias l='ls -CF --color=auto'
+alias grep='grep --color=auto'

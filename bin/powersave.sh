@@ -2,7 +2,7 @@
 # 省电模式 (Super+P 菜单 open / close power save): 开启时
 #   1. 壁纸切到静态 (停掉视频 / 场景渲染, 由 livewall.sh toggle 完成, 带转场)
 #   2. 屏幕刷新率降到 60Hz (原来 240Hz)
-#   3. CPU 节能策略 (EPP) 设为 power: 写 /sys 需要 root, 要配置 sudo 免密 (见 docx/dwm使用说明.md), 没配时跳过这一项
+#   3. CPU 节能策略 (EPP) 设为 power: 写 /sys 需要 root, 要配置 sudo 免密 (见 docs/manual/dwm.md), 没配时跳过这一项
 # 关闭时按开启前记下的状态全部恢复; 状态跨重启保留 (autostart 调用 apply 重新应用刷新率和 EPP)
 # 不省电时 apply 把屏幕设为最高刷新率 (独显直连时 X 默认选 60Hz)
 # 拔电自动开、插电自动关 (autostart 每 10 秒调用 ac): 只自动关闭拔电时自动开的那次, 手动开的 (Super+P) 不动
@@ -61,7 +61,9 @@ set_epp() { echo "$1" | sudo -n tee $EPP_FILES >/dev/null 2>&1; }
 apply_hw() {
     local o m r done=()
     while read -r o m r; do set_rate "$o" "$m" $RATE && done+=("$o ${RATE}Hz"); done < <(rates)
-    set_epp $EPP && done+=("CPU 节能") || done+=("CPU 节能未生效: 需配置 sudo 免密, 见 dwm使用说明")
+    if ! ls $EPP_FILES >/dev/null 2>&1; then :   # CPU 驱动不支持 EPP (如 acpi-cpufreq): 只调刷新率
+    elif set_epp $EPP; then done+=("CPU 节能")
+    else done+=("CPU 节能未生效: 需配置 sudo 免密, 运行 ./setup.sh system"); fi
     printf '%s\n' "${done[@]}"
 }
 

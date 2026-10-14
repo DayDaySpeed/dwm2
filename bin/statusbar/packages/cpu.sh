@@ -12,7 +12,13 @@ with_temp() {
     # check
     [ ! "$(command -v sensors)" ] && echo command not found: sensors && return
 
-    temp_text=$(sensors | grep Tctl | awk '{printf "%d°C", $2}')  
+    # CPU 温度: AMD 是 Tctl, Intel 是 Package id 0; 都没有时取 /sys 里的 x86_pkg_temp
+    temp_text=$(sensors 2>/dev/null | awk -F'[+°]' '/^(Tctl|Package id 0):/ {printf "%d°C", $2; exit}')
+    if [ -z "$temp_text" ]; then
+        for z in /sys/class/thermal/thermal_zone*; do
+            [ "$(cat "$z/type" 2>/dev/null)" = x86_pkg_temp ] && temp_text="$(( $(cat "$z/temp") / 1000 ))°C" && break
+        done
+    fi
     text=" $cpu_text $temp_text "
 } 
 

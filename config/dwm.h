@@ -228,7 +228,7 @@ static Key keys[] = {
     TAGKEYS(XK_9, 3, "obs", 1)
     TAGKEYS(XK_c, 4, "google-chrome-stable --new-window https://www.youtube.com", 0)
     TAGKEYS(XK_m, 5, "~/.local/share/splayer/SPlayer.AppImage --no-sandbox", 1)
-    TAGKEYS(XK_0, 6, "~/.local/bin/steam", 1)
+    TAGKEYS(XK_0, 6, "$DWM/bin/steam.sh", 1)
     TAGKEYS(XK_w, 7, "microsoft-edge-stable --new-window https://www.github.com", 0)
     TAGKEYS(XK_v, 8, "code", 0)
 };

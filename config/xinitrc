@@ -2,10 +2,17 @@
 # 这里只放 环境变量 与 必须先于 dwm 的会话服务; 其余启动项都在 $DWM/bin/autostart.sh
 
 # 项目根目录: 所有配置在 $DWM/config, 所有脚本在 $DWM/bin
-export DWM=~/projs/dwm2
+# 由 ~/.xinitrc 这个链接反推 (指向 $DWM/config/xinitrc), 仓库克隆在哪都行
+export DWM=$(cd "$(dirname "$(readlink -f ~/.xinitrc)")/.." && pwd)
+
+# 自己编译的 dwm / picom 装在 ~/.local/bin, 要排在系统目录前面 (.zshrc 只对交互 shell 生效, 到不了这里)
+export PATH="$HOME/.local/bin:$PATH"
+
+# 本机配置 (不入库, 模板 $DWM/config/dwm2.local.example): 触摸板等只属于这台机器的设置
+[ -f ~/.config/dwm2.local ] && . ~/.config/dwm2.local
 
 # ================================================
-# UI 缩放(笔记本屏 2560×1440 全局 1.35×;只用外接屏时 1×,倍数在下面"会话服务"里按屏幕布局决定)
+# UI 缩放(笔记本屏在用时用笔记本屏的缩放,只用外接屏时用外接屏的缩放,都可在 Super+P 菜单里按显示器指定;倍数在下面"会话服务"里按屏幕布局决定,1.35 只是兜底)
 # 勿设 GDK_SCALE=1,否则会与 Xft.dpi 冲突导致对话框错位/缩小
 # ================================================
 
@@ -28,7 +35,7 @@ export GLFW_IM_MODULE=ibus # ← 加这行,kitty 用这个对接输入法
 # Xft.dpi 等;须在 GTK 程序与 portal 之前加载
 xrdb -merge "$DWM/config/Xresources"
 
-# 外接显示器:套用保存的布局,并按布局改 Xft.dpi(只用外接屏 100%,笔记本屏在用 135%),打印 Qt 倍数(见 bin/monitor.sh)
+# 外接显示器:套用保存的布局,并按布局改 Xft.dpi(各显示器的缩放见 bin/monitor.sh),打印 Qt 倍数
 QT_SCALE=$("$DWM/bin/monitor.sh" login 2>/dev/null)
 export QT_SCALE_FACTOR=${QT_SCALE:-1.35}
 export QT_SCREEN_SCALE_FACTORS=${QT_SCALE:-1.35}

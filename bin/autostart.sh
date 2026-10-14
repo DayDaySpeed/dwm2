@@ -13,8 +13,8 @@ settings() {
     $DWM/bin/livewall.sh auto                 # 设置壁纸 (动态视频 / 静态图片), 并在后台生成锁屏背景; 要在改刷新率之后, 场景壁纸遇到屏幕变化会崩溃
     $DWM/bin/nightlight.sh apply              # 护眼开着时重新应用暖色
     numlockx on 2>/dev/null || xset led named "Num Lock" # 开启 NumLock
-    xinput list --name-only | grep "^SYNA32E2" | while read -r d; do xinput disable "$d"; done # 禁用触摸板 (X 中名为 "SYNA32E2:00 06CB:CEE7 Mouse")
-    xhost +local:docker >/dev/null            # 允许 Docker 使用显示器
+    [ -n "$DISABLE_INPUT" ] && xinput list --name-only | while read -r d; do case $d in "$DISABLE_INPUT"*) xinput disable "$d" ;; esac; done # 禁用触摸板等 (设备名前缀在 ~/.config/dwm2.local)
+    has docker && xhost +local:docker >/dev/null # 允许 Docker 使用显示器
 }
 
 daemons() {

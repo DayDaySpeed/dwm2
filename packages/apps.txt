@@ -1,0 +1,3 @@
+# 快捷键对应的应用 (官方仓库), ./setup.sh --no-apps 跳过
+obs-studio                              # Super+9
+steam                                   # Super+0 (multilib, ./setup.sh bootstrap 会开启)

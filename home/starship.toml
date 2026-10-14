@@ -1,0 +1,142 @@
+# ~/.config/starship.toml
+
+# ================================================
+# 全局设置
+# ================================================
+"$schema" = 'https://starship.rs/config-schema.json'
+
+format = """
+[╭─](bold #6c7086)\
+$os\
+$username\
+$hostname\
+$directory\
+$git_branch\
+$git_status\
+$python\
+$nodejs\
+$rust\
+$docker_context\
+$cmd_duration\
+$line_break\
+[╰─](bold #6c7086)\
+$character"""
+
+add_newline = true
+
+# ================================================
+# 提示符字符
+# ================================================
+[character]
+success_symbol = "[❯](bold #a6e3a1)"
+error_symbol   = "[❯](bold #f38ba8)"
+vimcmd_symbol  = "[❮](bold #cba6f7)"
+
+# ================================================
+# 操作系统图标
+# ================================================
+[os]
+disabled = false
+style    = "bold #89b4fa"
+
+[os.symbols]
+Arch    = " "
+Ubuntu  = " "
+Debian  = " "
+Macos   = " "
+Windows = " "
+
+# ================================================
+# 用户名 & 主机名
+# ================================================
+[username]
+show_always = true
+style_user  = "bold #a6e3a1"
+style_root  = "bold #f38ba8"
+format      = "[$user]($style) "
+
+[hostname]
+ssh_only = false
+style    = "bold #89b4fa"
+format   = "[@$hostname]($style) "
+
+# ================================================
+# 当前目录
+# ================================================
+[directory]
+style             = "bold #89dceb"
+read_only         = " 󰌾"
+truncation_length = 3
+truncate_to_repo  = true
+format            = "[ $path]($style)[$read_only]($read_only_style) "
+
+[directory.substitutions]
+"Documents" = "󰈙 "
+"Downloads" = " "
+"Music"     = "󰝚 "
+"Pictures"  = " "
+"~"         = " "
+
+# ================================================
+# Git
+# ================================================
+[git_branch]
+symbol = " "
+style  = "bold #cba6f7"
+format = "[$symbol$branch]($style) "
+
+[git_status]
+style      = "bold #f38ba8"
+format     = "([$all_status$ahead_behind]($style) )"
+conflicted = "󰩌 "
+ahead      = "⇡${count} "
+behind     = "⇣${count} "
+diverged   = "⇕⇡${ahead_count}⇣${behind_count} "
+untracked  = "? "
+stashed    = " "
+modified   = "! "
+staged     = "+ "
+renamed    = "» "
+deleted    = " "
+
+# ================================================
+# 命令耗时（超过 2 秒显示）
+# ================================================
+[cmd_duration]
+min_time          = 2000
+format            = "[ $duration]($style) "
+style             = "bold #f9e2af"
+show_milliseconds = false
+
+# ================================================
+# 编程语言（有项目文件时才显示）
+# ================================================
+[python]
+symbol = " "
+style  = "bold #f9e2af"
+format = "[$symbol$version]($style) "
+
+[nodejs]
+symbol = " "
+style  = "bold #a6e3a1"
+format = "[$symbol$version]($style) "
+
+[rust]
+symbol = " "
+style  = "bold #f38ba8"
+format = "[$symbol$version]($style) "
+
+[docker_context]
+symbol = " "
+style  = "bold #89b4fa"
+format = "[$symbol$context]($style) "
+
+# ================================================
+# 隐藏不需要的模块
+# ================================================
+[package]
+disabled = true
+
+[time]
+disabled = true
+

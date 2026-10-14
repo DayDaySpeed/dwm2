@@ -1,7 +1,7 @@
 # picom (dwm2 内置版本)
 
 - 来源: 上游 [yshui/picom](https://github.com/yshui/picom) tag `v13` (d87a5ba), 源码直接放在本仓库
-- 编译安装: 仓库根目录执行 `./setup.sh picom`, 装到 `~/.local/bin/picom` (PATH 中排在 pacman 装的 `/usr/bin/picom` 前面)
+- 编译安装: 仓库根目录执行 `./setup.sh picom`, 装到 `~/.local/bin/picom` (`config/xinitrc` 把 `~/.local/bin` 排在 PATH 最前面)
 - 配置: `config/picom.conf` (v13 语法: 窗口相关的设置都在 `rules` 里, 动画在 `animations` 里)
 
 ## 本仓库的补丁

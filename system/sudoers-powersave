@@ -1,0 +1,3 @@
+# /etc/sudoers.d/powersave (./setup.sh system 先 visudo 校验再安装, @USER@ 换成当前用户)
+# 省电模式 (bin/powersave.sh) 免密写 CPU 节能策略 (EPP)
+@USER@ ALL=(root) NOPASSWD: /usr/bin/tee /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference

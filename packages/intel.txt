@@ -1,0 +1,2 @@
+# 检测到 Intel 显卡时安装: 视频硬解 (mpv / Sunshine 的 vaapi)
+intel-media-driver libva-utils vulkan-intel

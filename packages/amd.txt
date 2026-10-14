@@ -1,0 +1,2 @@
+# 检测到 AMD 显卡时安装 (vaapi 驱动已包含在 mesa 里)
+vulkan-radeon libva-utils

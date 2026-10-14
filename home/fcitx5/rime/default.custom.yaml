@@ -1,0 +1,7 @@
+# Rime 全局设置, 复制到 ~/.local/share/fcitx5/rime/ 后归本机所有
+patch:
+  schema_list:
+    - schema: rime_ice                          # 雾凇拼音 (rime-ice-git)
+  # 左右 Shift 交给 fcitx 切中英, Rime 不再切一次
+  "ascii_composer/switch_key/Shift_L": noop
+  "ascii_composer/switch_key/Shift_R": noop

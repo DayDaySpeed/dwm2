@@ -1,0 +1,7 @@
+# 桌面必需 (AUR), ./setup.sh deps 用 yay 安装
+i3lock-color                            # betterlockscreen 依赖; 带圆点的版本由 ./setup.sh i3lock 另装到 /usr/local/bin
+betterlockscreen                        # 锁屏 (bin/blurlock.sh)
+xwinwrap-git                            # 视频壁纸: 把 mpv 嵌到桌面最底层
+linux-wallpaperengine-git               # Wallpaper Engine 场景壁纸 (没装时 livewall.sh 自动跳过场景)
+rime-ice-git                            # 雾凇拼音: Rime 的词库和方案 (home/fcitx5/rime)
+rime-wanxiang-gram-zh-hans              # 万象语法模型: 雾凇长句更准

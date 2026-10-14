@@ -1,0 +1,47 @@
+# 桌面必需 (官方仓库), ./setup.sh deps 安装; 每行一个包, # 后为注释
+# 少了这些桌面会起不来, 或某个快捷键 / 状态栏模块 / 脚本会坏
+
+# --- X 会话 ---
+xorg-server xorg-xinit                  # startx
+xorg-xrandr xorg-xrdb xorg-xset xorg-xinput xorg-xhost xorg-xsetroot xorg-setxkbmap xorg-xwininfo xorg-xprop
+xdotool numlockx xclip
+polkit-gnome                            # 认证代理 (config/xinitrc)
+xdg-desktop-portal xdg-desktop-portal-gtk
+gnome-keyring
+libnotify                               # notify-send, 几乎所有脚本都用
+xss-lock
+
+# --- 编译 dwm / st / tabbed / picom / i3lock-color ---
+base-devel git meson ninja
+libx11 libxext libxinerama libxft libxrender libxfixes libxrandr libxcomposite xorgproto fontconfig freetype2 harfbuzz
+uthash libconfig libev libxdg-basedir pcre2 libepoxy pixman dbus mesa
+xcb-util xcb-util-image xcb-util-renderutil xcb-util-xrm xcb-util-wm libxkbcommon-x11 cairo libjpeg-turbo
+
+# --- 音频 / 网络 / 蓝牙 ---
+pipewire pipewire-pulse pipewire-alsa wireplumber alsa-utils sof-firmware
+pavucontrol pamixer playerctl
+networkmanager bluez bluez-utils
+tailscale                               # 远程桌面用的固定虚拟 IP
+
+# --- 字体 ---
+ttf-jetbrains-mono-nerd                 # dwm / st / rofi / dunst / kitty 和所有图标
+ttf-sarasa-gothic                       # 锁屏日期
+noto-fonts noto-fonts-cjk noto-fonts-emoji
+
+# --- 输入法 ---
+fcitx5 fcitx5-chinese-addons fcitx5-gtk fcitx5-qt fcitx5-configtool fcitx5-material-color fcitx5-rime
+
+# --- 壁纸 / 转场 / 锁屏 ---
+feh mpv ffmpeg imagemagick
+python python-pillow glfw               # bin/transition.py
+python-dbus python-gobject              # bin/sni-watcher
+
+# --- 桌面工具 ---
+rofi dunst gammastep clipmenu autorandr brightnessctl flameshot x11vnc
+pcmanfm ranger ueberzugpp ffmpegthumbnailer trash-cli translate-shell
+acpi upower lm_sensors                  # 状态栏电池 / 温度
+btop neovim                             # 状态栏右键
+git-lfs                                 # 壁纸子模块
+
+# --- shell / 终端 ---
+zsh starship kitty

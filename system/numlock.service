@@ -1,0 +1,11 @@
+# /etc/systemd/system/numlock.service (./setup.sh system 安装并启用): tty 下默认开 NumLock, X 里由 autostart.sh 的 numlockx 负责
+[Unit]
+Description=Enable numlock on TTY
+After=getty.target
+
+[Service]
+ExecStart=/bin/bash -c 'for tty in /dev/tty{1..6}; do /usr/bin/setleds -D +num < "$tty"; done'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

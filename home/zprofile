@@ -1,0 +1,5 @@
+# ~/.zprofile -> $DWM/home/zprofile (./setup.sh link)
+# tty1 自动登录 (./setup.sh system) 后在这里进入桌面; 缩放等环境变量都在 $DWM/config/xinitrc
+if [ -z "$DISPLAY" ] && [ "$(tty)" = /dev/tty1 ]; then
+	startx
+fi

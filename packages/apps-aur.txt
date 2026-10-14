@@ -1,0 +1,5 @@
+# 快捷键对应的应用 (AUR), ./setup.sh --no-apps 跳过; SPlayer (Super+M) 是 AppImage, 由 setup.sh 单独下载
+google-chrome                           # Super+C, 默认浏览器
+microsoft-edge-stable-bin               # Super+W
+visual-studio-code-bin                  # Super+V
+sunshine-bin                            # 远程桌面串流 (Super+P 菜单)
