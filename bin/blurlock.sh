@@ -1,7 +1,7 @@
 #! /bin/bash
 # 锁屏 (betterlockscreen, 基于 i3lock-color): 当前壁纸调暗 + 模糊作背景, 屏幕中央显示时间、日期和密码圆环
 #   blurlock.sh          锁屏 (Super+Ctrl+L, xss-lock 自动锁屏)
-#   blurlock.sh update   用当前壁纸重新生成锁屏背景 (autostart 每次换壁纸后在后台调用; 未换壁纸时跳过)
+#   blurlock.sh update   用当前壁纸重新生成锁屏背景 (livewall.sh 每次换壁纸后在后台调用; 未换壁纸时跳过)
 #   blurlock.sh update -f  强制重新生成 (修改 config/betterlockscreenrc 后执行)
 # 主题配置: config/betterlockscreenrc
 
@@ -43,15 +43,16 @@ lock() {
 
 show_lock() {
     # -- 之后的参数覆盖 betterlockscreen 内置的版面 (内置为左下角小字, 不适合 2560x1440); 星期用中文显示
+    # 位置是整个桌面上的绝对坐标, 每块屏各画一份: x / y 是这块屏的左上角, 必须加上, 否则外接屏那份会画到笔记本屏上
     # 密码指示器: 铺满屏幕底部的跳动竖条 (沿用原 i3lock 的参数), 输错时底部横带变为半透明白色
     LC_TIME=zh_CN.UTF-8 betterlockscreen -q -l dimblur -- \
-        --time-pos="w/2:h/2-60" --time-align 0 --time-size=120 \
+        --time-pos="x+w/2:y+h/2-60" --time-align 0 --time-size=120 \
         --date-str "%m月%d日 %A" --date-pos="tx:ty+60" --date-align 0 --date-size=28 \
         --date-font="Sarasa UI SC" --date-color=ffffffbb \
-        --greeter-pos="w/2:h/2+130" --greeter-align 0 --greeter-size=22 \
-        --verif-pos="w/2:h/2+190" --verif-align 0 --verif-size=20 \
-        --wrong-pos="w/2:h/2+190" --wrong-align 0 --wrong-size=20 \
-        --modif-pos="w/2:h/2+230" --modif-align 0 --modif-size=20 \
+        --greeter-pos="x+w/2:y+h/2+130" --greeter-align 0 --greeter-size=22 \
+        --verif-pos="x+w/2:y+h/2+190" --verif-align 0 --verif-size=20 \
+        --wrong-pos="x+w/2:y+h/2+190" --wrong-align 0 --wrong-size=20 \
+        --modif-pos="x+w/2:y+h/2+230" --modif-align 0 --modif-size=20 \
         --bar-indicator --redraw-thread \
         --bar-pos="y+h" --bar-direction=1 --bar-max-height=50 --bar-base-width=50 \
         --bar-step=20 --bar-periodic-step=50 --bar-color=00000022 \

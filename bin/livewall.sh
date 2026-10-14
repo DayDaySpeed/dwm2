@@ -19,7 +19,7 @@
 # 显卡 (核显渲染 4K 视频会大量丢帧, 4K60 实测丢约 28%):
 #   混合模式 (X 跑在核显上): 视频用 PRIME render offload 在独显上渲染 (高画质缩放 + 去色带,
 #     低于屏幕分辨率的用 Anime4K 放大), 整机多耗约 10~20W; 场景用核显
-#   独显直连 (BIOS 切换, 见 docx/dwm使用说明.md): X 本身在独显上, 视频和场景都用独显, 场景 60 帧
+#   独显直连 (BIOS 切换, 见 docs/manual/dwm.md): X 本身在独显上, 视频和场景都用独显, 场景 60 帧
 #   省电模式 (bin/powersave.sh) 会切到静态壁纸; 期间手动切回动态时, 混合模式下只用核显, 不唤醒独显
 
 DWM=${DWM:-$(cd "$(dirname "$0")/.."; pwd)}
@@ -431,13 +431,30 @@ scene_window() {
     return 1
 }
 
-# 把窗口改成壁纸窗口: 取消映射 (dwm 不再管理) -> 设 override-redirect -> 重新映射、铺满屏幕、放到最底层
+# 把窗口改成壁纸窗口: 取消映射 (dwm 不再管理) -> 设 override-redirect -> 重新映射、铺满屏幕、放到最底层 -> 输入穿透
 #   不能设成桌面类型 (_NET_WM_WINDOW_TYPE_DESKTOP): xwinwrap 会把之后开的视频窗口建在桌面类型的窗口里,
 #   场景一关视频也跟着没了; picom 改按 class_g = 'linux-wallpaperengine' 排除阴影圆角等
 desktop_window() {
     xdotool windowunmap --sync "$1" &&
     xdotool set_window --overrideredirect 1 "$1" &&
-    xdotool windowmap --sync "$1" windowmove "$1" 0 0 windowlower "$1" 2>/dev/null
+    xdotool windowmap --sync "$1" windowmove "$1" 0 0 windowlower "$1" 2>/dev/null &&
+    input_passthrough "$1"
+}
+
+# 窗口 $1 的输入区域设为空, 鼠标事件穿过它落到根窗口 (同 xwinwrap -ni)
+#   场景窗口自己订阅了鼠标事件, 不穿透的话 dwm 收不到根窗口上的移动和点击: 指针移到空的外接屏不换显示器, Super+滚轮切不了 tag
+input_passthrough() {
+    python3 - "$1" <<'EOF'
+import ctypes as C, sys
+x11, xext = C.CDLL("libX11.so.6"), C.CDLL("libXext.so.6")
+x11.XOpenDisplay.restype = C.c_void_p
+dpy = x11.XOpenDisplay(None)
+if not dpy:
+    sys.exit(1)
+# ShapeInput = 2, ShapeSet = 0, 0 个矩形 = 空区域
+xext.XShapeCombineRectangles(C.c_void_p(dpy), C.c_ulong(int(sys.argv[1], 0)), 2, 0, 0, None, 0, 0, 0)
+x11.XCloseDisplay(C.c_void_p(dpy))
+EOF
 }
 
 # 低于屏幕高度的视频 (1080p 等) 用 Anime4K 着色器在独显上放大, 打印 mpv 的 glsl-shaders 列表 (不放大时为空)
