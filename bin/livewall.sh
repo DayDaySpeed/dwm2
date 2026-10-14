@@ -8,11 +8,12 @@
 # 动态壁纸都在 $DWM/wallpaper/live, 图片放 $DWM/wallpaper/static。wallpaper/ 是私有 Git LFS 子模块, 播放不依赖 Steam
 #   live 下的视频文件: mpv 播放
 #   live 下的 Wallpaper Engine 场景目录 (含 project.json): linux-wallpaperengine 渲染 (未安装时跳过)
-#     开全屏窗口, 改成不受 dwm 管理的最底层窗口 (见 play_scene)
+#     开一个盖住屏幕的窗口, 改成不受 dwm 管理的最底层窗口 (见 start_scene)
 #   Steam 只用来下载: 订阅后执行 sync (或重新登录) 复制过来, 之后可以取消订阅; 网页类壁纸不支持; 不想要的直接从 live 删掉
-# 动态模式下根窗口 (feh) 设为当前壁纸的真实截图 (全分辨率): 锁屏背景 (bin/blurlock.sh 读 ~/.fehbg) 也就是这一帧
+# 多显示器: 几块屏显示同一张壁纸, 各自完整铺满 (不会一张画面横跨几块屏); 视频 / 场景每屏开一个实例 (见 monitors, pick)
+# 动态模式下根窗口 (feh) 设为各屏当前壁纸的真实截图 (全分辨率): 锁屏背景 (bin/blurlock.sh 读 ~/.fehbg) 也就是这几帧
 # 切换: 截下当前画面铺到根窗口定格 (A), 关掉 / 隐藏旧壁纸, 新壁纸全透明启动, 画好后截图 (B),
-#   bin/transition.py 用 GPU 播放 A->B 的转场特效 (config/transitions/ 下的 gl-transitions 着色器, 每次随机一个,
+#   bin/transition.py 用 GPU 在各屏同时播放 A->B 的转场特效 (config/transitions/ 下的 gl-transitions 着色器, 每次随机一个,
 #   见 TRANSITION / TRANSITION_SAVE), 播完露出正在运行的新壁纸; 切到静态图片 (含每 5 分钟换图) 也用同一个转场;
 #   起始画面截不到时用缓存帧 / 纯黑 (见 start_frame); 转场程序出错时直接显示, 记到 transition.log
 #   全程只有真实的全分辨率画面 (以前铺的场景预览图多是小方图, 放大后会闪一下模糊)
@@ -43,7 +44,6 @@ TRANS_SEC=0.8                              # 转场时长 (秒)
 POWERSAVE=${XDG_CACHE_HOME:-$HOME/.cache}/powersave/on   # 省电模式开着 (bin/powersave.sh)
 CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/livewall
 MODE=$CACHE/mode                           # live / static, 默认 live
-SOCK=$CACHE/mpv.sock                       # mpv 的 IPC, 换视频时不重开播放器
 START=1                                    # 视频从第几秒开始播放, 也从这里截帧 (很多视频第 0 秒是黑场)
 
 
@@ -141,14 +141,27 @@ for d in sorted(os.listdir(ws)) if os.path.isdir(ws) else []:
 EOF
 }
 
-video_running() { pgrep -x xwinwrap >/dev/null; }
-scene_running() { pgrep -f -- '(^|/)linux-wallpaperengine .*(--screen-root|--window)' >/dev/null; }
-running() { video_running || scene_running; }
+# 显示器: 每块屏都显示同一张壁纸, 各自完整铺满 (视频 / 场景每屏开一个实例, 静态每屏铺一份同样的图片), 不再一张画面横跨几块屏
+#   区域和顺序取自 xrandr --listmonitors (主屏在前), 与 feh --bg-fill 多张图片、betterlockscreen 多个 -u 的对应顺序一致;
+#   复制模式下几块屏区域相同, 只算一块。第 i 块屏的实例: 视频窗口 livewall<i> (mpv 的 IPC 是 mpv.<i>.sock),
+#   场景按命令行里的 --window 区域区分。每行一个区域 WxH+X+Y
+monitors() { xrandr --listmonitors 2>/dev/null | awk 'NR > 1 {g = $3; gsub(/\/[0-9]+/, "", g); if (!seen[g]++) print g}'; }
+
+# 第 $1 块屏的区域, 设置 W H X Y
+geom() { local g=${MON[$1]}; W=${g%%x*}; g=${g#*x}; H=${g%%+*}; g=${g#*+}; X=${g%%+*}; Y=${g#*+}; }
+
+SCENE_ANY='(^|/)linux-wallpaperengine .*(--screen-root|--window)'
+scene_pat() { geom "$1"; echo "(^|/)linux-wallpaperengine .*--window ${X}x${Y}x${W}x${H} "; }
+video_pat() { echo "--x11-name=livewall$1 "; }
+
+video_running() { pgrep -f -- "(^|/)xwinwrap .*$(video_pat "$1")" >/dev/null; }
+scene_running() { pgrep -f -- "$(scene_pat "$1")" >/dev/null; }
+running() { pgrep -x xwinwrap >/dev/null || pgrep -f -- "$SCENE_ANY" >/dev/null; }   # 任一块屏在放动态壁纸
 can_live() { [ -n "$(items)" ]; }
 
-# 给 mpv 发一条命令 (JSON IPC), 打印回复中的 data; mpv 不在时什么也不打印
+# 给第 $1 块屏的 mpv 发一条命令 (JSON IPC), 打印回复中的 data; mpv 不在时什么也不打印
 ipc() {
-    python3 - "$SOCK" "$@" 2>/dev/null <<'EOF'
+    python3 - "$CACHE/mpv.$1.sock" "${@:2}" 2>/dev/null <<'EOF'
 import json, socket, sys
 s = socket.socket(socket.AF_UNIX)
 s.settimeout(1)
@@ -162,71 +175,111 @@ for line in s.makefile():
 EOF
 }
 
-# 等 mpv 真正播放 $1 并画出几帧 (之前窗口是透明的), 最多 5 秒
+# 等第 $1 块屏的 mpv 真正播放 $2 并画出几帧 (之前窗口是透明的), 最多 5 秒
 wait_frames() {
-    local i
-    for i in $(seq 50); do
-        [ "$(ipc get_property path)" = "$1" ] && [ "$(ipc get_property estimated-frame-number)" -ge 3 ] 2>/dev/null && return
+    local k
+    for k in $(seq 50); do
+        [ "$(ipc "$1" get_property path)" = "$2" ] && [ "$(ipc "$1" get_property estimated-frame-number)" -ge 3 ] 2>/dev/null && return
         sleep 0.1
     done
     return 1
 }
 
-# 视频窗口: mpv 窗口的父窗口, 即 xwinwrap 建的顶层窗口 (picom 按它算透明度)
+# 视频窗口: mpv 窗口的父窗口, 即 xwinwrap 建的顶层窗口 (picom 按它算透明度); $1 为屏幕序号, 省略时为所有屏
 tops() {
     local w
-    for w in $(xdotool search --classname '^livewall$' 2>/dev/null); do
+    for w in $(xdotool search --classname "^livewall${1:-[0-9]*}\$" 2>/dev/null); do
         xwininfo -id "$w" -tree 2>/dev/null | awk '/Parent window id/{print $4}'
     done | sort -u
 }
 
+# 第 $1 块屏的场景窗口 (start_scene 记下的), 不在时返回非 0
+scene_win() {
+    local w
+    w=$(cat "$CACHE/scene.$1.win" 2>/dev/null) && [ -n "$w" ] && xwininfo -id "$w" >/dev/null 2>&1 && echo "$w"
+}
 
+# 关掉第 $1 块屏的视频
 stop_video() {
-    local i
-    video_running && hide                  # 先设为全透明: picom 关闭窗口的动画 (上下合拢) 不受 animation-exclude 管
-    pkill -x xwinwrap                      # xwinwrap 收到 SIGTERM 会转给 mpv
-    pkill -f -- '--x11-name=livewall'      # 以防万一 mpv 没跟着退出
-    # 等它们退出干净: 旧窗口还在时新开的 xwinwrap 会把它当成桌面, 建在它里面
-    for i in $(seq 20); do
-        pgrep -x xwinwrap >/dev/null || pgrep -f -- '--x11-name=livewall' >/dev/null || break
+    local k p
+    p=$(video_pat "$1")
+    video_running "$1" && hide $(tops "$1")   # 先设为全透明: picom 关闭窗口的动画 (上下合拢) 不受 animation-exclude 管
+    pkill -f -- "(^|/)xwinwrap .*$p"          # xwinwrap 收到 SIGTERM 会转给 mpv
+    pkill -f -- "(^|/)mpv .*$p"               # 以防万一 mpv 没跟着退出
+    # 等它们退出干净
+    for k in $(seq 20); do
+        pgrep -f -- "(^|/)(xwinwrap|mpv) .*$p" >/dev/null || break
         sleep 0.1
     done
-    pkill -9 -x xwinwrap; pkill -9 -f -- '--x11-name=livewall'
+    pkill -9 -f -- "(^|/)(xwinwrap|mpv) .*$p"
     # 进程退出后 X 服务器销毁窗口还会慢一拍, 窗口真正消失后才能开新的
-    for i in $(seq 20); do
-        xdotool search --classname '^livewall$' >/dev/null 2>&1 || return 0
+    for k in $(seq 20); do
+        xdotool search --classname "^livewall$1\$" >/dev/null 2>&1 || return 0
         sleep 0.1
     done
 }
 
+# 关掉第 $1 块屏的场景
 stop_scene() {
-    local i w
-    scene_running || return 0
-    w=$(xdotool search --class '^linux-wallpaperengine$' 2>/dev/null)
-    [ -n "$w" ] && hide "$w"               # 同 stop_video, 先设为全透明
-    pkill -f -- '(^|/)linux-wallpaperengine .*(--screen-root|--window)'
-    for i in $(seq 20); do
-        scene_running || return 0
+    local k p
+    scene_running "$1" || return 0
+    p=$(scene_pat "$1")
+    hide $(scene_win "$1")                 # 同 stop_video, 先设为全透明
+    pkill -f -- "$p"
+    for k in $(seq 20); do
+        scene_running "$1" || break
         sleep 0.1
     done
-    pkill -9 -f -- '(^|/)linux-wallpaperengine .*(--screen-root|--window)'
+    pkill -9 -f -- "$p"
+    rm -f "$CACHE/scene.$1.win"
+}
+
+# 关掉所有屏的动态壁纸, 包括屏幕布局改变前开的 (位置、大小已经对不上)
+stop_all() {
+    local k
+    running || return 0
+    hide $(tops) $(xdotool search --class '^linux-wallpaperengine$' 2>/dev/null)
+    pkill -x xwinwrap
+    pkill -f -- '--x11-name=livewall'
+    pkill -f -- "$SCENE_ANY"
+    for k in $(seq 20); do
+        pgrep -x xwinwrap >/dev/null || pgrep -f -- '--x11-name=livewall' >/dev/null || pgrep -f -- "$SCENE_ANY" >/dev/null || break
+        sleep 0.1
+    done
+    pkill -9 -x xwinwrap; pkill -9 -f -- '--x11-name=livewall'; pkill -9 -f -- "$SCENE_ANY"
+    for k in $(seq 20); do
+        xdotool search --classname '^livewall[0-9]*$' >/dev/null 2>&1 || break
+        sleep 0.1
+    done
+    rm -f "$CACHE"/scene.*.win
 }
 
 # 生成锁屏背景很吃 CPU (ImageMagick 处理整屏图片), 等切换动画结束后再做, 避免动画卡顿
 lock_bg() { (sleep 2; $DWM/bin/blurlock.sh update) >/dev/null 2>&1 8>&- & }
 
-# 静态: 随机换一张图片 (尽量不和当前的重复), 用 GPU 转场从当前画面过渡过去
+# 从标准输入的候选 (每行一个) 里随机挑一个, 给 $1 块屏都用它 (打印 $1 行, 每块屏一行): 几块屏显示同一张, 各自铺满;
+# 避开第一块屏当前的 (第 2 个参数; 开机第一次时为空, 什么都不避开), 只有这一个候选时照样用它
+pick() {
+    local n=$1 all new i
+    all=$(cat)
+    [ -n "$all" ] || return 0
+    new=$(grep -vxF -e "${2:-}" <<<"$all" | shuf -n1)
+    [ -n "$new" ] || new=$(shuf -n1 <<<"$all")
+    for ((i = 0; i < n; i++)); do echo "$new"; done
+}
+
+# 静态: 随机换一张图片, 每块屏都铺它 (见 pick), 用 GPU 转场从当前画面过渡过去
 #   起始画面见 start_frame (动态壁纸在跑时是定格帧, 原来是静态时是当前图片)
 static() {
-    local new
-    new=$(images | grep -vxF "$(cur_wall)" | shuf -n1)
-    [ -n "$new" ] || new=$(images | head -1)
+    local cur
+    mapfile -t cur < <(cur_walls)
+    mapfile -t TB < <(images | pick ${#MON[@]} "${cur[@]}")
+    [ ${#TB[@]} -gt 0 ] || return 0
     start_frame                            # 根窗口上已是当前画面, 下面关掉旧壁纸看不出变化
-    stop_scene
-    stop_video
-    transition "$TA" "$new" feh --bg-fill "$new" || {
-        echo "$(date '+%F %T') 转场失败 (A=$TA B=$new), 直接显示新图片" >> "$CACHE/transition.log"
-        feh --bg-fill "$new"
+    stop_all
+    transition feh --bg-fill "${TB[@]}" || {
+        echo "$(date '+%F %T') 转场失败 (A=${TA[*]} B=${TB[*]}), 直接显示新图片" >> "$CACHE/transition.log"
+        feh --bg-fill "${TB[@]}"
     }
     lock_bg
 }
@@ -234,8 +287,11 @@ static() {
 # 静态图片列表
 images() { find "$STATIC" -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) 2>/dev/null; }
 
-# 根窗口上当前铺的图片 (~/.fehbg 里的路径)
-cur_wall() { sed -n "s/^feh .*--bg-fill '\([^']*\)'.*/\1/p" ~/.fehbg 2>/dev/null; }
+# 根窗口上当前铺的图片 (~/.fehbg 里的路径, 每块屏一张, 每行一个)
+cur_walls() { sed -n 's/^feh .*--bg-fill //p' ~/.fehbg 2>/dev/null | grep -o "'[^']*'" | tr -d "'"; }
+
+# 第 $1 块屏当前的动态壁纸 ($CACHE/current 第 $1+1 行 "类型<TAB>路径" 里的路径)
+cur_item() { sed -n "$(($1 + 1))p" "$CACHE/current" 2>/dev/null | cut -f2; }
 
 # 动态壁纸 $1 的帧缓存路径: 播放时截的真实画面 (snapshot), 没有时用兜底帧 (frame_of)
 frame_path() { echo "$CACHE/frames/$(printf %s "$1" | md5sum | cut -c1-12).jpg"; }
@@ -259,47 +315,51 @@ frame_of() {
 # 后台给所有动态壁纸预先截好兜底帧: 切换时不用现场截 (4K 视频要一两秒)
 prewarm() { (items | while IFS=$'\t' read -r kind v; do frame_of "$kind" "$v" >/dev/null; done) >/dev/null 2>&1 8>&- & }
 
-# 当前窗口模式场景 (独显直连) 的窗口, 没有时为空
-scene_win() { xdotool search --onlyvisible --class '^linux-wallpaperengine$' 2>/dev/null | head -1; }
+# 纯黑画面 (什么都截不到时的起始画面), 打印路径
+black() { [ -f "$CACHE/black.jpg" ] || magick -size 16x9 xc:black "$CACHE/black.jpg"; echo "$CACHE/black.jpg"; }
 
-# 截下当前壁纸层的真实画面存到 $1 (全分辨率, 和屏幕上看到的一样), 成功返回 0:
+# 截下第 $1 块屏壁纸层的真实画面存到 $2 (全分辨率, 和屏幕上看到的一样), 成功返回 0:
 #   视频: mpv 的 window 截图 (含缩放和 Anime4K); 场景: 窗口内容; 静态: 截不了 (用当前图片)
 snapshot() {
-    local tmp=$1.part.jpg w i s s0=
+    local tmp=$2.part.jpg w k s s0=
     rm -f "$tmp"
-    if video_running && [ -n "$(ipc get_property pid)" ]; then
-        ipc screenshot-to-file "$tmp" window >/dev/null
-        for i in $(seq 40); do              # 截图在后台写文件, 等大小不再变化
+    if video_running "$1" && [ -n "$(ipc "$1" get_property pid)" ]; then
+        ipc "$1" screenshot-to-file "$tmp" window >/dev/null
+        for k in $(seq 40); do              # 截图在后台写文件, 等大小不再变化
             s=$(stat -c %s "$tmp" 2>/dev/null)
             [ -n "$s" ] && [ "$s" -gt 0 ] && [ "$s" = "$s0" ] && break
             s0=$s; sleep 0.05
         done
-    elif w=$(scene_win) && [ -n "$w" ]; then
+    elif w=$(scene_win "$1"); then
         import -window "$w" -quality 95 "$tmp" 2>/dev/null
     fi
-    [ -s "$tmp" ] && mv "$tmp" "$1"
+    [ -s "$tmp" ] && mv "$tmp" "$2"
 }
 
-# 定格: 把当前壁纸的真实画面铺到根窗口 (和屏幕上的一模一样, 看不出变化), 之后旧壁纸可以直接关掉 / 隐藏;
-# 这张定格帧也是转场的起始画面 ($TA)
-freeze() { snapshot "$CACHE/snap.jpg" && feh --bg-fill "$CACHE/snap.jpg" && TA=$CACHE/snap.jpg; }
-
-# 转场的起始画面 $TA (切换前调用, 之后旧壁纸可以直接关掉):
-#   动态壁纸在跑: 定格当前画面; 截图失败时用它的帧缓存 (上次播放时截的真实画面) 铺到根窗口
-#   静态: 当前图片; 都没有 (开机第一次) 时用纯黑, 相当于从黑屏转场进来
+# 转场的起始画面 (每块屏一张, 存在数组 TA; 切换前调用, 之后旧壁纸可以直接关掉):
+#   动态壁纸在跑: 截下各屏当前画面, 一起铺到根窗口定格 (和屏幕上的一模一样, 看不出变化);
+#     截不到的屏用它的帧缓存 (上次播放时截的真实画面), 再没有用纯黑
+#   静态: 当前图片 (~/.fehbg 里比屏幕少时, 缺的屏用第一张); 都没有 (开机第一次) 时用纯黑, 相当于从黑屏转场进来
 start_frame() {
-    local cur
-    TA=
+    local i f
+    TA=()
     if running; then
-        freeze && return
-        cur=$(cut -f2 "$CACHE/current" 2>/dev/null)
-        [ -n "$cur" ] && [ -f "$(frame_path "$cur")" ] && TA=$(frame_path "$cur") && feh --bg-fill "$TA" && return
+        for i in "${!MON[@]}"; do
+            f=$(frame_path "$(cur_item "$i")")
+            if snapshot "$i" "$CACHE/snap.$i.jpg"; then TA[i]=$CACHE/snap.$i.jpg
+            elif [ -n "$(cur_item "$i")" ] && [ -f "$f" ]; then TA[i]=$f
+            else TA[i]=$(black)
+            fi
+        done
+        feh --bg-fill "${TA[@]}"
     else
-        TA=$(cur_wall)
-        [ -f "$TA" ] && return
+        mapfile -t TA < <(cur_walls)
+        for i in "${!MON[@]}"; do
+            [ -f "${TA[i]}" ] || TA[i]=${TA[0]}
+            [ -f "${TA[i]}" ] || TA[i]=$(black)
+        done
+        TA=("${TA[@]:0:${#MON[@]}}")      # 屏幕变少了: 多出来的不要
     fi
-    TA=$CACHE/black.jpg
-    [ -f "$TA" ] || magick -size "$(xwininfo -root | awk '/Width/{w = $2} /Height/{print w "x" $2}')" xc:black "$TA"
 }
 
 # 这次用哪个转场着色器, 打印路径; 找不到时为空 (转场失败, 直接显示)
@@ -314,27 +374,35 @@ pick_transition() {
     fi
 }
 
-# 暂停 / 继续新壁纸: video|scene yes|no (转场期间停在截图的那一帧, 转场结束时和截图完全一样, 衔接无跳变)
+# 暂停 / 继续第 $1 块屏的新壁纸: 屏幕 video|scene yes|no (转场期间停在截图的那一帧, 转场结束时和截图完全一样, 衔接无跳变)
 pause_new() {
-    if [ "$1" = video ]; then
-        ipc set pause "$2" >/dev/null
+    if [ "$2" = video ]; then
+        ipc "$1" set pause "$3" >/dev/null
     else
-        pkill "-$([ "$2" = yes ] && echo STOP || echo CONT)" -f -- '(^|/)linux-wallpaperengine .*--window'
+        pkill "-$([ "$3" = yes ] && echo STOP || echo CONT)" -f -- "$(scene_pat "$1")"
     fi
 }
 
-# GPU 转场: 从图片 $1 过渡到图片 $2, 成功返回 0
-#   bin/transition.py 在最底层开全屏窗口, 画好 $1 (和屏幕上的一样) 后回 ready; 这时执行回调 $3 ... 在它下面把
-#   最终画面准备好 (被盖着看不见), 再让它播放转场; 它退出后露出的就是准备好的画面
+# GPU 转场: 每块屏从 TA 里它的那张图片过渡到 TB 里它的那张, 各屏同时播放, 成功返回 0
+#   bin/transition.py 在最底层开铺满整个桌面的窗口, 画好 A (和屏幕上的一样) 后回 ready, 让它播放; 播完 (停在 B) 回 done,
+#   这时执行回调 $@ 在它下面把最终画面准备好 (和 B 一样), 再让它退出, 露出的就是准备好的画面 (握手原因见 transition.py)
+#   起来了但没等到 done (中途出错): 照样执行回调, 记到 transition.log; 根本没起来: 返回非 0, 由调用方直接显示
 transition() {
-    local a=$1 b=$2 shader line ok=1
-    shift 2
+    local shader line ok=1 i args=() in out
     shader=$(pick_transition)
-    [ -n "$shader" ] && [ -f "$a" ] && [ -f "$b" ] || return 1
-    coproc TR { exec timeout 10 python3 "$DWM/bin/transition.py" "$a" "$b" "$shader" "$TRANS_SEC" 2>>"$CACHE/transition.log" 8>&-; }
-    if read -r -t 3 line <&"${TR[0]}" && [ "$line" = ready ]; then
+    [ -n "$shader" ] || return 1
+    for i in "${!MON[@]}"; do
+        [ -f "${TA[i]}" ] && [ -f "${TB[i]}" ] || return 1
+        args+=("${MON[i]}" "${TA[i]}" "${TB[i]}")
+    done
+    coproc TR { exec timeout 10 python3 "$DWM/bin/transition.py" "$shader" "$TRANS_SEC" "${args[@]}" 2>>"$CACHE/transition.log" 8>&-; }
+    in=${TR[0]} out=${TR[1]}               # 它退出后 bash 会清掉 TR, 先记下
+    if read -r -t 3 line <&"$in" && [ "$line" = ready ]; then
+        echo go >&"$out"
+        read -r -t 5 line <&"$in" && [ "$line" = done ] ||
+            echo "$(date '+%F %T') 转场没有正常播完, 直接显示" >> "$CACHE/transition.log"
         "$@"
-        echo go >&"${TR[1]}"
+        echo ok >&"$out" 2>/dev/null
         ok=0
     else
         kill "$TR_PID" 2>/dev/null
@@ -352,77 +420,105 @@ show_under() {
     done
 }
 
-# 新壁纸出场 (已经画好, 但还是全透明): video "" <兜底帧>, 或 scene <场景窗口> <兜底帧>
-#   暂停新壁纸并截图 B (截不到时重试, 仍不行用兜底帧), 从 A ($TA, 见 start_frame) 转场到 B,
+# 新壁纸出场 (各屏都已画好, 但还是全透明; 类型在 KIND, 兜底帧在 FB):
+#   全部暂停并截图 B (截不到时重试, 仍不行用兜底帧), 从 A ($TA, 见 start_frame) 转场到 B,
 #   转场期间新壁纸被垫到下面; 结束后继续播放. 转场程序出错时直接显示新壁纸, 并记到 transition.log
-transition_in() {
-    local kind=$1 wins=$2 b=$CACHE/next.jpg i
-    [ "$kind" = video ] && wins=$(tops)
-    pause_new "$kind" yes
-    rm -f "$b"
-    for i in 1 2 3; do snapshot "$b" && break; sleep 0.2; done
-    [ -s "$b" ] || b=$3
-    transition "$TA" "$b" show_under $wins || {
-        echo "$(date '+%F %T') 转场失败 (A=$TA B=$b), 直接显示新壁纸" >> "$CACHE/transition.log"
-        show_under $wins
+reveal() {
+    local i k wins=()
+    TB=()
+    for i in "${!MON[@]}"; do
+        pause_new "$i" "${KIND[i]}" yes
+        if [ "${KIND[i]}" = video ]; then wins+=($(tops "$i")); else wins+=($(scene_win "$i")); fi
+    done
+    for i in "${!MON[@]}"; do
+        TB[i]=$CACHE/next.$i.jpg
+        rm -f "${TB[i]}"
+        for k in 1 2 3; do snapshot "$i" "${TB[i]}" && break; sleep 0.2; done
+        [ -s "${TB[i]}" ] || TB[i]=${FB[i]}
+    done
+    transition show_under "${wins[@]}" || {
+        echo "$(date '+%F %T') 转场失败 (A=${TA[*]} B=${TB[*]}), 直接显示新壁纸" >> "$CACHE/transition.log"
+        show_under "${wins[@]}"
     }
-    pause_new "$kind" no
+    for i in "${!MON[@]}"; do pause_new "$i" "${KIND[i]}" no; done
 }
 
-# 新壁纸出场后: 截它的真实画面存为帧缓存并铺到根窗口 (锁屏背景、退出后的兜底画面都是全分辨率);
-# 截不了时铺兜底帧 $2
-settle() { snapshot "$(frame_path "$1")" && feh --bg-fill "$(frame_path "$1")" || feh --bg-fill "$2"; }
+# 新壁纸出场后: 截各屏的真实画面存为帧缓存并一起铺到根窗口 (锁屏背景、退出后的兜底画面都是全分辨率);
+# 截不了的屏铺兜底帧
+settle() {
+    local i f=()
+    for i in "${!MON[@]}"; do
+        f[i]=$(frame_path "${ITEM[i]#*$'\t'}")
+        snapshot "$i" "${f[i]}" || f[i]=${FB[i]}
+    done
+    feh --bg-fill "${f[@]}"
+}
 
-# 窗口立即设为全透明 (默认是视频窗口)
-hide() { local id; for id in ${1:-$(tops)}; do xprop -id "$id" -f _NET_WM_WINDOW_OPACITY 32c -set _NET_WM_WINDOW_OPACITY 0 2>/dev/null; done; }
+# 窗口立即设为全透明
+hide() { local id; for id in "$@"; do xprop -id "$id" -f _NET_WM_WINDOW_OPACITY 32c -set _NET_WM_WINDOW_OPACITY 0 2>/dev/null; done; }
 
-# 动态: 随机挑一个 (尽量不和当前的重复), 视频 / 场景分别处理
-# 切换方式 (定格帧交叉淡入): 先把当前画面定格到根窗口, 关掉 / 隐藏旧壁纸, 新壁纸全透明启动, 画出来后淡入;
-# 整个过程屏幕上只有真实的全分辨率画面, 一次淡入完成
+# 动态: 随机挑一个, 每块屏都放它 (见 pick), 视频 / 场景分别处理
+# 切换方式 (定格帧转场): 先把各屏当前画面定格到根窗口, 关掉 / 隐藏旧壁纸, 新壁纸全透明启动, 画出来后一起转场出场;
+# 整个过程屏幕上只有真实的全分辨率画面
 play() {
-    local it kind v frame
-    it=$(items | grep -vxF "$(cat "$CACHE/current" 2>/dev/null)" | shuf -n1)
-    [ -n "$it" ] || it=$(items | head -1)
-    kind=${it%%$'\t'*}; v=${it#*$'\t'}
-    frame=$(frame_of "$kind" "$v")
+    local i cur v
+    mapfile -t cur < <(cat "$CACHE/current" 2>/dev/null)
+    mapfile -t ITEM < <(items | pick ${#MON[@]} "${cur[@]}")
     start_frame
-    if [ "$kind" = scene ]; then play_scene "$v" "$frame"; else play_video "$v" "$frame"; fi
-    echo "$it" > "$CACHE/current"
+    # 屏幕布局变了 (monitor.sh 换布局后会调 next): 旧实例的位置、大小都对不上, 全部关掉 (画面已定格在根窗口)
+    [ "$(cat "$CACHE/layout" 2>/dev/null)" = "${MON[*]}" ] || stop_all
+    KIND=(); FB=(); SH=()
+    for i in "${!MON[@]}"; do
+        KIND[i]=${ITEM[i]%%$'\t'*}; v=${ITEM[i]#*$'\t'}
+        FB[i]=$(frame_of "${KIND[i]}" "$v")
+        if [ "${KIND[i]}" = scene ]; then start_scene "$i" "$v"; else start_video "$i" "$v"; fi
+    done
+    # 等新壁纸画好: 视频等 mpv 真正出帧 (偶尔新开的播放器出不来画面, 如窗口被 X 销毁得晚, 就关掉重开一次);
+    # 场景刚启动时贴图还没加载完, 画面不完整, 等 1.5 秒
+    for i in "${!MON[@]}"; do
+        [ "${KIND[i]}" = video ] || continue
+        v=${ITEM[i]#*$'\t'}
+        wait_frames "$i" "$v" || { start_player "$i" "$v" "${SH[i]}"; wait_frames "$i" "$v"; }
+    done
+    printf '%s\n' "${KIND[@]}" | grep -qx scene && sleep 1.5
+    reveal
+    settle
+    printf '%s\n' "${ITEM[@]}" > "$CACHE/current"
+    echo "${MON[*]}" > "$CACHE/layout"
     lock_bg
 }
 
-# 场景: 开全屏窗口 (窗口模式), 改成不受 dwm 管理的最底层窗口 (同视频的 xwinwrap 窗口); 所有屏幕显示同一个场景
+# 场景: 在第 $1 块屏开窗口 (窗口模式, 正好盖住这块屏), 改成不受 dwm 管理的最底层窗口 (同视频的 xwinwrap 窗口), 先保持全透明
 #   不用根窗口模式 (直接画在根窗口上): 它是在隐藏窗口里渲染再读回画面, NVIDIA 读不到隐藏窗口的内容 (独显直连
 #   全黑, 混合模式 PRIME offload 只有左上角 640x480 有画面); 而且截不到画面做转场, 根窗口一变还会崩溃
-play_scene() {
-    local fps=$SCENE_FPS_INTEL args=() w
+start_scene() {
+    local fps=$SCENE_FPS_INTEL args=() w before
     nv_primary && [ ! -f "$POWERSAVE" ] && fps=$SCENE_FPS_NV
     [ -d "$ASSETS" ] && args+=(--assets-dir "$ASSETS")
-    stop_scene
-    stop_video
+    stop_scene "$1"
+    stop_video "$1"
+    geom "$1"
+    before=$(xdotool search --class '^linux-wallpaperengine$' 2>/dev/null)
     # 它按 XDG_SESSION_TYPE 选 X11 / Wayland, startx 启动时这个变量是 tty, 要显式指定
     XDG_SESSION_TYPE=x11 setsid -f linux-wallpaperengine --silent --fps $fps "${args[@]}" \
-        --window "0x0x$(xwininfo -root | awk '/Width/{w = $2} /Height/{print w "x" $2}')" --scaling fill "$1" >"$CACHE/scene.log" 2>&1 8>&-
-    # 等 1.5 秒再出场: 刚启动时贴图还没加载完, 画面不完整
-    if w=$(scene_window); then
-        desktop_window "$w" || echo "$(date '+%F %T') 场景窗口转成最底层窗口失败: $1" >> "$CACHE/transition.log"
-        sleep 1.5
-        transition_in scene "$w" "$2"
+        --window "${X}x${Y}x${W}x${H}" --scaling fill "$2" >"$CACHE/scene.$1.log" 2>&1 8>&-
+    if w=$(scene_window "$before"); then
+        echo "$w" > "$CACHE/scene.$1.win"
+        desktop_window "$w" "$1" || echo "$(date '+%F %T') 场景窗口转成最底层窗口失败: $2" >> "$CACHE/transition.log"
     else
-        echo "$(date '+%F %T') 场景窗口 10 秒内没有出现: $1 (见 $CACHE/scene.log)" >> "$CACHE/transition.log"
+        echo "$(date '+%F %T') 场景窗口 10 秒内没有出现: $2 (见 $CACHE/scene.$1.log)" >> "$CACHE/transition.log"
     fi
-    settle "$1" "$2"
 }
 
-# 等场景的窗口出现 (最多 10 秒, 一般 0.2 秒), 打印窗口 id, 并马上设为全透明 (还没转成最底层窗口前不让它盖住其他窗口);
-# 超过 1 秒才出现时记到 transition.log
+# 等新场景的窗口出现 (不在 $1 列出的已有窗口里; 最多 10 秒, 一般 0.2 秒), 打印窗口 id,
+# 并马上设为全透明 (还没转成最底层窗口前不让它盖住其他窗口); 超过 1 秒才出现时记到 transition.log
 scene_window() {
-    local i w
-    for i in $(seq 200); do
-        w=$(xdotool search --onlyvisible --class '^linux-wallpaperengine$' 2>/dev/null | head -1)
+    local k w
+    for k in $(seq 200); do
+        w=$(xdotool search --onlyvisible --class '^linux-wallpaperengine$' 2>/dev/null | grep -vxF -f <(printf '%s\n' $1) | head -1)
         if [ -n "$w" ]; then
             xprop -id "$w" -f _NET_WM_WINDOW_OPACITY 32c -set _NET_WM_WINDOW_OPACITY 0
-            [ "$i" -gt 20 ] && echo "$(date '+%F %T') 场景窗口 $((i * 50))ms 后才出现" >> "$CACHE/transition.log"
+            [ "$k" -gt 20 ] && echo "$(date '+%F %T') 场景窗口 $((k * 50))ms 后才出现" >> "$CACHE/transition.log"
             echo "$w"
             return 0
         fi
@@ -431,13 +527,24 @@ scene_window() {
     return 1
 }
 
-# 把窗口改成壁纸窗口: 取消映射 (dwm 不再管理) -> 设 override-redirect -> 重新映射、铺满屏幕、放到最底层 -> 输入穿透
+# 把窗口 $1 改成第 $2 块屏的壁纸窗口: 取消映射 (dwm 不再管理) -> 删掉 WM_STATE -> 设 override-redirect ->
+# 重新映射、盖住这块屏、放到最底层 -> 输入穿透 (dwm 接管时可能把它挪到了当前屏, 这里放回原位)
+#   WM_STATE: dwm 放手时只把它改成 Withdrawn, 不删; picom 见到 WM_STATE 就把窗口当成窗口管理器的客户窗口,
+#   规则里的 override_redirect 对它恒为假, 会套上普通窗口的透明度规则, 盖过 _NET_WM_WINDOW_OPACITY (隐藏不了,
+#   还挡住压在最底层的转场窗口); 要等 dwm 写完 Withdrawn 再删, 否则会被它写回来
 #   不能设成桌面类型 (_NET_WM_WINDOW_TYPE_DESKTOP): xwinwrap 会把之后开的视频窗口建在桌面类型的窗口里,
 #   场景一关视频也跟着没了; picom 改按 class_g = 'linux-wallpaperengine' 排除阴影圆角等
 desktop_window() {
-    xdotool windowunmap --sync "$1" &&
+    local k
+    geom "$2"
+    xdotool windowunmap --sync "$1" || return 1
+    for k in $(seq 20); do
+        xprop -id "$1" WM_STATE 2>/dev/null | grep -q Withdrawn && break
+        sleep 0.02
+    done
+    xprop -id "$1" -remove WM_STATE &&
     xdotool set_window --overrideredirect 1 "$1" &&
-    xdotool windowmap --sync "$1" windowmove "$1" 0 0 windowlower "$1" 2>/dev/null &&
+    xdotool windowmap --sync "$1" windowsize "$1" "$W" "$H" windowmove "$1" "$X" "$Y" windowlower "$1" 2>/dev/null &&
     input_passthrough "$1"
 }
 
@@ -457,71 +564,67 @@ x11.XCloseDisplay(C.c_void_p(dpy))
 EOF
 }
 
-# 低于屏幕高度的视频 (1080p 等) 用 Anime4K 着色器在独显上放大, 打印 mpv 的 glsl-shaders 列表 (不放大时为空)
+# 低于所在屏 ($2) 高度的视频 (1080p 等) 用 Anime4K 着色器在独显上放大, 打印 mpv 的 glsl-shaders 列表 (不放大时为空)
 #   Mode A (HQ): 先修复压缩造成的模糊, 再用 CNN 放大两倍, 最后缩到屏幕大小
 shaders() {
     local h sh=() f
     [ "$ANIME4K" = 1 ] && [ "$(gpu)" = nvidia ] || return 0
+    geom "$2"
     # 只取第一个数字: 有的视频 ffprobe 会多输出几行 (附加数据等)
     h=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$1" 2>/dev/null | grep -m1 -E '^[0-9]+$')
-    [ -n "$h" ] && [ "$h" -lt "$(xwininfo -root | awk '/Height:/{print $2; exit}')" ] || return 0
+    [ -n "$h" ] && [ "$h" -lt "$H" ] || return 0
     for f in Clamp_Highlights Restore_CNN_VL Upscale_CNN_x2_VL AutoDownscalePre_x2 AutoDownscalePre_x4 Upscale_CNN_x2_M; do
         sh+=("$A4K/Anime4K_$f.glsl")
     done
     (IFS=:; echo "${sh[*]}")
 }
 
-# 新开播放器 (先关掉残留的), 视频 $1, 着色器 $2
+# 在第 $1 块屏新开播放器 (先关掉这块屏残留的), 视频 $2, 着色器 $3
 #   独显: vulkan 渲染 + nvdec 解码, 高画质缩放 (1080p 放大更锐, 4K 缩小不糊) + 去色带 (天空渐变不起条纹);
 #         首次启动要唤醒独显 (2~3 秒), 之后换视频复用同一个播放器
 #   核显: opengl + vaapi, 启动约 0.1 秒, 默认画质 (高画质缩放核显扛不住)
 start_player() {
     local envs=() vo
-    stop_video
+    stop_video "$1"
     if [ "$(gpu)" = nvidia ]; then
         nv_primary || envs=("${NV_ENV[@]}")
         vo=(--vo=gpu-next --gpu-api=vulkan --hwdec=nvdec --profile=high-quality --deband)
     else
         vo=(--vo=gpu-next --gpu-api=opengl --hwdec=auto-safe)
     fi
-    # -b -ov -fdt: 最底层、不受 dwm 管理、桌面类型窗口 (picom 中按 window_type = 'desktop' 排除阴影圆角等)
+    # -g: 正好盖住这块屏; -b -ov -fdt: 最底层、不受 dwm 管理、桌面类型窗口 (picom 中按 window_type = 'desktop' 排除阴影圆角等)
     # -o 0: 窗口以全透明出现; --panscan=1.0 裁剪铺满屏幕 (同 feh --bg-fill)
-    env "${envs[@]}" setsid -f xwinwrap -g "$(xwininfo -root | awk '/-geometry/{print $2}')" -ni -s -st -sp -nf -b -un -ov -fdt -o 0 -- \
-        mpv --wid=%WID --x11-name=livewall --no-config --input-ipc-server="$SOCK" \
+    # xwinwrap 会把和整个桌面一样大的窗口当成桌面, 把新窗口建在它里面; 每屏一个的窗口比整个桌面小, 几个 xwinwrap 互不影响
+    env "${envs[@]}" setsid -f xwinwrap -g "${MON[$1]}" -ni -s -st -sp -nf -b -un -ov -fdt -o 0 -- \
+        mpv --wid=%WID --x11-name=livewall$1 --no-config --input-ipc-server="$CACHE/mpv.$1.sock" \
             --start=$START --loop-file=inf --no-audio \
             --no-osc --no-osd-bar --no-input-default-bindings --input-vo-keyboard=no \
-            --panscan=1.0 "${vo[@]}" --glsl-shaders="$2" --screenshot-format=jpg --screenshot-jpeg-quality=95 \
-            --really-quiet "$1" >/dev/null 2>&1 8>&-
+            --panscan=1.0 "${vo[@]}" --glsl-shaders="$3" --screenshot-format=jpg --screenshot-jpeg-quality=95 \
+            --really-quiet "$2" >/dev/null 2>&1 8>&-
 }
 
-# 视频 (play 已经定格了当前画面, 见 start_frame):
+# 第 $1 块屏放视频 $2 (play 已经定格了当前画面, 见 start_frame), 新视频全透明启动, 由 play 等它出帧后转场出场:
 #   原来是视频: 隐藏视频窗口 (看到的是定格帧), 同一个播放器换成新视频
-#   原来是场景: 关掉场景再开播放器 (xwinwrap 会把铺满屏幕的最底层窗口当成桌面, 把视频窗口建在
-#              它里面, 场景一关视频也没了); 不能同时开两个 xwinwrap 也是同样原因
+#   原来是场景: 关掉场景再开播放器 (只有一块屏时场景窗口和整个桌面一样大, xwinwrap 会把它当成桌面,
+#              把视频窗口建在它里面, 场景一关视频也没了)
 #   原来是静态: 新开播放器
-# 新视频全透明启动, 画面出来后转场出场 (transition_in)
-play_video() {
-    local v=$1 frame=$2 sh
-    sh=$(shaders "$v")
-    if video_running && [ -n "$(ipc get_property pid)" ]; then
-        hide
-        ipc set glsl-shaders "$sh" >/dev/null
-        ipc loadfile "$v" >/dev/null
-        wait_frames "$v"
+start_video() {
+    SH[$1]=$(shaders "$2" "$1")
+    if video_running "$1" && [ -n "$(ipc "$1" get_property pid)" ]; then
+        hide $(tops "$1")
+        ipc "$1" set glsl-shaders "${SH[$1]}" >/dev/null
+        ipc "$1" loadfile "$2" >/dev/null
     else
-        stop_scene
-        # 偶尔新开的播放器出不来画面 (窗口被 X 销毁得晚等), 等不到就关掉重开一次
-        start_player "$v" "$sh"
-        wait_frames "$v" || { start_player "$v" "$sh"; wait_frames "$v"; }
+        stop_scene "$1"
+        start_player "$1" "$2" "${SH[$1]}"
     fi
-    transition_in video "" "$frame"
-    stop_scene
-    settle "$v" "$frame"
 }
 
 mkdir -p "$CACHE"
 exec 8>"$CACHE/.lock"
 flock 8                                    # 连续快速切换时排队执行, 不让两次动画交叠
+mapfile -t MON < <(monitors)
+[ ${#MON[@]} -gt 0 ] || MON=("$(xwininfo -root | awk '/-geometry/{print $2}')")
 
 case $1 in
     auto)

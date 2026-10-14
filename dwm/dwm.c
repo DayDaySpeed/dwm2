@@ -207,6 +207,11 @@ typedef struct {
     uint floatposition;
 } Rule;
 
+typedef struct {
+	const char *comm;
+	unsigned int tags;
+} ProcRule;
+
 typedef struct Systray   Systray;
 struct Systray {
 	Window win;
@@ -221,6 +226,7 @@ static void magicgrid(Monitor *m);
 static void grid(Monitor *m, uint gappo, uint uappi);
 
 static void applyrules(Client *c);
+static unsigned int proctags(Window w);
 static int applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact);
 static void arrange(Monitor *m);
 static void arrangemon(Monitor *m);
@@ -558,7 +564,44 @@ applyrules(Client *c)
         XFree(ch.res_class);
     if (ch.res_name)
         XFree(ch.res_name);
+    if (!(c->tags & TAGMASK))
+        c->tags = proctags(c->win);
     c->tags = c->tags & TAGMASK ? c->tags & TAGMASK : c->mon->tagset[c->mon->seltags];
+}
+
+/* 窗口进程 (_NET_WM_PID) 沿 ppid 往上找, 遇到 procrules 里的进程名就用它的 tag; 找不到返回 0 */
+unsigned int
+proctags(Window w)
+{
+    Atom pidatom = XInternAtom(dpy, "_NET_WM_PID", False), type;
+    unsigned long n, after;
+    unsigned char *p = NULL;
+    char path[64], buf[512], *l, *r;
+    int format, pid = 0, depth, i;
+    FILE *f;
+
+    if (XGetWindowProperty(dpy, w, pidatom, 0, 1, False, XA_CARDINAL,
+            &type, &format, &n, &after, &p) == Success && p) {
+        if (n == 1 && format == 32)
+            pid = (int)*(unsigned long *)p;
+        XFree(p);
+    }
+    for (depth = 0; pid > 1 && depth < 64; depth++) {
+        snprintf(path, sizeof path, "/proc/%d/stat", pid);
+        if (!(f = fopen(path, "r")))
+            return 0;
+        n = fread(buf, 1, sizeof buf - 1, f);
+        fclose(f);
+        buf[n] = 0;
+        /* 进程名在括号里, 可能含空格和括号, 取第一个 '(' 到最后一个 ')' */
+        if (!(l = strchr(buf, '(')) || !(r = strrchr(buf, ')')) || sscanf(r + 1, " %*c %d", &pid) != 1)
+            return 0;
+        *r = 0;
+        for (i = 0; i < LENGTH(procrules); i++)
+            if (!strcmp(l + 1, procrules[i].comm))
+                return procrules[i].tags;
+    }
+    return 0;
 }
 
 int
@@ -4006,12 +4049,13 @@ setgap(const Arg *arg)
     arrange(selmon);
 }
 
-/* 该 tag 上没有可见窗口时: once (arg->i) 且有隐藏窗口则取消隐藏, 否则执行附加命令 */
+/* 带命令的 tag: 有隐藏窗口则全部取消隐藏 (聚焦最近隐藏的); 一个窗口都没有则执行命令;
+ * cycle (已在该 tag 上再按) 且窗口都可见时, 按 clients 顺序聚焦下一个, 末尾回到第一个 */
 static void
-viewspawn(const Arg *arg)
+viewspawn(const Arg *arg, int cycle)
 {
-    Client *c, *pick = NULL;
-    int visible = 0, hidden = 0;
+    Client *c, *pick = NULL, *first = NULL, *next = NULL;
+    int visible = 0, hidden = 0, after = 0;
 
     if (!arg->v)
         return;
@@ -4022,12 +4066,24 @@ viewspawn(const Arg *arg)
             hidden++;
             if (!pick || c->hideseq >= pick->hideseq)
                 pick = c;
-        } else
+        } else {
             visible++;
+            if (!first)
+                first = c;
+            if (after && !next)
+                next = c;
+            if (c == selmon->sel)
+                after = 1;
+        }
     }
-    if (visible)
+    if (!hidden && visible) {
+        if (cycle) {
+            pointerclient(next ? next : first);
+            restack(selmon);
+        }
         return;
-    if (hidden && arg->i) {
+    }
+    if (hidden) {
         /* 先全部映射再排一次. 逐个 show() 会在循环里 arrange/XSync,
          * 中途有窗口消失或尺寸非法时, 错误处理会把整个会话退出 */
         releasefloat();
@@ -4055,9 +4111,9 @@ view(const Arg *arg)
     int i;
     unsigned int tmptag;
 
-    /* 已经在目标 tag 上: 不切页, 避免盖掉上一格. 没有可见窗口时取消隐藏或再开一个 */
+    /* 已经在目标 tag 上: 不切页, 避免盖掉上一格. 恢复隐藏窗口 / 循环聚焦 / 没有窗口时启动命令 */
     if ((arg->ui & TAGMASK) && (arg->ui & TAGMASK) == (selmon->tagset[selmon->seltags] & TAGMASK)) {
-        viewspawn(arg);
+        viewspawn(arg, 1);
         return;
     }
 
@@ -4092,7 +4148,7 @@ view(const Arg *arg)
 
     focus(NULL);
     arrange(selmon);
-    viewspawn(arg);
+    viewspawn(arg, 0);
 }
 
 void

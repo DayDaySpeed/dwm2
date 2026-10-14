@@ -25,7 +25,7 @@ list() {
     /^[[:space:]]*TAGKEYS\(XK_/ {
         match($0, /XK_[A-Za-z0-9]+/); key = substr($0, RSTART + 3, RLENGTH - 3)
         match($0, /, *[0-9]+ *,/); n = substr($0, RSTART + 1, RLENGTH - 2) + 1
-        cmd = ""; if (match($0, /"[^"]*"/)) cmd = "  (tag 为空时启动 " substr($0, RSTART + 1, RLENGTH - 2) ")"
+        cmd = ""; if (match($0, /"[^"]*"/)) cmd = "  (为空时启动 " substr($0, RSTART + 1, RLENGTH - 2) ", 再按恢复隐藏 / 轮流切换)"
         printf "%-22s 切换到第 %d 个 tag%s\n", "super " key, n, cmd
     }
     END {

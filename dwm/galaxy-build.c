@@ -322,7 +322,8 @@ galaxyfree(void)
     if (r->desktoppix) XFreePixmap(dpy, r->desktoppix);
     if (r->wallpaper) XRenderFreePicture(dpy, r->wallpaper);
     if (r->wallpix) XFreePixmap(dpy, r->wallpix);
-    if (r->live) XRenderFreePicture(dpy, r->live);
+    for (i = 0; i < r->live; i++)
+        XRenderFreePicture(dpy, r->livepic[i]);
     galaxyheatfree();
     for (i = 0; i < r->nlandbar; i++)
         XRenderFreePicture(dpy, r->landbar[i]);
@@ -580,24 +581,29 @@ galaxybuildshards(void)
     }
 }
 
-/* 动态壁纸 (linux-wallpaperengine / xwinwrap 等) 是最底层的全屏非托管窗口 */
-static Window
-galaxyfindwallpaper(void)
+/* 动态壁纸 (linux-wallpaperengine / xwinwrap 等) 是最底层的非托管窗口, 每块屏一个 (bin/livewall.sh), 各自盖住一块屏:
+ * 找出这些窗口存进 wallwin[], 返回个数 */
+static int
+galaxyfindwallpapers(void)
 {
-    Window d1, d2, *wins = NULL, found = None;
+    Window d1, d2, *wins = NULL;
     XWindowAttributes wa;
+    Monitor *m;
     unsigned int i, n;
+    int found = 0;
 
     if (!XQueryTree(dpy, root, &d1, &d2, &wins, &n))
-        return None;
-    for (i = 0; i < n; i++) {
+        return 0;
+    for (i = 0; i < n && found < GALAXYWALLS; i++) {
         if (wintoclient(wins[i]))
             break;
-        if (XGetWindowAttributes(dpy, wins[i], &wa) && wa.map_state == IsViewable && wa.class == InputOutput
-                && wa.x <= 0 && wa.y <= 0 && wa.x + wa.width >= galaxyscene.w && wa.y + wa.height >= galaxyscene.h) {
-            found = wins[i];
-            break;
-        }
+        if (!XGetWindowAttributes(dpy, wins[i], &wa) || wa.map_state != IsViewable || wa.class != InputOutput)
+            continue;
+        for (m = mons; m; m = m->next)
+            if (wa.x <= m->mx && wa.y <= m->my && wa.x + wa.width >= m->mx + m->mw && wa.y + wa.height >= m->my + m->mh) {
+                galaxyscene.wallwin[found++] = wins[i];
+                break;
+            }
     }
     if (wins)
         XFree(wins);
@@ -615,24 +621,27 @@ galaxyreadlive(Picture dst)
     XRenderPictFormat *fmt;
     Pixmap pix;
     Picture p;
-    int ok = 0;
+    int i, ok = 0;
 
-    if (!r->wallwin || galaxynow() - r->livefail < 1 || !XGetWindowAttributes(dpy, r->wallwin, &wa)
-            || !(fmt = XRenderFindVisualFormat(dpy, wa.visual)))
+    if (!r->live || galaxynow() - r->livefail < 1)
         return 0;
     XSync(dpy, False);
     old = XSetErrorHandler(xerrordummy);
-    pix = XCompositeNameWindowPixmap(dpy, r->wallwin);
-    XSync(dpy, False);
-    if (pix && (p = XRenderCreatePicture(dpy, pix, fmt, 0, NULL))) {
-        XRenderComposite(dpy, PictOpSrc, p, None, dst, 0, 0, 0, 0, wa.x, wa.y, wa.width, wa.height);
-        XRenderFreePicture(dpy, p);
+    for (i = 0; i < r->live; i++) {
+        if (!XGetWindowAttributes(dpy, r->wallwin[i], &wa) || !(fmt = XRenderFindVisualFormat(dpy, wa.visual)))
+            continue;
+        pix = XCompositeNameWindowPixmap(dpy, r->wallwin[i]);
         XSync(dpy, False);
-        ok = 1;
+        if (pix && (p = XRenderCreatePicture(dpy, pix, fmt, 0, NULL))) {
+            XRenderComposite(dpy, PictOpSrc, p, None, dst, 0, 0, 0, 0, wa.x, wa.y, wa.width, wa.height);
+            XRenderFreePicture(dpy, p);
+            XSync(dpy, False);
+            ok = 1;
+        }
+        if (pix)
+            XFreePixmap(dpy, pix);
+        XSync(dpy, False);
     }
-    if (pix)
-        XFreePixmap(dpy, pix);
-    XSync(dpy, False);
     XSetErrorHandler(old);
     if (!ok)
         r->livefail = galaxynow();
@@ -653,20 +662,15 @@ galaxycapturebackground(void)
     unsigned char *data = NULL;
     Pixmap source = None;
     Picture p;
+    int i, n;
 
     /* 当前合成后的整个桌面: 第一帧与真实桌面完全一致 */
     if ((p = XRenderCreatePicture(dpy, root, fmt, CPSubwindowMode, &pa))) {
         XRenderComposite(dpy, PictOpSrc, p, None, r->desktop, 0, 0, 0, 0, 0, 0, r->w, r->h);
         XRenderFreePicture(dpy, p);
     }
+    /* 先铺根窗口的静态壁纸 (动态壁纸没盖到的屏也有画面), 再叠上各屏正在播放的动态壁纸 */
     XRenderFillRectangle(dpy, PictOpSrc, r->wallpaper, &space, 0, 0, r->w, r->h);
-    if ((r->wallwin = galaxyfindwallpaper()) && XGetWindowAttributes(dpy, r->wallwin, &wa)
-            && (fmt = XRenderFindVisualFormat(dpy, wa.visual))
-            && (r->live = XRenderCreatePicture(dpy, r->wallwin, fmt, CPSubwindowMode, &pa))) {
-        XRenderComposite(dpy, PictOpSrc, r->live, None, r->wallpaper, -wa.x, -wa.y, 0, 0, 0, 0, r->w, r->h);
-        return;
-    }
-    r->wallwin = None;
     if (XGetWindowProperty(dpy, root, XInternAtom(dpy, "_XROOTPMAP_ID", False), 0, 1, False, XA_PIXMAP,
             &type, &format, &items, &after, &data) == Success && data && items)
         source = *(Pixmap *)data;
@@ -676,6 +680,14 @@ galaxycapturebackground(void)
         XRenderComposite(dpy, PictOpSrc, p, None, r->wallpaper, 0, 0, 0, 0, 0, 0, r->w, r->h);
         XRenderFreePicture(dpy, p);
     }
+    r->live = 0;
+    for (n = galaxyfindwallpapers(), i = 0; i < n; i++)
+        if (XGetWindowAttributes(dpy, r->wallwin[i], &wa) && (fmt = XRenderFindVisualFormat(dpy, wa.visual))
+                && (p = XRenderCreatePicture(dpy, r->wallwin[i], fmt, CPSubwindowMode, &pa))) {
+            XRenderComposite(dpy, PictOpSrc, p, None, r->wallpaper, 0, 0, 0, 0, wa.x, wa.y, wa.width, wa.height);
+            r->wallwin[r->live] = r->wallwin[i];
+            r->livepic[r->live++] = p;
+        }
 }
 
 static void
@@ -693,9 +705,9 @@ galaxylogstart(void)
         snprintf(path, sizeof path, "%s/.cache/dwm-galaxy%s.log", home ? home : "/tmp", DisplayString(dpy));
     if (!(r->log = fopen(path, "w")))
         return;
-    fprintf(r->log, "galaxy start: screen %dx%d tags %d windows %d dust %d trail %d focal %.0f timescale %.2f dpms %d wallpaper 0x%lx%s quiet %d gentle %d fxgap %.2f refresh %.0fHz\n",
+    fprintf(r->log, "galaxy start: screen %dx%d tags %d windows %d dust %d trail %d focal %.0f timescale %.2f dpms %d wallpaper 0x%lx (live %d) quiet %d gentle %d fxgap %.2f refresh %.0fHz\n",
             r->w, r->h, r->ntags, r->nstars, r->ndust, r->ntrail, r->cam.focal, r->tscale, r->dpms,
-            r->wallwin, r->live ? " (live)" : "", r->quiet, r->gentle, r->fxgap, r->refresh);
+            r->live ? r->wallwin[0] : 0, r->live, r->quiet, r->gentle, r->fxgap, r->refresh);
     fprintf(r->log, "galaxy far: galaxies");    /* 远景元素的位置 (像素), 方便对着截图找 */
     for (i = 0; i < 2; i++)
         fprintf(r->log, " %.0f,%.0f/%.0f", r->vx + r->farg[i][0] * r->vw, r->vy + r->farg[i][1] * r->vw, r->farg[i][2] * r->vw);

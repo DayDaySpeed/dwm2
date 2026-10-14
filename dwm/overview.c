@@ -450,10 +450,11 @@ overviewrefreshstep(double now)
     }
 }
 
-/* 动态壁纸 (linux-wallpaperengine / xwinwrap 等) 是最底层的全屏非托管窗口 */
+/* 动态壁纸 (linux-wallpaperengine / xwinwrap 等) 是最底层的非托管窗口, 每块屏一个 (bin/livewall.sh): 找盖住这块屏的那个 */
 static Window
 overviewfindwallpaper(void)
 {
+    OverviewScene *r = &overviewscene;
     Window d1, d2, *wins = NULL, found = None;
     XWindowAttributes wa;
     unsigned int i, n;
@@ -464,7 +465,7 @@ overviewfindwallpaper(void)
         if (wintoclient(wins[i]))
             break;
         if (XGetWindowAttributes(dpy, wins[i], &wa) && wa.map_state == IsViewable && wa.class == InputOutput
-                && wa.x <= 0 && wa.y <= 0 && wa.x + wa.width >= sw && wa.y + wa.height >= sh) {
+                && wa.x <= r->vx && wa.y <= r->vy && wa.x + wa.width >= r->vx + r->vw && wa.y + wa.height >= r->vy + r->vh) {
             found = wins[i];
             break;
         }

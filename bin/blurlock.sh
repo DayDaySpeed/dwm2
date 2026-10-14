@@ -9,18 +9,24 @@ CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/betterlockscreen
 SRC=$CACHE/source                          # 记录生成背景所用的壁纸, 未换壁纸时跳过重新生成
 LOCKIMG=$CACHE/current/lock_dimblur.png
 
-# 当前壁纸: feh --randomize 把实际显示的那张写在 ~/.fehbg 的第一个路径
-curwall() { sed -n "s/^feh .*--bg-fill '\([^']*\)'.*/\1/p" ~/.fehbg 2>/dev/null; }
+# 当前壁纸: ~/.fehbg 里的路径, 每块屏一张 (顺序同 xrandr --listmonitors, 与 betterlockscreen 多个 -u 的对应顺序一致), 每行一个
+curwalls() { sed -n 's/^feh .*--bg-fill //p' ~/.fehbg 2>/dev/null | grep -o "'[^']*'" | tr -d "'"; }
 
 update() {
-    local wall
-    wall=$(curwall)
-    command -v betterlockscreen >/dev/null && [ -f "$wall" ] || return 1
-    [ "$1" != -f ] && [ -f "$LOCKIMG" ] && [ "$(cat "$SRC" 2>/dev/null)" = "$wall" ] && return 0
+    local walls args=() w
     mkdir -p "$CACHE"
     exec 9>"$CACHE/.lock"
-    flock -n 9 || return 0                 # 已有一次生成在进行
-    nice -n 19 betterlockscreen -q -u "$wall" && echo "$wall" > "$SRC"
+    flock 9                                # 已有一次生成在进行: 等它做完再看壁纸 (连续换壁纸时最后一次不会被跳过)
+    mapfile -t walls < <(curwalls)
+    command -v betterlockscreen >/dev/null && [ ${#walls[@]} -gt 0 ] || return 1
+    for w in "${walls[@]}"; do
+        [ -f "$w" ] || return 1
+        args+=(-u "$w")
+    done
+    # 张数和屏幕数对不上时 betterlockscreen 不认 (如复制模式下 feh 只铺了一张): 只用第一张, 每块屏都铺它
+    [ ${#walls[@]} -eq "$(xrandr --listactivemonitors | tail -n +2 | wc -l)" ] || args=(-u "${walls[0]}")
+    [ "$1" != -f ] && [ -f "$LOCKIMG" ] && [ "$(cat "$SRC" 2>/dev/null)" = "${walls[*]}" ] && return 0
+    nice -n 19 betterlockscreen -q "${args[@]}" && echo "${walls[*]}" > "$SRC"
 }
 
 lock() {

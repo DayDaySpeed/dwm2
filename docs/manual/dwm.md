@@ -101,7 +101,7 @@
 | `Super + ←` / `Super + →` | 切换到左边 / 右边的 tag |
 | ``Super + ` `` | 在最近两个 tag 之间来回切换（比如在 1 和 3 之间：按一下回到上一个 tag，再按一下切回来） |
 | `Super + Shift + ←` / `Super + Shift + →` | 把当前窗口移到左边 / 右边的 tag |
-| `Super + 对应键` | 跳到对应的 tag（见下表）。如果该 tag 没有窗口，会自动启动对应的程序 |
+| `Super + 对应键` | 跳到对应的 tag（见下表）。绑了程序的 tag：没有窗口时自动启动程序，窗口被隐藏了就把它们恢复；已经在这个 tag 上再按，就在它的几个窗口之间轮流切换（比如开了多个 VS Code 时连按 `Super + V`） |
 | `Super + Shift + 对应键` | 把当前窗口移到对应的 tag |
 | `Super + Ctrl + 对应键` | 在当前画面中叠加显示 / 取消显示对应的 tag |
 
@@ -195,7 +195,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 
 - **截图、文件管理器**：flameshot、pcmanfm 自动浮动。
 - **图片查看和保存对话框**：QQ、微信、Telegram 的图片查看器，以及浏览器的「保存文件」对话框，都会浮动。
-- **自动放到指定 tag**：Chrome 放到浏览器 tag，OBS 放到 OBS tag，Steam 放到 Steam tag，Edge 放到 Edge tag，VS Code 放到 VS Code tag。
+- **自动放到指定 tag**：Chrome 放到浏览器 tag，OBS 放到 OBS tag，Steam 及它启动的游戏放到 Steam tag（按进程树认，游戏窗口 class 不含 steam 也能认出），Edge 放到 Edge tag，VS Code 放到 VS Code tag。
 
 如果想给其他程序加规则，在 `config/dwm.h` 的 `rules[]` 里添加，添加后要重新编译。
 

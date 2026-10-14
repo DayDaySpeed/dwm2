@@ -112,6 +112,13 @@ static const Rule rules[] = {
     { NULL,                  NULL,                "broken",          0,            1,          0,          0,        -1,      0}, // 错误载入时 会有broken 浮动
 };
 
+/* 没被上面的规则指定 tag 的窗口, 进程是这些进程 (或其子孙) 时放到对应 tag
+ * Steam 拉起的游戏、启动器 class 五花八门 (原生游戏不含 steam 字样), 按进程树认 */
+static const ProcRule procrules[] = {
+    /* 进程名 (/proc/<pid>/comm)   tags mask */
+    { "steam",                    1 << 6 }, // Steam 及其启动的游戏 tag -> 
+};
+
 /* 自定义布局 */
 static const Layout layouts[] = {
     { "󰙀",  tile },         /* 主次栈 */
@@ -120,8 +127,8 @@ static const Layout layouts[] = {
 
 #define SHCMD(cmd) { .v = (const char*[]){ "/bin/sh", "-c", cmd, NULL } }
 #define MODKEY Mod4Mask
-#define TAGKEYS(KEY, TAG, cmd, once) \
-    { MODKEY,              KEY, view,       {.ui = 1 << TAG, .i = once, .v = cmd} }, \
+#define TAGKEYS(KEY, TAG, cmd) \
+    { MODKEY,              KEY, view,       {.ui = 1 << TAG, .v = cmd} }, \
     { MODKEY|ShiftMask,    KEY, tag,        {.ui = 1 << TAG} }, \
     { MODKEY|ControlMask,  KEY, toggleview, {.ui = 1 << TAG} }, \
 
@@ -218,19 +225,19 @@ static Key keys[] = {
     { 0,                   XF86XK_AudioNext,  spawn, SHCMD("playerctl next; $DWM/bin/statusbar/statusbar.sh update music") },       /* 下一首键        | 下一首                 */
     { 0,                   XF86XK_AudioPrev,  spawn, SHCMD("playerctl previous; $DWM/bin/statusbar/statusbar.sh update music") },   /* 上一首键        | 上一首                 */
 
-    /* super key : 跳转到对应tag. 没有窗口时执行命令; 已在该 tag 且还有可见窗口时再按无反应.
-     * once=1: 窗口都隐藏了则取消隐藏, 不多开. once=0: 窗口都隐藏了仍执行命令, 再开一个. */
+    /* super key : 跳转到对应tag. 带命令的 tag: 没有窗口时执行命令, 有隐藏窗口时全部取消隐藏;
+     * 已在该 tag 且窗口都可见时再按, 在该 tag 的窗口之间轮流聚焦. */
     /* super shift key : 将聚焦窗口移动到对应tag */
     /* key tag cmd */
-    TAGKEYS(XK_1, 0, 0, 0)
-    TAGKEYS(XK_2, 1, 0, 0)
-    TAGKEYS(XK_3, 2, 0, 0)
-    TAGKEYS(XK_9, 3, "obs", 1)
-    TAGKEYS(XK_c, 4, "google-chrome-stable --new-window https://www.youtube.com", 0)
-    TAGKEYS(XK_m, 5, "~/.local/share/splayer/SPlayer.AppImage --no-sandbox", 1)
-    TAGKEYS(XK_0, 6, "$DWM/bin/steam.sh", 1)
-    TAGKEYS(XK_w, 7, "microsoft-edge-stable --new-window https://www.github.com", 0)
-    TAGKEYS(XK_v, 8, "code", 0)
+    TAGKEYS(XK_1, 0, 0)
+    TAGKEYS(XK_2, 1, 0)
+    TAGKEYS(XK_3, 2, 0)
+    TAGKEYS(XK_9, 3, "obs")
+    TAGKEYS(XK_c, 4, "google-chrome-stable --new-window https://www.youtube.com")
+    TAGKEYS(XK_m, 5, "~/.local/share/splayer/SPlayer.AppImage --no-sandbox")
+    TAGKEYS(XK_0, 6, "$DWM/bin/steam.sh")
+    TAGKEYS(XK_w, 7, "microsoft-edge-stable --new-window https://www.github.com")
+    TAGKEYS(XK_v, 8, "code")
 };
 
 static Button buttons[] = {

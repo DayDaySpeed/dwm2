@@ -1,9 +1,15 @@
 #! /usr/bin/env python3
-# 壁纸转场 (bin/livewall.sh 调用): 全屏播放一段 GPU 转场动画, 从图片 A 过渡到图片 B, 播完退出
-#   transition.py A.jpg B.jpg 着色器.glsl [时长秒, 默认 0.8]
-# 着色器用 gl-transitions 的格式 (config/transitions/, 只定义 vec4 transition(vec2 uv)); 图片按 feh --bg-fill 的方式铺满
-# 窗口: 映射前就设成 override-redirect (dwm 不接管, 不会闪一下), 放到最底层; livewall.sh 再把新壁纸压到它下面
-# 和 livewall.sh 的握手: 画好 A 并显示后打印 "ready", 等标准输入读到一行再开始播放 (这期间新壁纸被垫到下面)
+# 壁纸转场 (bin/livewall.sh 调用): 每块屏各播一段 GPU 转场动画, 从这块屏的图片 A 过渡到图片 B, 播完退出
+#   transition.py 着色器.glsl 时长秒 区域1 A1.jpg B1.jpg [区域2 A2.jpg B2.jpg ...]     区域: WxH+X+Y (同 xrandr)
+# 着色器用 gl-transitions 的格式 (config/transitions/, 只定义 vec4 transition(vec2 uv)); 图片按 feh --bg-fill 的方式铺满所在屏
+# 窗口: 铺满整个桌面, 每块屏一个视口各画各的 (特效以各屏为中心); 映射前就设成 override-redirect (dwm 不接管, 不会闪一下),
+#   放到最底层; 播完后 livewall.sh 再把新壁纸垫到它下面
+# 和 livewall.sh 的握手 (每步等标准输入读到一行再继续):
+#   1. 画好 A 并显示后打印 "ready", 收到回复开始播放
+#   2. 播完停在最后一帧 B, 打印 "done"; livewall.sh 这时才把新壁纸 (和 B 一样) 设为不透明垫到下面, 回一行
+#   3. 再等几帧让合成器画出下面的新壁纸, 然后退出
+#   新壁纸要等转场播完才露出: 窗口刚映射时合成器还没画出它 (要等下一次合成), 播放前就垫好新壁纸会先露出新壁纸,
+#   再跳回 A 播转场; 而播放开始时根窗口上已是定格的 A, 转场窗口晚几帧出现也看不出来
 # 依赖: 系统的 libglfw / libGL / libX11 (ctypes 直接调用) + python-pillow, 不需要其他 Python 包
 # 退出前在 stderr 打印帧数和最大帧间隔, 用来检查是否丢帧
 
@@ -24,10 +30,6 @@ GLFW_X11_CLASS_NAME, GLFW_X11_INSTANCE_NAME = 0x24001, 0x24002
 CW_OVERRIDE_REDIRECT = 1 << 9
 
 
-class VidMode(C.Structure):
-    _fields_ = [(n, C.c_int) for n in ("width", "height", "red", "green", "blue", "refresh")]
-
-
 class XSetWindowAttributes(C.Structure):
     _fields_ = [("background_pixmap", C.c_ulong), ("background_pixel", C.c_ulong),
                 ("border_pixmap", C.c_ulong), ("border_pixel", C.c_ulong),
@@ -39,9 +41,6 @@ class XSetWindowAttributes(C.Structure):
 
 glfw.glfwCreateWindow.restype = C.c_void_p
 glfw.glfwCreateWindow.argtypes = [C.c_int, C.c_int, C.c_char_p, C.c_void_p, C.c_void_p]
-glfw.glfwGetPrimaryMonitor.restype = C.c_void_p
-glfw.glfwGetVideoMode.restype = C.POINTER(VidMode)
-glfw.glfwGetVideoMode.argtypes = [C.c_void_p]
 glfw.glfwGetProcAddress.restype = C.c_void_p
 glfw.glfwGetProcAddress.argtypes = [C.c_char_p]
 glfw.glfwGetX11Display.restype = C.c_void_p
@@ -52,6 +51,8 @@ for f in ("glfwMakeContextCurrent", "glfwShowWindow", "glfwSwapBuffers", "glfwDe
     getattr(glfw, f).argtypes = [C.c_void_p]
 glfw.glfwSetWindowPos.argtypes = [C.c_void_p, C.c_int, C.c_int]
 x11.XChangeWindowAttributes.argtypes = [C.c_void_p, C.c_ulong, C.c_ulong, C.POINTER(XSetWindowAttributes)]
+x11.XDefaultScreen.argtypes = [C.c_void_p]
+x11.XDisplayWidth.argtypes = x11.XDisplayHeight.argtypes = [C.c_void_p, C.c_int]
 for f in ("XLowerWindow", "XMapWindow"):
     getattr(x11, f).argtypes = [C.c_void_p, C.c_ulong]
 x11.XMoveWindow.argtypes = [C.c_void_p, C.c_ulong, C.c_int, C.c_int]
@@ -99,13 +100,22 @@ def ease(t):                               # easeInOutCubic: 先慢后快再慢
 
 
 def main():
-    a, b, shader = sys.argv[1:4]
-    duration = float(sys.argv[4]) if len(sys.argv) > 4 else 0.8
+    shader, duration, rest = sys.argv[1], float(sys.argv[2]), sys.argv[3:]
+    mons = []                              # 每块屏 (x, y, w, h, A, B)
+    for g, a, b in zip(rest[0::3], rest[1::3], rest[2::3]):
+        m = re.fullmatch(r"(\d+)x(\d+)\+(-?\d+)\+(-?\d+)", g)
+        if not m:
+            sys.exit("区域格式不对: " + g)
+        w, h, x, y = map(int, m.groups())
+        mons.append((x, y, w, h, a, b))
+    if not mons:
+        sys.exit("用法: transition.py 着色器.glsl 时长秒 WxH+X+Y A.jpg B.jpg [...]")
 
     if not glfw.glfwInit():
         sys.exit("glfwInit 失败")
-    mode = glfw.glfwGetVideoMode(glfw.glfwGetPrimaryMonitor()).contents
-    w, h = mode.width, mode.height
+    dpy = glfw.glfwGetX11Display()
+    scr = x11.XDefaultScreen(dpy)
+    w, h = x11.XDisplayWidth(dpy, scr), x11.XDisplayHeight(dpy, scr)   # 窗口铺满整个桌面
     for k, v in ((GLFW_VISIBLE, 0), (GLFW_DECORATED, 0), (GLFW_FOCUS_ON_SHOW, 0),
                  (GLFW_CONTEXT_VERSION_MAJOR, 3), (GLFW_CONTEXT_VERSION_MINOR, 3),
                  (GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE)):
@@ -119,7 +129,7 @@ def main():
     glfw.glfwSwapInterval(1)
 
     # 映射前设成 override-redirect: dwm 不接管
-    dpy, xwin = glfw.glfwGetX11Display(), glfw.glfwGetX11Window(win)
+    xwin = glfw.glfwGetX11Window(win)
     attrs = XSetWindowAttributes(override_redirect=1)
     x11.XChangeWindowAttributes(dpy, xwin, CW_OVERRIDE_REDIRECT, C.byref(attrs))
 
@@ -147,6 +157,8 @@ def main():
     glBindVertexArray = gl("glBindVertexArray", None, GLuint)
     glDrawArrays = gl("glDrawArrays", None, GLenum, GLint, GLsizei)
     glViewport = gl("glViewport", None, GLint, GLint, GLsizei, GLsizei)
+    glClearColor = gl("glClearColor", None, GLfloat, GLfloat, GLfloat, GLfloat)
+    glClear = gl("glClear", None, C.c_uint)
 
     def compile_shader(kind, src):
         s = glCreateShader(kind)
@@ -173,32 +185,39 @@ def main():
         sys.exit("着色器链接失败: " + log.value.decode(errors="ignore"))
     glUseProgram(prog)
 
-    # 两张图: 铺满裁剪到屏幕大小 (同 feh --bg-fill), 上下翻转 (OpenGL 纹理原点在左下)
-    tex = (GLuint * 2)()
-    glGenTextures(2, tex)
-    for i, path in enumerate((a, b)):
-        img = Image.open(path).convert("RGB")
-        if img.size != (w, h):
-            img = ImageOps.fit(img, (w, h), Image.LANCZOS)
-        img = img.transpose(Image.FLIP_TOP_BOTTOM)
-        glActiveTexture(0x84C0 + i)            # GL_TEXTURE0 + i
-        glBindTexture(0x0DE1, tex[i])          # GL_TEXTURE_2D
-        for pname, val in ((0x2801, 0x2601), (0x2800, 0x2601),   # MIN / MAG_FILTER = LINEAR
-                           (0x2802, 0x812F), (0x2803, 0x812F)):  # WRAP_S / T = CLAMP_TO_EDGE
-            glTexParameteri(0x0DE1, pname, val)
-        glTexImage2D(0x0DE1, 0, 0x8051, w, h, 0, 0x1907, 0x1401, img.tobytes())  # RGB8, RGB, UNSIGNED_BYTE
+    # 每块屏两张图: 铺满裁剪到这块屏的大小 (同 feh --bg-fill), 上下翻转 (OpenGL 纹理原点在左下)
+    tex = (GLuint * (2 * len(mons)))()
+    glGenTextures(len(tex), tex)
+    for i, (x, y, mw, mh, a, b) in enumerate(mons):
+        for j, path in enumerate((a, b)):
+            img = Image.open(path).convert("RGB")
+            if img.size != (mw, mh):
+                img = ImageOps.fit(img, (mw, mh), Image.LANCZOS)
+            img = img.transpose(Image.FLIP_TOP_BOTTOM)
+            glBindTexture(0x0DE1, tex[2 * i + j])  # GL_TEXTURE_2D
+            for pname, val in ((0x2801, 0x2601), (0x2800, 0x2601),   # MIN / MAG_FILTER = LINEAR
+                               (0x2802, 0x812F), (0x2803, 0x812F)):  # WRAP_S / T = CLAMP_TO_EDGE
+                glTexParameteri(0x0DE1, pname, val)
+            glTexImage2D(0x0DE1, 0, 0x8051, mw, mh, 0, 0x1907, 0x1401, img.tobytes())  # RGB8, RGB, UNSIGNED_BYTE
     glUniform1i(glGetUniformLocation(prog, b"texFrom"), 0)
     glUniform1i(glGetUniformLocation(prog, b"texTo"), 1)
-    glUniform1f(glGetUniformLocation(prog, b"ratio"), w / h)
+    u_ratio = glGetUniformLocation(prog, b"ratio")
     u_progress = glGetUniformLocation(prog, b"progress")
     vao = GLuint()
     glGenVertexArrays(1, C.byref(vao))
     glBindVertexArray(vao)
-    glViewport(0, 0, w, h)
+    glClearColor(0.0, 0.0, 0.0, 1.0)
 
     def draw(p):
+        glClear(0x4000)                        # GL_COLOR_BUFFER_BIT: 不属于任何屏的角落 (屏幕大小不一时) 涂黑
         glUniform1f(u_progress, p)
-        glDrawArrays(0x0004, 0, 3)             # GL_TRIANGLES
+        for i, (x, y, mw, mh, _, _) in enumerate(mons):
+            glViewport(x, h - y - mh, mw, mh)  # 视口原点在左下
+            glUniform1f(u_ratio, mw / mh)
+            for j in range(2):
+                glActiveTexture(0x84C0 + j)    # GL_TEXTURE0 + j
+                glBindTexture(0x0DE1, tex[2 * i + j])
+            glDrawArrays(0x0004, 0, 3)         # GL_TRIANGLES
         glfw.glfwSwapBuffers(win)
         glfw.glfwPollEvents()
 
@@ -210,7 +229,7 @@ def main():
     x11.XFlush(dpy)
     draw(0.0)
     print("ready", flush=True)
-    sys.stdin.readline()                       # livewall.sh 把新壁纸垫到下面后回一行
+    sys.stdin.readline()
 
     start = last = time.monotonic()
     frames, worst = 0, 0.0
@@ -225,6 +244,9 @@ def main():
             break
     name = shader.rsplit("/", 1)[-1].removesuffix(".glsl")
     print(f"{name} frames={frames} max_interval={worst * 1000:.1f}ms", file=sys.stderr)
+    print("done", flush=True)                  # 停在最后一帧 B, livewall.sh 把新壁纸垫到下面后回一行
+    sys.stdin.readline()
+    time.sleep(0.05)                           # 等合成器画出下面已经不透明的新壁纸
     # 关窗口前先设为全透明: picom 关闭窗口时的动画 (squeeze, 上下合拢) 不受 animation-exclude 管,
     # 透明的窗口播动画也看不见; 底下的新壁纸和最后一帧一样, 隐藏时看不出变化
     opacity = C.c_ulong(0)

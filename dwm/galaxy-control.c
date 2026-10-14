@@ -1507,12 +1507,15 @@ galaxyevent(XEvent *e)
             }
         if (e->type == DestroyNotify && e->xdestroywindow.window == r->twin && r->mode == GalaxyReturn)
             r->twin = None;
-        if (e->type == DestroyNotify && e->xdestroywindow.window == r->wallwin && r->wallwin) {
-            r->wallwin = None;
-            if (r->live)
-                XRenderFreePicture(dpy, r->live);
-            r->live = 0;
-        }
+        if (e->type == DestroyNotify)       /* 动态壁纸窗口关了 (换壁纸等): 从列表里去掉 */
+            for (i = 0; i < r->live; i++)
+                if (r->wallwin[i] == e->xdestroywindow.window) {
+                    XRenderFreePicture(dpy, r->livepic[i]);
+                    r->live--;
+                    memmove(r->wallwin + i, r->wallwin + i + 1, (r->live - i) * sizeof *r->wallwin);
+                    memmove(r->livepic + i, r->livepic + i + 1, (r->live - i) * sizeof *r->livepic);
+                    break;
+                }
         return 0;
     }
     return 0;

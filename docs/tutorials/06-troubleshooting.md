@@ -31,7 +31,7 @@ cd $DWM && ./setup.sh check
 | `~/.cache/dwm-build.log` | `Super + Shift + R` 的编译输出 |
 | `~/.cache/dwm-galaxy.log`、`dwm-overview.log` | 星系、窗口总览的运行记录 |
 | `~/.cache/livewall/transition.log` | 壁纸切换、转场出错 |
-| `~/.cache/livewall/scene.log` | 场景壁纸（linux-wallpaperengine）的输出 |
+| `~/.cache/livewall/scene.<屏幕序号>.log` | 场景壁纸（linux-wallpaperengine）的输出，每块屏一份（0 是主屏） |
 | `~/.cache/x11vnc.log` | VNC |
 
 用户服务（如 sni-watcher）的日志：`journalctl --user -u sni-watcher -e`。

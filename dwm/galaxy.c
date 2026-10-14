@@ -18,6 +18,7 @@
 
 #define GALAXYMIPS     6
 #define GALAXYALPHAS   256
+#define GALAXYWALLS    8         /* 动态壁纸窗口最多几个 (bin/livewall.sh 每块屏一个) */
 #define GALAXYTRAIL    12
 #define GALAXYGAPS     4096
 #define GALAXYRINGS    3
@@ -309,10 +310,12 @@ typedef struct {
     /* 回程开始时冻结的全局状态 */
     double rcdist, rcx, rcy, rcz, rring, rdust, rbright, rvign, rdesk;
     GalaxyVec rcampos, rctarget;
-    Window overlay, wallwin;
+    Window overlay, wallwin[GALAXYWALLS];
     Cursor hand, blankcursor;
     Pixmap backpix, desktoppix, wallpix, vignettepix, bgpix, tilemaskpix, spinpix;
-    Picture back, desktop, wallpaper, live, overlaypic, vignette, bg, tilemask, spinpic;
+    Picture back, desktop, wallpaper, overlaypic, vignette, bg, tilemask, spinpic;
+    Picture livepic[GALAXYWALLS];
+    int live;                   /* 动态壁纸窗口数 (wallwin / livepic 的前 live 个), 0: 静态壁纸 */
     int spinw, spinh, projslow;   /* projslow: 整幅透视采样明显慢于仿射, 大卡片改走半分辨率 */
     double probeaffine, probeproj;
     XftFont *titlefont, *queryfont;
