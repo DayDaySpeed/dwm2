@@ -24,3 +24,9 @@ alias ll='ls -alF --color=auto'
 alias la='ls -la --color=auto'
 alias l='ls -CF --color=auto'
 alias grep='grep --color=auto'
+
+# fish 式的灰字建议 (按 → 采用) 和命令语法高亮; 语法高亮要放在最后加载
+[ -f /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh ] \
+    && source /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
+[ -f /usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ] \
+    && source /usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh

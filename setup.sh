@@ -5,7 +5,7 @@
 #   ./setup.sh --no-apps   同上, 但不装快捷键对应的应用 (Chrome / Edge / VSCode / Steam / OBS / SPlayer / Sunshine); 也可 SETUP_APPS=0
 #   ./setup.sh bootstrap   base-devel git, 开启 multilib, 没有 yay 时从 AUR 编译
 #   ./setup.sh deps        按 packages/*.txt 装包, 按检测到的显卡 (Intel / AMD / NVIDIA) 追加驱动
-#   ./setup.sh system      写 /etc (sudo): tty1 自动登录、zh_CN locale、省电模式免密、NumLock、N 卡 modeset, 登录 shell 改为 zsh
+#   ./setup.sh system      写 /etc (sudo): tty1 自动登录、zh_CN locale、省电模式免密、NumLock、N 卡 modeset, 登录 shell 改为 zsh, root 用同一套 zsh 配置
 #   ./setup.sh link        ~/.xinitrc、~/.zshrc、~/.config/* 等链接到仓库; 程序会改写的配置只在不存在时复制一份
 #   ./setup.sh build       编译安装 dwm st tabbed picom i3lock; 也可单独 ./setup.sh dwm|st|tabbed|picom|i3lock
 #   ./setup.sh services    启用 NetworkManager bluetooth tailscaled, 用户服务 sni-watcher
@@ -124,6 +124,14 @@ system() {
     # ~/.zprofile 在 tty1 登录后执行 startx, 登录 shell 要是 zsh
     if [ "$(getent passwd "$(id -un)" | cut -d: -f7)" != /usr/bin/zsh ] && [ -x /usr/bin/zsh ]; then
         sudo chsh -s /usr/bin/zsh "$(id -un)"
+    fi
+    # root (su - / sudo -i) 也用同一套 zsh 配置; 复制而不是链接 (root 的配置不该跟着普通用户可写的文件变),
+    # 改了 home/zsh 后重跑 ./setup.sh system 更新。不带 local.zsh (私有密钥)
+    put_etc home/zshrc          /root/.zshrc               644
+    put_etc home/zsh/zshrc      /root/.config/zsh/zshrc    644
+    put_etc home/starship.toml  /root/.config/starship.toml 644
+    if [ "$(getent passwd root | cut -d: -f7)" != /usr/bin/zsh ] && [ -x /usr/bin/zsh ]; then
+        sudo chsh -s /usr/bin/zsh root
     fi
 }
 

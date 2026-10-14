@@ -48,7 +48,7 @@
 #endif /* XINERAMA */
 #include <X11/Xft/Xft.h>
 #include <X11/extensions/Xrender.h>
-#include <X11/extensions/Xfixes.h>
+#include <X11/extensions/XInput2.h>
 
 #include "drw.h"
 #include "util.h"
@@ -142,6 +142,7 @@ struct Client {
 	int oldx, oldy, oldw, oldh;
 	int basew, baseh, incw, inch, maxw, maxh, minw, minh;
 	int bw, oldbw;
+	int bwhidden; /* resizeclient 上次把 X 边框去掉了 (唯一的平铺窗口) */
     int taskw;
 	unsigned int tags;
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen, isglobal, isnoborder, isscratchpad;
@@ -254,9 +255,9 @@ static void focusmon(const Arg *arg);
 static void focusstack(const Arg *arg);
 
 static void pointerclient(Client *c);
-static void clientmotion(int on);
-static void cursorhide(void);
-static void cursorshow(void);
+static void rawmotion(int on);
+static void releasefloat(void);
+static void genericevent(XEvent *e);
 static void holdfloat(Client *c);
 
 static Atom getatomprop(Client *c, Atom prop);
@@ -310,6 +311,7 @@ static void removesystrayicon(Client *i);
 static void resize(Client *c, int x, int y, int w, int h, int interact);
 static void resizebarwin(Monitor *m);
 static void resizeclient(Client *c, int x, int y, int w, int h);
+static int singletilenoborder(Client *c);
 static void resizemouse(const Arg *arg);
 static void resizerequest(XEvent *e);
 static void restack(Monitor *m);
@@ -429,6 +431,7 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 	[EnterNotify] = enternotify,
 	[Expose] = expose,
 	[FocusIn] = focusin,
+	[GenericEvent] = genericevent,
 	[KeyPress] = keypress,
 	[MappingNotify] = mappingnotify,
 	[MapRequest] = maprequest,
@@ -449,8 +452,8 @@ static Visual *visual;
 static int depth;
 static Colormap cmap;
 static Monitor *mons, *selmon;
-static Client *keyfloat; /* 键盘聚焦的浮动窗口: 光标藏起, 鼠标一动再显示并跟随 */
-static int cursorhidden;
+static Client *keyfloat; /* 键盘聚焦的浮动窗口: 鼠标一动之前不因指针进出换焦点 */
+static int xiopcode; /* XInput2 扩展号, 0 表示没有: 收不到原始移动就不拿住浮动窗口 */
 static int xrenderreq; /* RENDER 扩展的主操作码, 失败时不能走默认错误处理 (会退出整个会话) */
 static Window root, wmcheckwin;
 
@@ -690,11 +693,8 @@ buttonpress(XEvent *e)
     XButtonPressedEvent *ev = &e->xbutton;
     Client *c = wintoclient(ev->window);
 
-    /* 光标还藏着时, 按下就算碰了鼠标: 显示出来, 后面按点击的窗口聚焦 */
-    if (cursorhidden) {
-        cursorshow();
-        keyfloat = NULL;
-    }
+    /* 按下就算碰了鼠标: 结束键盘拿住, 后面按点击的窗口聚焦 */
+    releasefloat();
 
     // 判断鼠标点击的位置
     click = ClkRootWin;
@@ -1525,57 +1525,53 @@ focusstack(const Arg *arg)
     }
 }
 
-/* 键盘拿住浮动窗口期间才听客户窗口上的移动, 平时不加, 避免每个像素都进事件 */
+/* 键盘拿住浮动窗口期间才在根窗口上听 XI2 原始移动, 平时不听, 避免每个像素都进事件。
+ * 不能听客户窗口上的核心 MotionNotify: Chrome 等用 XI2 收移动的程序会把同一窗口上的核心事件截走,
+ * 全屏时指针下面只有它, 就一直察觉不到鼠标动了。原始移动总送到根窗口, 且 XWarpPointer 不产生 */
 void
-clientmotion(int on)
+rawmotion(int on)
 {
-    Monitor *m;
-    Client *c;
-    long mask = EnterWindowMask|FocusChangeMask|PropertyChangeMask|StructureNotifyMask;
+    unsigned char bits[XIMaskLen(XI_RawMotion)] = {0};
+    XIEventMask em = { XIAllMasterDevices, sizeof bits, bits };
 
     if (on)
-        mask |= PointerMotionMask;
-    for (m = mons; m; m = m->next)
-        for (c = m->clients; c; c = c->next)
-            XSelectInput(dpy, c->win, mask);
+        XISetMask(bits, XI_RawMotion);
+    XISelectEvents(dpy, root, &em, 1);
 }
 
-/* 藏起整屏光标。XFixes 按次数配对, 这里只藏一次。先丢掉指针跳动留下的移动事件 */
+/* 结束键盘拿住浮动窗口: 之后指针进入哪个窗口就聚焦哪个 */
 void
-cursorhide(void)
+releasefloat(void)
 {
-    XEvent ev;
-
-    XSync(dpy, False);
-    while (XCheckMaskEvent(dpy, PointerMotionMask, &ev));
-    if (cursorhidden)
+    if (!keyfloat)
         return;
-    XFixesHideCursor(dpy, root);
-    cursorhidden = 1;
-    clientmotion(1);
+    keyfloat = NULL;
+    rawmotion(0);
 }
 
 void
-cursorshow(void)
+genericevent(XEvent *e)
 {
-    if (!cursorhidden)
-        return;
-    clientmotion(0);
-    XFixesShowCursor(dpy, root);
-    cursorhidden = 0;
+    if (e->xcookie.extension == xiopcode && e->xcookie.evtype == XI_RawMotion)
+        releasefloat();
 }
 
-/* 键盘落到浮动窗口: 藏光标并保住焦点。落到平铺窗口或空: 光标回来 */
+/* 键盘落到浮动窗口: 拿住它, 鼠标一动之前指针进出窗口 (如键盘挪动它滑过指针) 不换焦点。
+ * 先丢掉指针跳到别的显示器时留下的移动事件, 免得立刻放开。落到平铺窗口或空: 放开 */
 void
 holdfloat(Client *c)
 {
-    if (c && c->isfloating && !c->isfullscreen) {
-        keyfloat = c;
-        cursorhide();
-    } else {
-        keyfloat = NULL;
-        cursorshow();
+    XEvent ev;
+
+    if (!c || !c->isfloating || c->isfullscreen || !xiopcode) {
+        releasefloat();
+        return;
     }
+    XSync(dpy, False);
+    while (XCheckMaskEvent(dpy, PointerMotionMask, &ev));
+    if (!keyfloat)
+        rawmotion(1);
+    keyfloat = c;
 }
 
 void
@@ -1592,8 +1588,7 @@ pointerclient(Client *c)
         focus(c);
         holdfloat(c);
     } else {
-        keyfloat = NULL;
-        cursorshow();
+        releasefloat();
         if (!stay)
             XWarpPointer(dpy, None, root, 0, 0, 0, 0, selmon->wx + selmon->ww / 3, selmon->wy + selmon->wh / 2);
     }
@@ -1921,10 +1916,6 @@ manage(Window w, XWindowAttributes *wa)
             c->y = selmon->wy + (selmon->wh - c->h) / 2;
         }
         managefloating(c);
-    } else {
-        // if new client is tile, old sel is fullscreen, then close fullscreen
-        if (c->mon->sel && c->mon->sel->isfullscreen)
-            fullscreen(NULL);
     }
 
     XConfigureWindow(dpy, w, CWBorderWidth, &wc);
@@ -1933,14 +1924,18 @@ manage(Window w, XWindowAttributes *wa)
     updatewindowtype(c);
     updatesizehints(c);
     updatewmhints(c);
-    XSelectInput(dpy, w, EnterWindowMask|FocusChangeMask|PropertyChangeMask|StructureNotifyMask
-            | (cursorhidden ? PointerMotionMask : 0));
+    XSelectInput(dpy, w, EnterWindowMask|FocusChangeMask|PropertyChangeMask|StructureNotifyMask);
     grabbuttons(c, 0);
     if (!c->isfloating)
         c->isfloating = c->oldstate = trans != None || c->isfixed;
     if (trans != None || c->isfixed) /* 本就该浮动, 不随浮动布局回到平铺 */
         c->layoutfloat = 0;
     unsigned long washidden = restoreclientstate(c);
+    /* 新开的平铺窗口要露出来: 当前显示器上的全屏退出。放在规则、对话框类型、固定大小、重启前状态都定下之后,
+     * 否则对话框此刻还算平铺, 一弹出就把全屏视频退掉。原地重启接管旧窗口时不动 */
+    if (!c->isfloating && c->restoreidx < 0 && ISVISIBLE(c)
+            && c->mon == selmon && selmon->sel && selmon->sel->isfullscreen)
+        fullscreen(NULL);
     if (c->isfloating)
         XRaiseWindow(dpy, c->win);
     attach(c);
@@ -2000,20 +1995,10 @@ motionnotify(XEvent *e)
 {
     static Monitor *mon = NULL;
     Monitor *m;
-    Client *c;
     XMotionEvent *ev = &e->xmotion;
 
-    /* 键盘操作中藏着光标: 鼠标一动就显示, 并落到指针下面的窗口。缝隙上只显示, 不换焦点 */
-    if (cursorhidden) {
-        cursorshow();
-        keyfloat = NULL;
-        if ((c = wintoclient(ev->window)) && c != selmon->sel) {
-            if (c->mon != selmon) {
-                unfocus(selmon->sel, 1);
-                selmon = c->mon;
-            }
-            focus(c);
-        }
+    if (keyfloat) {
+        releasefloat();
         return;
     }
     if (ev->window != root)
@@ -2550,7 +2535,9 @@ removesystrayicon(Client *i)
 void
 resize(Client *c, int x, int y, int w, int h, int interact)
 {
-    if (applysizehints(c, &x, &y, &w, &h, interact)) {
+    /* 浮动窗口来去时平铺窗口的位置大小可能不变, 边框有无变了也要重新配置 */
+    if (applysizehints(c, &x, &y, &w, &h, interact)
+            || (!c->isfloating && c->bwhidden != singletilenoborder(c))) {
         resizeclient(c, x, y, w, h);
     }
 }
@@ -2562,6 +2549,20 @@ resizebarwin(Monitor *m) {
     if (showsystray && m == systraytomon(m))
         w -= system_w;
     XMoveResizeWindow(dpy, m->barwin, m->wx + sp, m->by + vp, w -  2 * sp - (m == systraytomon(m) && system_w ? systrayspadding : 0), bh); // 如果托盘存在 额外减去systrayspadding
+}
+
+/* 唯一的平铺窗口去掉边框。同屏有浮动窗口时保留: 焦点在两层之间切换, 要靠白框看出选中的是它 */
+int
+singletilenoborder(Client *c)
+{
+    Client *f;
+
+    if (c->isfloating || c->isfullscreen || nexttiled(c->mon->clients) != c || nexttiled(c->next))
+        return 0;
+    for (f = c->mon->clients; f; f = f->next)
+        if (f->isfloating && !f->isfullscreen && ISVISIBLE(f) && !HIDDEN(f))
+            return 0;
+    return 1;
 }
 
 void
@@ -2580,8 +2581,7 @@ resizeclient(Client *c, int x, int y, int w, int h)
     c->oldh = c->h; c->h = wc.height = h;
     wc.border_width = c->bw;
 
-    if (((nexttiled(c->mon->clients) == c && !nexttiled(c->next)))
-            && !c->isfullscreen && !c->isfloating) {
+    if ((c->bwhidden = singletilenoborder(c))) {
         c->w = wc.width += c->bw * 2;
         c->h = wc.height += c->bw * 2;
         wc.border_width = 0;
@@ -3042,6 +3042,12 @@ setup(void)
         |LeaveWindowMask|StructureNotifyMask|PropertyChangeMask;
     XChangeWindowAttributes(dpy, root, CWEventMask|CWCursor, &wa);
     XSelectInput(dpy, root, wa.event_mask);
+    {
+        int xiev, xierr, major = 2, minor = 0;
+        if (!XQueryExtension(dpy, "XInputExtension", &xiopcode, &xiev, &xierr)
+                || XIQueryVersion(dpy, &major, &minor) != Success)
+            xiopcode = 0;
+    }
     grabkeys();
     focus(NULL);
 }
@@ -3429,8 +3435,7 @@ toggleview(const Arg *arg)
 
 	if (newtagset) {
 		selmon->tagset[selmon->seltags] = newtagset;
-		keyfloat = NULL;
-		cursorshow();
+		releasefloat();
 		focus(NULL);
 		arrange(selmon);
 	}
@@ -3590,10 +3595,8 @@ unmanage(Client *c, int destroyed)
     Monitor *m = c->mon;
     XWindowChanges wc;
 
-    if (c == keyfloat) {
-        keyfloat = NULL;
-        cursorshow();
-    }
+    if (c == keyfloat)
+        releasefloat();
     detach(c);
     detachstack(c);
     if (c->badge)
@@ -4027,8 +4030,7 @@ viewspawn(const Arg *arg)
     if (hidden && arg->i) {
         /* 先全部映射再排一次. 逐个 show() 会在循环里 arrange/XSync,
          * 中途有窗口消失或尺寸非法时, 错误处理会把整个会话退出 */
-        keyfloat = NULL;
-        cursorshow();
+        releasefloat();
         for (c = selmon->clients; c; c = c->next) {
             if (!(c->tags & arg->ui) || c->isglobal || !HIDDEN(c))
                 continue;
@@ -4059,9 +4061,8 @@ view(const Arg *arg)
         return;
     }
 
-    /* 换 tag 就结束键盘操作: 光标藏着时显示出来 */
-    keyfloat = NULL;
-    cursorshow();
+    /* 换 tag 就结束键盘拿住浮动窗口 */
+    releasefloat();
 
     selmon->seltags ^= 1; /* toggle sel tagset */
     if (arg->ui & TAGMASK) {

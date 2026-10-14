@@ -13,7 +13,7 @@ xss-lock
 
 # --- 编译 dwm / st / tabbed / picom / i3lock-color ---
 base-devel git meson ninja
-libx11 libxext libxinerama libxft libxrender libxfixes libxrandr libxcomposite xorgproto fontconfig freetype2 harfbuzz
+libx11 libxext libxinerama libxft libxrender libxfixes libxi libxrandr libxcomposite xorgproto fontconfig freetype2 harfbuzz
 uthash libconfig libev libxdg-basedir pcre2 libepoxy pixman dbus mesa
 xcb-util xcb-util-image xcb-util-renderutil xcb-util-xrm xcb-util-wm libxkbcommon-x11 cairo libjpeg-turbo
 
@@ -45,3 +45,4 @@ git-lfs                                 # 壁纸子模块
 
 # --- shell / 终端 ---
 zsh starship kitty
+zsh-autosuggestions zsh-syntax-highlighting # fish 式灰字建议和语法高亮 (home/zsh/zshrc)
