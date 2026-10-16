@@ -226,7 +226,8 @@ static Key keys[] = {
     { 0,                   XF86XK_AudioPrev,  spawn, SHCMD("playerctl previous; $DWM/bin/statusbar/statusbar.sh update music") },   /* 上一首键        | 上一首                 */
 
     /* super key : 跳转到对应tag. 带命令的 tag: 没有窗口时执行命令, 有隐藏窗口时全部取消隐藏;
-     * 已在该 tag 且窗口都可见时再按, 在该 tag 的窗口之间轮流聚焦. */
+     * 已在该 tag 且窗口都可见时再按, 在该 tag 的窗口之间轮流聚焦.
+     * rules 把窗口放到带命令的 tag 只对按该键启动的窗口生效, 其他方式 (rofi 等) 打开的留在当前 tag. */
     /* super shift key : 将聚焦窗口移动到对应tag */
     /* key tag cmd */
     TAGKEYS(XK_1, 0, 0)

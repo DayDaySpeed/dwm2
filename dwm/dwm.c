@@ -227,6 +227,7 @@ static void grid(Monitor *m, uint gappo, uint uappi);
 
 static void applyrules(Client *c);
 static unsigned int proctags(Window w);
+static int rulekeeptag(unsigned int mask);
 static int applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact);
 static void arrange(Monitor *m);
 static void arrangemon(Monitor *m);
@@ -460,6 +461,8 @@ static Colormap cmap;
 static Monitor *mons, *selmon;
 static Client *keyfloat; /* 键盘聚焦的浮动窗口: 鼠标一动之前不因指针进出换焦点 */
 static int xiopcode; /* XInput2 扩展号, 0 表示没有: 收不到原始移动就不拿住浮动窗口 */
+static struct timespec lastview; /* 上次 view() 换 tag 的时刻 (CLOCK_MONOTONIC) */
+#define ACTIVATEGUARDMS 1000 /* 换 tag 后这么久内, 应用自己发的激活请求不把视图拉走 */
 static int xrenderreq; /* RENDER 扩展的主操作码, 失败时不能走默认错误处理 (会退出整个会话) */
 static Window root, wmcheckwin;
 
@@ -467,6 +470,9 @@ static unsigned long hideseq = 0;
 
 /* configuration, allows nested code to access above variables */
 #include "config.h"
+
+static struct timespec tagspawn[LENGTH(tags)]; /* 每个 tag 上次由 Super+键 启动命令的时刻 (CLOCK_MONOTONIC) */
+#define SPAWNTAGMS 30000 /* 按键启动后这么久内出现的窗口, 规则仍把它放到该 tag (Code / Steam 冷启动要十几秒) */
 
 struct Pertag {
 	unsigned int curtag, prevtag; /* current and previous tag */
@@ -564,9 +570,34 @@ applyrules(Client *c)
         XFree(ch.res_class);
     if (ch.res_name)
         XFree(ch.res_name);
-    if (!(c->tags & TAGMASK))
+    /* 绑了程序的 tag 的规则只对刚用 Super+键 启动的窗口生效: rofi 等别处打开的留在当前 tag, 也不再按进程树归过去 */
+    if (!rulekeeptag(c->tags))
+        c->tags = 0;
+    else if (!(c->tags & TAGMASK))
         c->tags = proctags(c->win);
     c->tags = c->tags & TAGMASK ? c->tags & TAGMASK : c->mon->tagset[c->mon->seltags];
+}
+
+/* 规则给的 tag 是否保留: 单个 tag 且 keys 里该 tag 的 view 带命令 (绑了程序) 时, 只有 SPAWNTAGMS 内按键启动过才保留 */
+int
+rulekeeptag(unsigned int mask)
+{
+    struct timespec now, *t;
+    unsigned int i;
+
+    mask &= TAGMASK;
+    if (!mask || mask & (mask - 1))
+        return 1;
+    for (i = 0; i < LENGTH(keys); i++)
+        if (keys[i].func == view && keys[i].arg.v && (keys[i].arg.ui & mask))
+            break;
+    if (i == LENGTH(keys))
+        return 1;
+    t = &tagspawn[__builtin_ctz(mask)];
+    if (!t->tv_sec && !t->tv_nsec)
+        return 0;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (now.tv_sec - t->tv_sec) * 1000 + (now.tv_nsec - t->tv_nsec) / 1000000 < SPAWNTAGMS;
 }
 
 /* 窗口进程 (_NET_WM_PID) 沿 ppid 往上找, 遇到 procrules 里的进程名就用它的 tag; 找不到返回 0 */
@@ -925,6 +956,14 @@ clientmessage(XEvent *e)
         if (c != selmon->sel && !c->isurgent)
             seturgent(c, 1);
         if (c == selmon->sel) return;
+        /* 刚换过 tag 时, 应用自己 (l[0] != 2, 不是 pager / xdotool) 要求激活别的屏或别的 tag 上的窗口只标 urgent:
+         * Edge 播视频时被切走, 约 200ms 后会发激活请求, 跟着跳就又被拉回 Edge 的 tag */
+        if ((c->mon != selmon || !ISVISIBLE(c)) && cme->data.l[0] != 2) {
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            if ((now.tv_sec - lastview.tv_sec) * 1000 + (now.tv_nsec - lastview.tv_nsec) / 1000000 < ACTIVATEGUARDMS)
+                return;
+        }
         // 若不是当前显示器 则跳转到对应显示器
         if (c->mon != selmon) {
             focusmon(&(Arg) { .i = +1 });
@@ -4056,6 +4095,7 @@ viewspawn(const Arg *arg, int cycle)
 {
     Client *c, *pick = NULL, *first = NULL, *next = NULL;
     int visible = 0, hidden = 0, after = 0;
+    unsigned int i;
 
     if (!arg->v)
         return;
@@ -4102,6 +4142,9 @@ viewspawn(const Arg *arg, int cycle)
         restack(selmon);
         return;
     }
+    for (i = 0; i < LENGTH(tags); i++)
+        if (arg->ui & 1 << i)
+            clock_gettime(CLOCK_MONOTONIC, &tagspawn[i]);
     spawn(&(Arg){ .v = (const char*[]){ "/bin/sh", "-c", arg->v, NULL } });
 }
 
@@ -4119,6 +4162,7 @@ view(const Arg *arg)
 
     /* 换 tag 就结束键盘拿住浮动窗口 */
     releasefloat();
+    clock_gettime(CLOCK_MONOTONIC, &lastview);
 
     selmon->seltags ^= 1; /* toggle sel tagset */
     if (arg->ui & TAGMASK) {

@@ -6,7 +6,7 @@ call_menu() {
     [ "$(dunstctl is-paused 2>/dev/null)" = true ] && echo '󰂛 close do not disturb' || echo '󰂛 open do not disturb'
     [ "$($DWM/bin/dpms.sh status)" = paused ] && echo '󰌾 resume auto lock' || echo '󰌿 pause auto lock'
     command -v gammastep >/dev/null && { [ "$($DWM/bin/nightlight.sh status)" = on ] && echo '󰖔 close night light' || echo '󰖔 open night light'; }
-    echo '󰍹 monitor layout'                  # 布局 (接了外接屏时) 与缩放
+    echo '󰍹 monitor layout'                  # 布局 (接了外接屏时), 每块屏的分辨率、刷新率、旋转、翻转、缩放
     echo '󰕞 update statusbar'
     command -v daed >/dev/null && { [ "$(ps aux | grep -v grep | grep daed)" ] && echo ' close daed' || echo ' open daed'; }
     [ "$(ps aux | grep picom | grep -v 'grep\|rofi\|nvim')" ] && echo ' close picom' || echo ' open picom'

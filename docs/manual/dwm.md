@@ -195,7 +195,7 @@ $DWM/bin/statusbar/statusbar.sh check         # 检查各模块是否正常
 
 - **截图、文件管理器**：flameshot、pcmanfm 自动浮动。
 - **图片查看和保存对话框**：QQ、微信、Telegram 的图片查看器，以及浏览器的「保存文件」对话框，都会浮动。
-- **自动放到指定 tag**：Chrome 放到浏览器 tag，OBS 放到 OBS tag，Steam 及它启动的游戏放到 Steam tag（按进程树认，游戏窗口 class 不含 steam 也能认出），Edge 放到 Edge tag，VS Code 放到 VS Code tag。
+- **自动放到指定 tag**：Chrome 放到浏览器 tag，OBS 放到 OBS tag，Steam 及它启动的游戏放到 Steam tag（按进程树认，游戏窗口 class 不含 steam 也能认出），Edge 放到 Edge tag，VS Code 放到 VS Code tag。绑了程序的 tag（Super+V、Super+C 等）只收按该快捷键启动的窗口：用 Super+D 等别的方式打开的留在当前 tag；Steam 启动的游戏仍按进程树放到 Steam tag。
 
 如果想给其他程序加规则，在 `config/dwm.h` 的 `rules[]` 里添加，添加后要重新编译。
 

@@ -46,7 +46,7 @@ cd ~/projs/dwm2
 
 ### setup.sh 做了什么
 
-`./setup.sh` 依次执行下面 7 步。每一步都能单独运行（如 `./setup.sh link`），也都能重复运行，已经做过的会跳过。
+`./setup.sh` 依次执行下面 8 步。每一步都能单独运行（如 `./setup.sh link`），也都能重复运行，已经做过的会跳过。
 
 | 步骤 | 做什么 |
 |---|---|
@@ -56,6 +56,7 @@ cd ~/projs/dwm2
 | `link` | 把 `~/.xinitrc`、`~/.zshrc`、`~/.config/rofi` 等链接到仓库；原来有内容不同的文件会先备份成 `<文件名>.bak.<时间>`。fcitx5、flameshot、GTK 这类程序自己会改写的配置，只在不存在时复制一份。最后拉壁纸子模块 |
 | `build` | 编译安装 dwm 和 picom（装到 `~/.local/bin`），以及 st、tabbed、i3lock-color（装到 `/usr/local/bin`） |
 | `services` | 启用 NetworkManager、bluetooth、tailscaled，以及用户服务 sni-watcher |
+| `shared` | 多用户共享开发工具：建 `dev` 组和组可写的 `/opt/dev`，写 conda 和 ollama 的系统配置，见第 7 节 |
 | `check` | 只读体检，见第 5 节 |
 
 ## 3. 重启
@@ -107,7 +108,39 @@ reboot
 
 - `~/.config/zsh/local.zsh`：密钥、个人工具路径（由 `~/.zshrc` 加载，不入库）
 - `~/.config/dwm2.local`：本机配置（触摸板等）
-- `~/.config/autorandr/`、`~/.config/dwm-scale/`：外接显示器的布局和缩放（不带也行，插上后重新选一次）
+- `~/.config/dwm-monitor/`：显示器的布局、分辨率、刷新率、方向和缩放（不带也行，插上后重新选一次；旧版存在 `~/.config/autorandr/`、`~/.config/dwm-scale/` 里的布局和缩放也会读，autorandr 的旧布局会被搬到 `~/.config/dwm-monitor/legacy/`）
+
+## 7. 多用户共享开发工具
+
+一台电脑上有几个用户时，开发工具装一份，大家共用，不必每个用户各装一份。各用户的配置和缓存仍然放在各自的家目录。
+
+先用 pacman 装：pacman 装的程序本来就是全系统共用的。pacman 里没有的，装到 `/opt/dev`。`./setup.sh shared` 做了这些：
+
+| 内容 | 说明 |
+|---|---|
+| `dev` 组 | 当前用户和 `wheel` 组成员都会加进去，加入后要重新登录才生效 |
+| `/opt/dev` | 属主 `root:dev`，设了 setgid 和默认 ACL，组员新建的文件其他组员也能写 |
+| `/etc/profile.d/dev.sh` | 把 `/opt/dev/miniconda3/condabin` 加进 PATH；设 `OLLAMA_HOST=127.0.0.1:11435` |
+| `/etc/zsh/zshrc` | 所有用户的 zsh 里都能 `conda activate`，不会自动激活 base |
+| ollama | 装了 `ollama` 包时，启用系统服务 `ollama.service`：以 ollama 用户运行，模型放在 `/var/lib/ollama`，监听 11435（11434 留给 docker 里的 ollama） |
+
+共享的 miniconda 要手动装一次，用组里的任意一个用户装：
+
+```sh
+curl -LO https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+bash Miniconda3-latest-Linux-x86_64.sh -b -p /opt/dev/miniconda3
+/opt/dev/miniconda3/bin/conda config --system --set auto_activate false
+```
+
+新开一个终端后就能用 `conda create -n 名字 python=3.12`。环境建在 `/opt/dev/miniconda3/envs`，所有用户都能 `conda activate`；包缓存也共用，相同的包只存一份。
+
+VS Code 扩展和 Gradle 也能共享，这两项是手动迁移的，不在 setup.sh 里：
+
+- **VS Code 扩展**：把扩展都放进 `/opt/dev/vscode-extensions`，各用户的 `~/.vscode/extensions` 改成指向它的软链接。之后各用户看到的是同一套扩展，用户设置（`~/.config/Code`）仍然各自独立。VS Code 按 `extensions.json` 里的 `relativeLocation` 找扩展，所以经过软链接也能用。
+- **Gradle**：把一份 `caches/modules-2` 放到 `/opt/dev/gradle-ro-cache` 做只读依赖缓存，记得删掉里面的 `*.lock` 和 `gc.properties`。`/etc/profile.d/dev.sh` 发现它存在时会设上 `GRADLE_RO_DEP_CACHE`，Gradle 就先从这里找依赖，缺的才下载到各自的 `~/.gradle`。wrapper 下载的发行版放在 `/opt/dev/gradle-wrapper-dists`，各用户的 `~/.gradle/wrapper/dists` 是指向它的软链接。按 Gradle 版本生成的 `caches/<版本>/`（主要是转换结果）没法共享，仍然各用户一份。
+- **Android SDK 和 Flutter**：放在 `/opt/dev/android-sdk` 和 `/opt/dev/flutter`。各用户的 `~/Android/Sdk`、`~/development/flutter` 是指向它们的软链接，项目 `local.properties` 里的旧路径照样能用。`/etc/profile.d/dev.sh` 发现这两个目录存在时，会设上 `ANDROID_HOME`，并把 flutter、platform-tools、emulator 加进 PATH。共享的 Flutter 是一个 git 仓库，`setup.sh shared` 会在 `/etc/gitconfig` 里加 `safe.directory`，否则属主以外的用户运行 git 会报 dubious ownership。一个用户运行 `flutter upgrade` 或 `sdkmanager` 装了新包，其他用户也会跟着用上。模拟器的 AVD（`~/.android`）和 Dart 包缓存（`~/.pub-cache`）仍然各用户一份。
+
+后来新建的用户：先 `sudo usermod -aG dev 用户名`，再重新登录。
 
 ---
 

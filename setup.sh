@@ -1,7 +1,7 @@
 #!/bin/bash
 # dwm2 安装入口: 新装的 Arch (base + 用户 + 网络 + sudo) 上克隆本仓库后运行 ./setup.sh, 重启即进入同样的桌面
 # 每一步都可以重复运行, 已经满足的项会跳过
-#   ./setup.sh             全部: bootstrap deps system link build services, 最后 check
+#   ./setup.sh             全部: bootstrap deps system link build services shared, 最后 check
 #   ./setup.sh --no-apps   同上, 但不装快捷键对应的应用 (Chrome / Edge / VSCode / Steam / OBS / SPlayer / Sunshine); 也可 SETUP_APPS=0
 #   ./setup.sh bootstrap   base-devel git, 开启 multilib, 没有 yay 时从 AUR 编译
 #   ./setup.sh deps        按 packages/*.txt 装包, 按检测到的显卡 (Intel / AMD / NVIDIA) 追加驱动
@@ -9,7 +9,8 @@
 #   ./setup.sh link        ~/.xinitrc、~/.zshrc、~/.config/* 等链接到仓库; 程序会改写的配置只在不存在时复制一份
 #   ./setup.sh build       编译安装 dwm st tabbed picom i3lock; 也可单独 ./setup.sh dwm|st|tabbed|picom|i3lock
 #   ./setup.sh services    启用 NetworkManager bluetooth tailscaled, 用户服务 sni-watcher
-#   ./setup.sh check       只读体检: 缺的包、链接、服务、系统配置, 每项打印 ✓ / ✗
+#   ./setup.sh shared      多用户共享开发工具 (sudo): dev 组 + /opt/dev (组可写), conda 路径, ollama 改为系统服务
+#   ./setup.sh check      只读体检: 缺的包、链接、服务、系统配置, 每项打印 ✓ / ✗
 set -e
 DWM=$(cd "$(dirname "$0")"; pwd)
 cd "$DWM"
@@ -245,6 +246,36 @@ services() {
     systemctl --user enable sni-watcher.service
 }
 
+# 多用户共享的开发工具装在 /opt/dev, dev 组成员都能写; 各用户的配置和缓存仍在各自家目录
+# miniconda 不在这里装 (下载大, 不是每台都要), 见 docs/tutorials/01-install.md 第 7 节
+shared() {
+    step "多用户共享开发工具 (/opt/dev, 需要 sudo)"
+    local u
+    getent group dev >/dev/null || sudo groupadd dev
+    # 当前用户和 wheel 组成员; 新加入的要重新登录才生效
+    for u in $(id -un) $(getent group wheel | cut -d: -f4 | tr , ' '); do
+        id -nG "$u" | tr ' ' '\n' | grep -qx dev || { sudo usermod -aG dev "$u" && echo "  已把 $u 加入 dev 组 (重新登录后生效)"; }
+    done
+    # setgid: 新建的文件属于 dev 组; 默认 ACL: 组员可写, 不受各人 umask 影响
+    sudo install -d -o root -g dev -m 2775 /opt/dev
+    sudo setfacl -m g:dev:rwX,d:g:dev:rwX /opt/dev
+    put_etc system/profile-dev.sh /etc/profile.d/dev.sh 644
+    put_etc system/zshrc-dev      /etc/zsh/zshrc        644
+    # 共享的 Flutter 是 git 仓库, 属主不是自己时 git 会拒绝 (dubious ownership)
+    git config --system --get-all safe.directory 2>/dev/null | grep -qx /opt/dev/flutter \
+        || sudo git config --system --add safe.directory /opt/dev/flutter
+    if pacman -Q ollama >/dev/null 2>&1; then
+        put_etc system/ollama-override.conf /etc/systemd/system/ollama.service.d/override.conf 644
+        sudo systemctl daemon-reload
+        # 用户服务和系统服务都监听 11435, 只能留一个
+        if systemctl --user is-active ollama.service >/dev/null 2>&1; then
+            warn "  ! 用户服务 ollama.service 还在运行, 先 systemctl --user disable --now ollama.service 再重跑"
+        else
+            sudo systemctl enable --now ollama.service
+        fi
+    fi
+}
+
 # ---------- check: 只读体检 ----------
 fails=0
 ok()  { printf '  \033[32m✓\033[0m %s\n' "$*"; }
@@ -300,6 +331,18 @@ check() {
     done
     systemctl --user is-enabled sni-watcher.service >/dev/null 2>&1 && ok "sni-watcher (用户服务)" || bad "sni-watcher 未启用 (./setup.sh services)"
 
+    step "体检: 共享工具"
+    id -nG "$(id -un)" | tr ' ' '\n' | grep -qx dev && ok "$(id -un) 在 dev 组" || bad "$(id -un) 不在 dev 组 (./setup.sh shared)"
+    [ "$(stat -c %G:%a /opt/dev 2>/dev/null)" = dev:2775 ] && ok "/opt/dev (dev 组可写, setgid)" || bad "/opt/dev 不存在或权限不对 (./setup.sh shared)"
+    [ -f /etc/profile.d/dev.sh ] && ok "/etc/profile.d/dev.sh" || bad "缺 /etc/profile.d/dev.sh (./setup.sh shared)"
+    if pacman -Q ollama >/dev/null 2>&1; then
+        systemctl is-enabled ollama.service >/dev/null 2>&1 && [ -f /etc/systemd/system/ollama.service.d/override.conf ] \
+            && ok "ollama 系统服务" || bad "ollama 系统服务未启用或缺 override (./setup.sh shared)"
+        systemctl --user is-enabled ollama.service >/dev/null 2>&1 \
+            && bad "ollama 用户服务还启用着, 和系统服务抢 11435 (systemctl --user disable --now ollama.service)"
+    fi
+    [ -x /opt/dev/miniconda3/bin/conda ] && ok "/opt/dev/miniconda3" || warn "  - 没有共享的 miniconda (可选, 见 docs/tutorials/01-install.md 第 7 节)"
+
     step "体检: 仓库"
     if git ls-files 2>/dev/null | grep -qE '(^|/)(local\.zsh|dwm2\.local)$' || git grep -qE 'sk-(or|ant)-[A-Za-z0-9]' -- . ':!setup.sh' 2>/dev/null; then
         bad "仓库里有本机私有文件或密钥, 不要提交"
@@ -312,7 +355,7 @@ check() {
 }
 
 case "${1:-all}" in
-    all)       bootstrap; deps; system; link; build; services; check
+    all)       bootstrap; deps; system; link; build; services; shared; check
                step "完成。重启后在 tty1 自动登录并进入桌面; 之后修改 dwm 配置按 Super + Shift + R 即可生效"
                echo "  还需手动完成的事见 docs/tutorials/01-install.md 第 4 节" ;;
     bootstrap) bootstrap ;;
@@ -321,10 +364,11 @@ case "${1:-all}" in
     link)      link ;;
     build)     build ;;
     services)  services ;;
+    shared)    shared ;;
     check)     check ;;
     dwm)       build_dwm ;;
     st|tabbed) build_suckless "$1" ;;
     picom)     build_picom ;;
     i3lock)    build_i3lock ;;
-    *)         sed -n '2,13p' "$0"; exit 1 ;;
+    *)         sed -n '2,14p' "$0"; exit 1 ;;
 esac

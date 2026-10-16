@@ -1,0 +1,2 @@
+# /etc/zsh/zshrc (./setup.sh shared 安装): 所有用户 (含 root) 的交互 zsh 都能 conda activate, 不自动激活 base
+[ -r /opt/dev/miniconda3/etc/profile.d/conda.sh ] && source /opt/dev/miniconda3/etc/profile.d/conda.sh

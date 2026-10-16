@@ -4,7 +4,7 @@
 #   2. 屏幕刷新率降到 60Hz (原来 240Hz)
 #   3. CPU 节能策略 (EPP) 设为 power: 写 /sys 需要 root, 要配置 sudo 免密 (见 docs/manual/dwm.md), 没配时跳过这一项
 # 关闭时按开启前记下的状态全部恢复; 状态跨重启保留 (autostart 调用 apply 重新应用刷新率和 EPP)
-# 不省电时 apply 把屏幕设为最高刷新率 (独显直连时 X 默认选 60Hz)
+# 不省电时 apply 把屏幕设为 Super+P 显示器菜单里选的刷新率, 没选过用最高的 (独显直连时 X 默认选 60Hz)
 # 拔电自动开、插电自动关 (autostart 每 10 秒调用 ac): 只自动关闭拔电时自动开的那次, 手动开的 (Super+P) 不动
 #   powersave.sh on | off | toggle | apply | status | ac
 
@@ -12,7 +12,7 @@ DWM=${DWM:-$(cd "$(dirname "$0")/.."; pwd)}
 export DISPLAY=${DISPLAY:-:0}
 DIR=${XDG_CACHE_HOME:-$HOME/.cache}/powersave
 ON=$DIR/on                                 # 省电中
-PREV=$DIR/prev                             # 开启前的状态: wallmode= / epp= / rate_<屏幕>=
+PREV=$DIR/prev                             # 开启前的状态: wallmode= / epp=
 AUTO=$DIR/auto                             # 这次省电是拔电自动开的 (插电时自动关)
 LASTAC=$DIR/ac                             # 上次检测到的供电: ac / bat, 只在变化时动作
 RATE=60
@@ -45,13 +45,20 @@ max_rate() {
     xrandr --current | awk -v o="$1" '$1 == o {f = 1; next} f && /^[^ ]/ {exit} f && /\*/ {for (i = 2; i <= NF; i++) {r = $i; gsub(/[*+]/, "", r); if (r + 0 > m + 0) m = r}; print m; exit}'
 }
 
+# 不省电时屏幕 $1 用的刷新率: 显示器菜单里手动选过就用它 (monitor.sh rate), 否则最高
+want_rate() {
+    local r
+    r=$("$DWM/bin/monitor.sh" rate "$1" 2>/dev/null)
+    echo "${r:-$(max_rate "$1")}"
+}
+
 # 只给 --rate 不会生效, 要连同分辨率一起指定
 set_rate() { xrandr --output "$1" --mode "$2" --rate "$3" 2>/dev/null; }
 
-# 不省电时: 每个屏幕用最高刷新率 (独显直连时 X 默认选首选的 60Hz, 不是 240Hz)
+# 不省电时: 每个屏幕用选好的刷新率 (独显直连时 X 默认选首选的 60Hz, 不是 240Hz)
 full_rate() {
     local o m r
-    while read -r o m r; do set_rate "$o" "$m" "$(max_rate "$o")"; done < <(rates)
+    while read -r o m r; do set_rate "$o" "$m" "$(want_rate "$o")"; done < <(rates)
 }
 
 # 写 EPP (sudo -n: 没配免密时直接失败, 不会卡住等密码)
@@ -73,7 +80,6 @@ on() {
     {
         echo "wallmode=$(wall_live && echo live || echo static)"
         echo "epp=$(cat /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference 2>/dev/null)"
-        rates | while read -r o m r; do echo "rate_${o//[^A-Za-z0-9]/_}=$r"; done
     } > "$PREV"
     touch "$ON"
     local msg=
@@ -86,13 +92,9 @@ on() {
 
 off() {
     [ -f "$ON" ] || { notify "没有开启"; return; }
-    local o m r k wallmode= epp=
+    local wallmode= epp=
     [ -f "$PREV" ] && . "$PREV"
-    while read -r o m r; do
-        k=rate_${o//[^A-Za-z0-9]/_}
-        # 没有记录 (切换显卡模式后屏幕改了名字, 如 eDP-1 -> DP-4) 时用最高刷新率
-        set_rate "$o" "$m" "${!k:-$(max_rate "$o")}"
-    done < <(rates)
+    full_rate                                  # 刷新率回到显示器菜单里选的 (省电期间也可能改过), 没选过用最高
     [ -n "$epp" ] && set_epp "$epp"
     rm -f "$ON" "$AUTO"
     [ "$wallmode" = live ] && ! wall_live && timeout 20 $DWM/bin/livewall.sh toggle
